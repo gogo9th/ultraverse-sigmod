@@ -1,0 +1,41 @@
+extends layout
+
+block content
+  h1= title
+
+  if base == true
+    script(type="text/javascript").
+      function SelectRedirect() {
+        window.location='/view-item-detail/' + document.getElementById('id_switch').value;
+      }
+    
+    select(id='id_switch', onChange='SelectRedirect();')
+      option(value='../') Select Section
+      each id in id_list
+        option(value=id) #{id}
+
+  else
+    div.input
+      span.label item_id
+      input(type='text', name='item_id', value="#{item_id}", readonly='readonly')
+    div.input
+      span.label item_name
+      input(type='text', name='item_name', value="#{item_name}", readonly='readonly')
+    div.input
+      span.label description
+      input(type='text', name='description', value="#{description}", readonly='readonly')
+    div.input
+      span.label is_onetime
+      if is_onetime == 1
+        input(type='checkbox', name='is_onetime', value="#{is_onetime}", checked disabled)
+      else
+        input(type='checkbox', name='is_onetime', value="#{is_onetime}", disabled)
+    div.input
+      span.label price
+      input(type='text', name='price', value="#{price}", readonly='readonly')
+    div.input
+      span.label discount
+      input(type='text', name='discount', value="#{discount}", readonly='readonly')
+    div.input
+      span.label creator_id
+      input(type='text', name='creator_id', value="#{creator_id}", readonly='readonly')

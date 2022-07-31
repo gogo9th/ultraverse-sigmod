@@ -1,0 +1,20 @@
+Microsoft hack: 3,000 UK email servers remain unsecuredMore than 3,000 UK email servers remain at risk from the global Microsoft Exchange email flaw, officials believe.
+The National Cyber Security Centre said it estimated 7,000 servers had been affected by the flaw in the UK and only half had been secured.
+It said malicious software had been detected on 2,300 machines but it had helped businesses remove it.
+The agency said it was "vital" that all affected businesses took action to secure their email servers.
+The announcement reveals the scale of the problem among UK companies for the first time since the global security flaw emerged last week.
+Ransomware groups have begun using the flaw to install their malicious programs, the NCSC warned - though there was no evidence of widespread ransomware attacks on UK companies so far.
+Once installed, ransomware locks away a user's data behind strong encryption, making the computer system unusable. The group then demands payment to unlock it - and if demands are not met, will steal or delete the data.
+The security flaw affects Microsoft's widely-used Exchange email system, which powers the email of major corporations, small businesses and public bodies worldwide.
+The NCSC is particularly concerned about small and medium-sized businesses that may not have heard about the issue.
+Initially, the flaw was being exploited by a hacking group to gain remote access to email servers, from which it could steal sensitive data.
+But after Microsoft warned the world it had identified the problem, and urged all its users to download the latest security updates, other hacking groups quickly became familiar with the flaw.
+The result is a widespread free-for-all as multiple hacking groups all try to find unpatched email servers to attack.
+"We are working closely with industry and international partners to understand the scale and impact of UK exposure, but it is vital that all organisations take immediate steps to protect their networks," NCSC's director for operations Paul Chichester warned.
+"While this work is ongoing, the most important action is to install the latest Microsoft updates."
+He also urged all organisations to "familiarise" themselves with the guidance surrounding ransomware attacks - and to search for any signs of their systems already being compromised.
+The true scale of this problem is still emerging with thousands of systems vulnerable in the UK alone.
+What is not yet entirely clear is the overall impact.
+While many systems are still at risk and thousands had malicious software installed, the number of cases where we know this was actually used to steal emails or lock people out with ransomware is still fairly low. 
+That may change in the coming days as more reports come in. 
+What is clear is that multiple hacking groups have piled in to exploit the vulnerability and those working on the defensive side are likely to stay busy for some time to come.

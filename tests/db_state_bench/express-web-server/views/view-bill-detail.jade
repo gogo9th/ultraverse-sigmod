@@ -1,0 +1,65 @@
+extends layout
+
+block content
+  h1= title
+
+  if base == true
+    script(type="text/javascript").
+      function SelectRedirect() {
+        window.location='/view-bill-detail/' + document.getElementById('id_switch').value;
+      }
+    
+    select(id='id_switch', onChange='SelectRedirect();')
+      option(value='../') Select Section
+      each id in id_list
+        option(value=id) #{id}
+
+  else
+    div.input
+      span.label bill_id
+      input(type='text', name='bill_id', value="#{bill_id}", readonly='readonly')
+    div.input
+      span.label bill_name
+      input(type='text', name='bill_name', value="#{bill_name}", readonly='readonly')
+    div.input
+      span.label description
+      input(type='text', name='description', value="#{description}", readonly='readonly')
+    div.input
+      span.label created_time
+      input(type='text', name='created_time', value="#{created_time}", readonly='readonly')
+    div.input
+      span.label due_date
+      input(type='text', name='due_date', value="#{due_date}", readonly='readonly')
+    div.input
+      span.label creator_id
+      input(type='text', name='creator_id', value="#{creator_id}", readonly='readonly')
+    div.input
+      span.label payer_id
+      input(type='text', name='payer_id', value="#{payer_id}", readonly='readonly')
+    div.input
+      span.label is_paid
+      if is_paid == 1
+        input(type='checkbox', name='is_paid', value="#{is_paid}", checked disabled)
+      else
+        input(type='checkbox', name='is_paid', value="#{is_paid}", disabled)
+    div.input
+      span.label is_recurring
+      if is_recurring == 1
+        input(type='checkbox', name='is_recurring', value="#{is_recurring}", checked disabled)
+      else
+        input(type='checkbox', name='is_recurring', value="#{is_recurring}", disabled)
+    div.input
+      span.label recurring_start
+      input(type='text', name='recurring_start', value="#{recurring_start}", readonly='readonly')
+    div.input
+      span.label recurring_end
+      input(type='text', name='recurring_end', value="#{recurring_end}", readonly='readonly')
+    div.input
+      span.label recurring_is_weekly
+      if recurring_is_weekly == 1
+        input(type='checkbox', name='recurring_is_weekly', value="#{recurring_is_weekly}", checked disabled)
+      else
+        input(type='checkbox', name='recurring_is_weekly', value="#{recurring_is_weekly}", disabled)
+    div.input
+      span.label recurring_period
+      input(type='text', name='recurring_period', value="#{recurring_period}", readonly='readonly')

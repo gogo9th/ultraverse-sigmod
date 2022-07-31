@@ -1,0 +1,37 @@
+Covid-19: How would an NHS vaccine passport app work?As the UK gets closer to easing its coronavirus lockdowns, attention is turning to how we might safely mix again and what role tech might play.
+And despite previous denials that a "Covid passport" app was being considered, it is now on the agenda.
+After all the hoo-ha and costs involved in creating the contact-tracing apps last year, you might think that a very brave decision.
+But earlier this week The Times reported that the facility would be built into the existing NHS app used to access health services in England.
+It is distinct from the NHS Covid-19 app used by England and Wales to warn people if they might have recently been infected, and fewer people have downloaded it.
+But according to Google's own figures, it has been installed on more than one million Android devices (Apple does not share stats for iOS), which represents a decent start.
+Officially, Downing Street says the matter is still under review and it does not want to pre-empt anything by speculating on the subject.
+But it's clear there would be several benefits.
+Firstly, the NHS app, which serves patients in England only, already links up to users' GP services to give smartphone owners access to their medical records.
+In fact, it can already provide a record of whether some people have been given one of the coronavirus jabs, if the GP surgeries involved have shared the information.
+(Confusingly, this sometimes appears under the Medicines tab rather than the Immunisations one if you've had an injection and want to check yourself).
+So health chiefs would not need to build new IT infrastructure to get at the information.
+Secondly, the app has already tackled many of the security issues involved.
+To set it up you must provide your NHS number, email address, phone number and then upload either an image of your passport or driving licence.
+The smartphone then takes a scan of your face to check it matches the characteristics on the image on your official identification.
+And then, as a supplement to the automated checks, a human review takes place before you are granted access.
+However, there are still issues to be addressed.
+People would need to get to the certificate without having to hunt around several menus - possibly via a button at the bottom of the screen.
+And then the information would have to be presented in a format that someone else could verify quickly and easily.
+Another health pass app points the way to how that might be done.
+Tested.me displays a scannable barcode over an image of the user's face to provide employers with a means of keeping track of the health status of their staff.
+Of course, if the NHS app adopts a similar scheme, it will require other software to be developed so that establishments can verify a person's barcode when they present it.
+And there are further hurdles to overcome to prevent people who have yet to be vaccinated from simply passing off a screenshot of someone else's code, with their own face edited in, to access a venue.
+That presupposes that it would be acceptable for businesses and other organisations to deny people access to a venue or their workplace if they have not been vaccinated.
+And one must bear in mind that while vaccines reduce the risk of someone getting seriously ill from at least some of the Covid-19 variants, it is still unknown how much impact they will have on people becoming infected and passing the virus on.
+So the point of having such an app might only be to demonstrate that you would be unlikely to get seriously ill by entering an area, rather than proving you do not pose a threat to others.
+A further consideration is that these "passports" would probably not be used for travel abroad.
+The World Health Organization is exploring what specifications an international scheme would require to work across borders and support different countries' immunisation programmes. 
+It already oversees an International Yellow Fever Vaccination Certificate.
+And the requirements of such a scheme might be different from those used by the NHS app.
+One last issue is whether the government would allow third-party apps to tap into its system to offer specialised vaccine certificates of their own. 
+These would be customised for use in certain workplaces or leisure activities, where the details could be stored alongside ticketing or other relevant non-health-related data.
+Identity-check technology provider iProov, whose face-scanning software is already integrated into the NHS app, is among those keen to do this.
+Its chief executive, Andrew Bud, pointed out that the NHS already had a mechanism to allow private apps to tap into GP records subject to strict security requirements.
+But whether ministers would want to complicate matters by allowing there to be multiple ways to present a vaccine passport is another matter.
+In any case, speaking to sources within NHSX - the division likely to be responsible for any digital certificate involving the NHS app in England - one thing becomes apparent: discussions about what would be involved are at a very early stage. 
+And that means it will be many months before the idea of presenting an app to door staff to prove you have been jabbed has any chance of becoming a reality.

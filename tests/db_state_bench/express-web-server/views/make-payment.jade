@@ -1,0 +1,46 @@
+extends layout
+
+block content
+  h1= title
+  form(name='make-payment', method='post')
+    div.input
+      span.label session_id
+      input(type='text', name='session_id', value="#{session_id}", readonly='readonly')
+    div.input
+      span.label payment_name
+      input(type='text', name='payment_name')
+    div.input
+      span.label recipient_id
+      input(type='text', name='recipient_id')
+    div.input
+      span.label bill_id
+      select(name='bill_id')
+        each id in bill_id_list
+          option(value=id) #{id}
+    div.input
+      span.label amount
+      input(type='text', name='amount')
+    div.input
+      span.label payment_type
+      input(type='number', name='payment_type', value='1')
+    div.input
+      span.label description
+      input(type='text', name='description')
+    div.input
+      span.label is_recurring
+      input(type='checkbox', name='is_recurring')
+    div.input
+      span.label recurring_start
+      input(type='date', name='recurring_start')
+    div.input
+      span.label recurring_end
+      input(type='date', name='recurring_end')
+    div.input
+      span.label recurring_is_weekly
+      input(type='checkbox', name='recurring_is_weekly')
+    div.input
+      span.label recurring_period
+      input(type='number', name='recurring_period', value='1')
+
+    div.actions
+      input(type='submit', value='Submit')

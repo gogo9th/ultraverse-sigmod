@@ -1,0 +1,13 @@
+extends layout
+
+block content
+  h1= title
+  form(name='login', method='post')
+    div.input
+      span.label user_id
+      input(type='text', name='user_id')
+    div.input
+      span.label password
+      input(type='password', name='password')
+    div.actions
+      input(type='submit', value='Submit')
