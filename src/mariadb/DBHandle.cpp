@@ -24,6 +24,13 @@ namespace ultraverse::mariadb {
                 fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
             );
         }
+        
+        // TODO: mariadb는 master_binlog_checksum을 TRUE로, mysql은..
+        if (mysql_query(_handle.get(), "SET @master_binlog_checksum=TRUE") != 0) {
+            throw std::runtime_error(
+                fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
+            );
+        }
     }
     
     void DBHandle::disconnect() {

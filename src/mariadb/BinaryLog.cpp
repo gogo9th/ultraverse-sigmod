@@ -20,8 +20,8 @@ namespace ultraverse::mariadb {
     }
     
     void BinaryLog::setFileName(std::string fileName) {
-        _rpl->filename = new char[fileName.length()];
-        std::strcpy(_rpl->filename, fileName.c_str());
+        _rpl->filename = new char[255];
+        std::strncpy(_rpl->filename, fileName.c_str(), fileName.length());
         _rpl->filename_length = fileName.length();
     }
     
@@ -48,7 +48,7 @@ namespace ultraverse::mariadb {
     
     bool BinaryLog::next() {
         _event = mariadb_rpl_fetch(_rpl, _event);
-        return _event != nullptr;
+        return _event != nullptr && _event->event_type != UNKNOWN_EVENT;
     }
     
     const MARIADB_RPL_EVENT *BinaryLog::currentEvent() const {

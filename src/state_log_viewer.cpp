@@ -14,19 +14,24 @@ int main() {
     
     dbHandle->connect("localhost", 3306, "root", "mypass");
     
-    binaryLog->setFileName("cheese-binlog.000011");
+    binaryLog->setFileName("cheese-binlog.000007");
     binaryLog->setStartPosition(4);
     
     binaryLog->open();
     
     while (binaryLog->next()) {
         auto event = binaryLog->currentEvent();
+        
+        std::printf("%d, %d\n", event->event_type, event->flags);
     
         if (event->event_type == QUERY_EVENT) {
             std::printf("QUERY EXECUTED: %s\n", event->event.query.statement.str);
         } else if (event->event_type == XID_EVENT) {
             std::printf("XID SET: %d\n", event->event.xid.transaction_nr);
+        } else if (event->event_type == ROTATE_EVENT) {
+            std::printf("LOG ROTATION: %s (%d)\n", event->event.rotate.filename.str, event->event.rotate.position);
         }
+        
         
     }
     
