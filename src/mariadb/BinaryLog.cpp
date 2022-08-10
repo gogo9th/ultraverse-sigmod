@@ -16,7 +16,9 @@ namespace ultraverse::mariadb {
         _handle(handle),
         _rpl(mariadb_rpl_init(_handle->handle().get()))
     {
-        _rpl->use_checksum = 1;
+        _rpl->use_checksum = 0;
+        _rpl->flags = MARIADB_RPL_BINLOG_SEND_ANNOTATE_ROWS;
+
     }
     
     void BinaryLog::setFileName(std::string fileName) {
@@ -47,11 +49,13 @@ namespace ultraverse::mariadb {
     }
     
     bool BinaryLog::next() {
-        _event = mariadb_rpl_fetch(_rpl, _event);
+        // HACK: causes SIGSEGV;
+        _rpl->use_checksum = 0;
+        _event = mariadb_rpl_fetch(_rpl, nullptr);
         return _event != nullptr && _event->event_type != UNKNOWN_EVENT;
     }
     
-    const MARIADB_RPL_EVENT *BinaryLog::currentEvent() const {
+    MARIADB_RPL_EVENT *BinaryLog::currentEvent() const {
         return _event;
     }
 }

@@ -27,7 +27,7 @@ namespace ultraverse::mariadb {
         
         bool next();
         
-        const MARIADB_RPL_EVENT *currentEvent() const;
+        MARIADB_RPL_EVENT *currentEvent() const;
     private:
         std::shared_ptr<DBHandle> _handle;
         

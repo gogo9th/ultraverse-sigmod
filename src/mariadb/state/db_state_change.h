@@ -2,7 +2,7 @@
 #define DB_STATE_CHANGE_INCLUDED
 
 #include <functional>
-#include "mysql.h"
+#include "mysql/mysql.h"
 #include "state_log_hdr.h"
 
 #define PROGRAM_NAME "DB_STATE_CHANGE"

@@ -24,18 +24,18 @@ endif(IS_DEBUG)
 message(STATUS "Binary Build Type is ${CMAKE_BUILD_TYPE}")
 
 # MySQL library
-set(MYSQL_DIR ../)
+set(MYSQL_DIR ../../src)
 set(MYSQL_LIBRARIES ${MYSQL_DIR}/libmariadb/libmariadb/libmariadb.so) 
 
 MESSAGE ( MYSQL_LIBRARIES "MYSQL LIB : " ${MYSQL_LIBRARIES} )
 
 #db_query_prepar
 add_library(db_state_api
-  db_state_api.cpp
+    db_state_api.cpp
 )
 
 TARGET_INCLUDE_DIRECTORIES(db_state_api PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}
+    .
   ${MYSQL_DIR}/include
   ${MYSQL_DIR}/libmariadb/include
 )

@@ -104,7 +104,7 @@ TARGET_INCLUDE_DIRECTORIES(sqlparser PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/sql-pars
 
 FIND_PACKAGE(PkgConfig REQUIRED)
 pkg_check_modules(GVC REQUIRED libgvc)
-MYSQL_ADD_EXECUTABLE(db_state_change db_state_change.cc StateUserQuery.cc StateGraphGvc.cc StateGraphBoost.cc StateTable.cc StateBinaryLog.cc StateItem.cc StateForeign.cc)
+MYSQL_ADD_EXECUTABLE(db_state_change ../../src/mariadb/state/db_state_change.cc StateUserQuery.cc StateGraphGvc.cc StateGraphBoost.cc StateTable.cc StateBinaryLog.cc StateItem.cc StateForeign.cc)
 TARGET_LINK_LIBRARIES(db_state_change ${CLIENT_LIB} ${GVC_LIBRARIES} sqlparser)
 TARGET_INCLUDE_DIRECTORIES(db_state_change PUBLIC ${GVC_INCLUDE_DIRS})
 TARGET_INCLUDE_DIRECTORIES(db_state_change PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/sql-parser/src)

@@ -14,7 +14,13 @@ namespace ultraverse::mariadb {
     DBHandle::DBHandle():
         _handle(mysql_init(nullptr), mysql_close)
     {
+        unsigned int timeout = 15;
+        mysql_options(_handle.get(), MYSQL_OPT_CONNECT_TIMEOUT, (const char *)&timeout);
+        mysql_options(_handle.get(), MYSQL_OPT_CONNECT_ATTR_RESET, 0);
+        mysql_options4(_handle.get(), MYSQL_OPT_CONNECT_ATTR_ADD, "program_name", "ultraverse");
     
+        my_bool reconnect = 1;
+        mysql_options(_handle.get(), MYSQL_OPT_RECONNECT, &reconnect);
     }
     
     void DBHandle::connect(const std::string &host, int port, const std::string &user, const std::string &password) {
@@ -25,16 +31,36 @@ namespace ultraverse::mariadb {
             );
         }
         
-        // TODO: mariadb는 master_binlog_checksum을 TRUE로, mysql은..
-        if (mysql_query(_handle.get(), "SET @master_binlog_checksum=TRUE") != 0) {
-            throw std::runtime_error(
-                fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
-            );
-        }
+        // disableAutoCommit();
+        disableBinlogChecksum();
     }
     
     void DBHandle::disconnect() {
         mysql_close(_handle.get());
+    }
+    
+    void DBHandle::disableAutoCommit() {
+        if (mysql_autocommit(_handle.get(), false) != 0) {
+            throw std::runtime_error(
+                fmt::format("failed to autocommit: %s", mysql_error(_handle.get()))
+            );
+        }
+    }
+    
+    void DBHandle::disableBinlogChecksum() {
+        // TODO: mariadb는 master_binlog_checksum을 TRUE로, mysql은..
+        if (mysql_query(_handle.get(), "SET @master_binlog_checksum='NONE'") != 0) {
+            throw std::runtime_error(
+                fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
+            );
+        }
+    
+    
+        if (mysql_query(_handle.get(), "SET @mariadb_slave_capability=4") != 0) {
+            throw std::runtime_error(
+                fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
+            );
+        }
     }
     
     std::shared_ptr<MYSQL> DBHandle::handle() {

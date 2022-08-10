@@ -4,7 +4,7 @@
 #define TABLE TABLE_CLIENT
 /* This hack is here to avoid adding COMPRESSED data types to libmariadb. */
 #define MYSQL_TYPE_TIME2 MYSQL_TYPE_TIME2, MYSQL_TYPE_BLOB_COMPRESSED = 140, MYSQL_TYPE_VARCHAR_COMPRESSED = 141
-#include "client_priv.h"
+#include "../../../src_base/client/client_priv.h"
 #undef MYSQL_TYPE_TIME2
 #include <my_time.h>
 #include "sql_priv.h"
@@ -23,7 +23,6 @@
 #include "StateBinaryLog.h"
 #include "StateUtil.h"
 #include "state_log_hdr.h"
-#include "db_state_change.h"
 #include "mysqld.h"
 
 #include <sys/ipc.h>

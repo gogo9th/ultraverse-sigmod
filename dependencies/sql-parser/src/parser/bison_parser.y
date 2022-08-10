@@ -35,8 +35,8 @@ int yyerror(YYLTYPE* llocp, SQLParserResult* result, yyscan_t scanner, const cha
 %code requires {
 // %code requires block
 
-#include "../sql/statements.h"
-#include "../SQLParserResult.h"
+#include "sql/statements.h"
+#include "SQLParserResult.h"
 #include "parser_typedef.h"
 
 // Auto update column and line number
