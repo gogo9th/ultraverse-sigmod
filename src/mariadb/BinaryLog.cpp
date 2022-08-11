@@ -6,15 +6,18 @@
 
 #include <stdexcept>
 #include <sstream>
+#include <memory>
 
 #include <fmt/core.h>
+
+#include "utils/log.hpp"
 
 #include "BinaryLog.hpp"
 
 namespace ultraverse::mariadb {
-    BinaryLog::BinaryLog(std::shared_ptr<DBHandle> handle):
+    BinaryLog::BinaryLog(DBHandle &handle):
         _handle(handle),
-        _rpl(mariadb_rpl_init(_handle->handle().get()))
+        _rpl(mariadb_rpl_init(_handle.handle().get()))
     {
         _rpl->use_checksum = 0;
         _rpl->flags = MARIADB_RPL_BINLOG_SEND_ANNOTATE_ROWS;
@@ -49,13 +52,26 @@ namespace ultraverse::mariadb {
     }
     
     bool BinaryLog::next() {
-        // HACK: causes SIGSEGV;
+        // HACK: _rpl->use_checksum = 1 causes SIGSEGV but the value fixed at 1 and i don't know why
         _rpl->use_checksum = 0;
-        _event = mariadb_rpl_fetch(_rpl, nullptr);
+        
+        _event = mariadb_rpl_fetch(_rpl, _event);
         return _event != nullptr && _event->event_type != UNKNOWN_EVENT;
     }
     
-    MARIADB_RPL_EVENT *BinaryLog::currentEvent() const {
+    std::shared_ptr<base::DBEvent> BinaryLog::currentEvent() const {
+        switch (_event->event_type) {
+            case QUERY_EVENT:
+                return std::make_shared<QueryEvent>(_event);
+            case XID_EVENT:
+                return std::make_shared<TransactionIDEvent>(_event);
+            default:
+                warning(fmt::format("unsupported event type {}", _event->event_type).c_str());
+                return nullptr;
+        }
+    }
+    
+    MARIADB_RPL_EVENT *BinaryLog::currentRawEvent() const {
         return _event;
     }
 }

@@ -11,13 +11,15 @@
 #include <mysql/mysql.h>
 #include <mysql/mariadb_rpl.h>
 
+#include "DBEvent.hpp"
 #include "DBHandle.hpp"
+
 
 namespace ultraverse::mariadb {
     
     class BinaryLog {
     public:
-        BinaryLog(std::shared_ptr<DBHandle> handle);
+        BinaryLog(DBHandle &handle);
         
         void setFileName(std::string fileName);
         void setStartPosition(int startPosition);
@@ -27,9 +29,13 @@ namespace ultraverse::mariadb {
         
         bool next();
         
-        MARIADB_RPL_EVENT *currentEvent() const;
+        /**
+         * @return
+         */
+        std::shared_ptr<base::DBEvent> currentEvent() const;
+        MARIADB_RPL_EVENT *currentRawEvent() const;
     private:
-        std::shared_ptr<DBHandle> _handle;
+        DBHandle &_handle;
         
         /**
          * TODO: how to free MARIADB_RPL *?
