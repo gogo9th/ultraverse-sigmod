@@ -10,6 +10,9 @@
 
 #include <string>
 
+#include "SQLParser.h"
+#include "mariadb/state/state_log_hdr.h"
+
 namespace ultraverse::event_type {
     enum Value {
         UNKNOWN = 0,
@@ -21,7 +24,7 @@ namespace ultraverse::event_type {
 }
 
 namespace ultraverse::base {
-    class DBEventBase {
+    class DBEvent {
     public:
         virtual event_type::Value eventType() = 0;
         virtual uint64_t timestamp() = 0;
@@ -35,7 +38,7 @@ namespace ultraverse::base {
         };
     };
     
-    class TransactionIDEventBase: public DBEventBase {
+    class TransactionIDEventBase: public DBEvent {
     public:
         event_type::Value eventType() override {
             return event_type::TXNID;
@@ -44,7 +47,7 @@ namespace ultraverse::base {
         virtual uint64_t transactionId() = 0;
     };
     
-    class QueryEventBase: public DBEventBase {
+    class QueryEventBase: public DBEvent {
     public:
         event_type::Value eventType() override {
             return event_type::QUERY;
@@ -54,6 +57,22 @@ namespace ultraverse::base {
         
         virtual const std::string &statement() = 0;
         virtual const std::string &database() = 0;
+        
+        /**
+         * try to tokenize SQL statement.
+         * @return returns false if fails.
+         */
+        bool tokenize();
+        
+        std::vector<int16_t> tokens() const;
+        std::vector<size_t> tokenPos() const;
+        
+        bool isDDL() const;
+        bool isDML() const;
+        
+    private:
+        std::vector<int16_t> _tokens;
+        std::vector<size_t> _tokenPos;
     };
 }
 
