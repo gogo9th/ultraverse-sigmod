@@ -34,7 +34,7 @@ namespace ultraverse {
         }
         
         DBHandleLease(DBHandleLease &) = delete;
-        DBHandleLease(DBHandleLease &&)  noexcept = default;
+        DBHandleLease(DBHandleLease &&) noexcept = default;
         
         T &get() {
             return *_handle;
@@ -48,7 +48,7 @@ namespace ultraverse {
     template <typename T, std::enable_if_t<std::is_base_of_v<base::DBHandle, T>, bool> = true>
     class DBHandlePool {
     public:
-        DBHandlePool(
+        explicit DBHandlePool(
             int poolSize,
             const std::string &host,
             int port,
@@ -62,16 +62,16 @@ namespace ultraverse {
             }
         }
         
-        DBHandleLease<T> &&take() {
+        DBHandleLease<T> take() {
             std::unique_lock lock(_mutex);
             
             if (_handles.empty()) {
                 _condvar.wait(lock);
             }
             
-            auto handle = _handles.front();
+            auto &handle = _handles.front();
             
-            return DBHandleLease(handle, [this, handle]() {
+            return DBHandleLease<T>(handle, [this, handle]() {
                 this->_handles.push(handle);
                 this->_condvar.notify_all();
             });
