@@ -66,4 +66,8 @@ namespace ultraverse::mariadb {
     std::shared_ptr<MYSQL> DBHandle::handle() {
         return _handle;
     }
+    
+    DBHandle::operator MYSQL *() {
+        return _handle.get();
+    }
 }
