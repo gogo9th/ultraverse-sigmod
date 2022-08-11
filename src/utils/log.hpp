@@ -7,6 +7,14 @@
 
 #include <cstdio>
 
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+
+
+using LoggerPtr = std::shared_ptr<spdlog::logger>;
+static LoggerPtr createLogger(const std::string &name);
+
+
 /**
   Auxiliary function used by error() and warning().
 

@@ -6,6 +6,10 @@
 
 #include <cstdarg>
 
+LoggerPtr createLogger(const std::string &name) {
+    return spdlog::stdout_color_st(name);
+}
+
 /**
   Auxiliary function used by error() and warning().
 
