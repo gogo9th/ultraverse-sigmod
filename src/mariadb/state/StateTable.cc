@@ -19,6 +19,7 @@
 
 #include "SQLParser.h"
 #include "bison_parser.h"
+#include "mariadb/BinaryLog.hpp"
 
 
 #include <cmath>
@@ -71,6 +72,98 @@ namespace ultraverse::state {
     }
     
     StateTable::~StateTable(void) {
+    }
+    
+    
+    void StateTable::updateDefinitions() {
+        clearDefinitions();
+        _logger->info("updating data definitions...");
+    
+        // TODO: parallel process
+        auto handle = _dbHandlePool.take();
+        mariadb::BinaryLog binaryLog(handle.get());
+        
+        // read from beginning
+        binaryLog.setStartPosition(4);
+        
+        while (binaryLog.next()) {
+            auto event = binaryLog.currentEvent();
+            auto queryEvent = std::dynamic_pointer_cast<mariadb::QueryEvent>(event);
+            
+            if (queryEvent == nullptr) {
+                continue;
+            }
+            
+            if (!queryEvent->tokenize()) {
+                _logger->warn("failed to parse SQL statement");
+                continue;
+            } else if (!queryEvent->isDDL()) {
+                continue;
+            }
+            
+            /*
+             * CREATE 'INDEX'
+             * DROP 'PROCEDURE'
+             * ALTER 'TABLE' ...
+             */
+            auto command = queryEvent->tokens()[0];
+            auto what = queryEvent->tokens()[1];
+            
+            if (command == SQL_DROP && what == SQL_DATABASE) {
+                // TODO: view_list.append()
+                // TODO: trigger_list.append()
+                // TODO: table_list.append()
+            } else if (
+                (command == SQL_CREATE && what == SQL_VIEW) ||
+                (command == SQL_DROP   && what == SQL_VIEW)
+            ) {
+                // TODO: view_list.append()
+            } else if (
+                (command == SQL_CREATE && what == SQL_TRIGGER) ||
+                (command == SQL_DROP   && what == SQL_TRIGGER)
+            ) {
+                // TODO: trigger_list.append()
+            } else if (
+                (command == SQL_CREATE && what == SQL_PROCEDURE) ||
+                (command == SQL_DROP   && what == SQL_PROCEDURE) ||
+                (command == SQL_ALTER  && what == SQL_PROCEDURE)
+            ) {
+                // TODO: procedure_list.append()
+            } else if (
+                (command == SQL_CREATE  && what == SQL_TABLE) ||
+                (command == SQL_DROP    && what == SQL_TABLE) ||
+                (command == SQL_ALTER   && what == SQL_TABLE) ||
+                (command == SQL_RENAME  && what == SQL_TABLE) ||
+                (command == SQL_TRUNCATE) ||
+                (command == SQL_CREATE  && what == SQL_INDEX) ||
+                (command == SQL_DROP    && what == SQL_INDEX)
+            ) {
+                // TODO: table_list.append()
+            }
+
+            
+        }
+    }
+    
+    void StateTable::clearDefinitions() {
+        _logger->debug("clearing data definitions...");
+        
+        procedure_list.clear();
+        valid_procedure_list.clear();
+    
+        view_list.clear();
+        valid_view_list.clear();
+    
+        trigger_list.clear();
+        valid_trigger_list.clear();
+    
+        table_list.clear();
+        valid_table_list.clear();
+    
+        before_undo_procedure_list.clear();
+        before_undo_view_list.clear();
+        before_undo_trigger_list.clear();
+        before_undo_table_list.clear();
     }
     
     void StateTable::SetTime(const state_log_time &st_time, const state_log_time &ed_time) {
@@ -562,6 +655,9 @@ namespace ultraverse::state {
         return false;
     }
     
+    /**
+     * @deprecated
+     */
     std::vector<StateTable::QueryList *> StateTable::GetMatchList(const LogType &type, const uint16_t command) {
         std::vector<QueryList *> vec;
         

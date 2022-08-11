@@ -9,7 +9,10 @@
 #include <map>
 #include <functional>
 
-#include "mysql/mysql.h"
+#include <mysql/mysql.h>
+
+#include "base/DBHandlePool.hpp"
+#include "mariadb/DBHandle.hpp"
 
 #include "state_log_hdr.h"
 
@@ -17,6 +20,7 @@
 #include "StateQuery.hpp"
 
 #include "StateTaskContext.hpp"
+#include "utils/log.hpp"
 
 namespace ultraverse::state {
     
@@ -51,6 +55,29 @@ namespace ultraverse::state {
         StateTable(const StateTable &table);
         
         ~StateTable();
+        
+        /* v2 START */
+        
+        void clearDefinitions();
+    
+        /**
+         * read and parses DDL query.
+         */
+        void updateDefinitions();
+        void rollbackWithCriteria();
+        
+    private:
+        
+        void readBinaryLog();
+        
+        
+        LoggerPtr _logger;
+        DBHandlePool<mariadb::DBHandle> _dbHandlePool;
+    public:
+        
+        /* v2 END */
+        
+        
         
         bool SetGroupID(const int id);
         
