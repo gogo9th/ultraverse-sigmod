@@ -841,7 +841,7 @@ TRUE	TOKEN(TRUE)
 #[^\n]* {}
 --[^\n]* {}
 
-. { fprintf(stderr, "[SQL-Lexer-Error] Unknown Character: %c\n", yytext[0]); return 0; }
+. { return 0; }
 
 
 %%
