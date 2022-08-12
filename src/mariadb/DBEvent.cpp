@@ -11,6 +11,13 @@ namespace ultraverse::mariadb {
     {
     }
     
+    TransactionIDEvent::TransactionIDEvent(uint64_t xid, uint64_t timestamp):
+        _transactionId(xid),
+        _timestamp(timestamp)
+    {
+    
+    }
+    
     uint64_t TransactionIDEvent::timestamp() {
         return _timestamp;
     }
@@ -19,6 +26,7 @@ namespace ultraverse::mariadb {
         return _transactionId;
     }
     
+   
     QueryEvent::QueryEvent(const MARIADB_RPL_EVENT *rplEvent):
         _timestamp(rplEvent->timestamp),
         
@@ -29,6 +37,21 @@ namespace ultraverse::mariadb {
     {
     
     }
+    
+    QueryEvent::QueryEvent(
+        const std::string &schema,
+        const std::string &statement,
+        uint64_t timestamp
+    ):
+        _database(schema),
+        _statement(statement),
+        
+        _timestamp(timestamp),
+        _error(0)
+    {
+    
+    }
+    
     
     uint64_t QueryEvent::timestamp() {
         return _timestamp;
