@@ -27,19 +27,20 @@ public:
         StateThreadPool::Instance().initialize(options);
         StateThreadPool::Instance().Resize(std::thread::hardware_concurrency() + 1);
     
-        auto binaryLog = std::make_shared<BinaryLog>(StateThreadPool::Instance().GetMySql());
-    
-        binaryLog->setFileName("cheese-binlog.000017");
+        auto binaryLog = std::make_shared<BinaryLog>(*(StateThreadPool::Instance().GetMySql()));
+        
+        // binaryLog->setFileName("cheese-binlog.000020");
         binaryLog->setStartPosition(4);
     
         binaryLog->open();
     
         while (binaryLog->next()) {
-            MARIADB_RPL_EVENT *event = binaryLog->currentEvent();
-        
+            MARIADB_RPL_EVENT *event = binaryLog->currentRawEvent();
+    
+            printf("%d, %d, %d\n", event->event_type, event->flags, event->is_semi_sync);
             if (event->event_type == QUERY_EVENT) {
-                // std::string query = std::string(event->event.query.statement.str, event->event.query.statement.length);
-                // std::printf("QUERY EXECUTED: %s\n", query.c_str());
+                std::string query = std::string(event->event.query.statement.str, event->event.query.statement.length);
+                std::printf("QUERY EXECUTED: %s\n", query.c_str());
             } else if (event->event_type == XID_EVENT) {
                 std::printf("XID SET: %d\n", event->event.xid.transaction_nr);
             } else if (event->event_type == ROTATE_EVENT) {
@@ -57,10 +58,8 @@ public:
             } else if (event->event_type == BINLOG_CHECKPOINT_EVENT) {
                 std::printf("CHECKPOINT: %s\n", event->event.checkpoint.filename.str);
             } else {
-                printf("%d, %d\n", event->event_type, event->flags);
+                printf("%d, %d, %d\n", event->event_type, event->flags, event->is_semi_sync);
             }
-    
-            mariadb_free_rpl_event(event);
         }
     
         binaryLog->close();

@@ -24,7 +24,7 @@ namespace ultraverse::mariadb {
         
         _error((int64_t) rplEvent->event.query.errornr),
         
-        _statement(std::string(rplEvent->event.query.statement.str, rplEvent->event.query.statement.length)),
+        _statement(std::string(rplEvent->event.query.statement.str, rplEvent->event.query.statement.length - 2)),
         _database(std::string(rplEvent->event.query.database.str, rplEvent->event.query.database.length))
     {
     

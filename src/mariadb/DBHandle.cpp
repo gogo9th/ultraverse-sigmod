@@ -48,19 +48,39 @@ namespace ultraverse::mariadb {
     }
     
     void DBHandle::disableBinlogChecksum() {
+    
+        if (mysql_query(_handle.get(), "SET @master_heartbeat_period=10240") != 0) {
+            throw std::runtime_error(
+                fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
+            );
+        }
+        
         // TODO: mariadb는 master_binlog_checksum을 TRUE로, mysql은..
         if (mysql_query(_handle.get(), "SET @master_binlog_checksum='NONE'") != 0) {
             throw std::runtime_error(
                 fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
             );
         }
-    
-    
-        if (mysql_query(_handle.get(), "SET @mariadb_slave_capability=4") != 0) {
+        if (mysql_query(_handle.get(), "SET @binlog_checksum='NONE'") != 0) {
             throw std::runtime_error(
                 fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
             );
         }
+    
+        if (mysql_query(_handle.get(), "SET @mariadb_slave_capability=0") != 0) {
+            throw std::runtime_error(
+                fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
+            );
+        }
+    
+        /*
+        if (mysql_query(_handle.get(), "SET @rpl_semi_sync_slave=1") != 0) {
+            throw std::runtime_error(
+                fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
+            );
+        }
+         */
+
     }
     
     std::shared_ptr<MYSQL> DBHandle::handle() {
