@@ -10,7 +10,7 @@
 
 namespace ultraverse::base {
     bool QueryEventBase::tokenize() {
-        return hsql::SQLParser::tokenize(statement(), &_tokens, &_tokenPos)
+        return hsql::SQLParser::tokenize(statement(), &_tokens, &_tokenPos);
     }
     
     std::vector<int16_t> QueryEventBase::tokens() const {
