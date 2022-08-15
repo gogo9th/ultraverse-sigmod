@@ -24,8 +24,7 @@ namespace ultraverse::mariadb {
         
         std::shared_ptr<MYSQL> handle();
         explicit operator MYSQL *();
-        
-    protected:
+    
         void disableAutoCommit();
         void disableBinlogChecksum();
         

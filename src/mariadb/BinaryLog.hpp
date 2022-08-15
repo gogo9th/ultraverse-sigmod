@@ -40,6 +40,7 @@ namespace ultraverse::mariadb {
         /**
          * TODO: how to free MARIADB_RPL *?
          */
+    public:
         MARIADB_RPL *_rpl;
         MARIADB_RPL_EVENT *_event;
     };

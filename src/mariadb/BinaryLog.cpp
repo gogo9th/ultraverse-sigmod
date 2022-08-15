@@ -19,9 +19,7 @@ namespace ultraverse::mariadb {
         _handle(handle),
         _rpl(mariadb_rpl_init(_handle.handle().get()))
     {
-        _rpl->use_checksum = 0;
-        _rpl->flags = MARIADB_RPL_BINLOG_SEND_ANNOTATE_ROWS;
-
+        _rpl->use_checksum = 1;
     }
     
     void BinaryLog::setFileName(std::string fileName) {
@@ -52,10 +50,11 @@ namespace ultraverse::mariadb {
     }
     
     bool BinaryLog::next() {
-        // HACK: _rpl->use_checksum = 1 causes SIGSEGV but the value fixed at 1 and i don't know why
-        _rpl->use_checksum = 0;
-        
-        _event = mariadb_rpl_fetch(_rpl, _event);
+        _rpl->use_checksum = 1;
+        if (_event != nullptr) {
+            mariadb_free_rpl_event(_event);
+        }
+        _event = mariadb_rpl_fetch(_rpl, nullptr);
         return _event != nullptr && _event->event_type != UNKNOWN_EVENT;
     }
     

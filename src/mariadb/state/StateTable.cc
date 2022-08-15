@@ -36,8 +36,9 @@
 #include <tuple>
 
 namespace ultraverse::state {
-    StateTable::StateTable(Query _user_transaction)
-        : StateTable() {
+    StateTable::StateTable(DBHandlePool<mariadb::DBHandle> &dbHandlePool, Query _user_transaction)
+        : StateTable(dbHandlePool)
+    {
         user_transaction = _user_transaction;
         UpdateReadUserTableList(user_transaction->read_set);
         UpdateWriteUserTableList(user_transaction->write_set);
@@ -45,12 +46,18 @@ namespace ultraverse::state {
         is_user_query2 = false;
     }
     
-    StateTable::StateTable()
-        : group_id(-1), start_time({0, 0}), end_time({0, 0}), binary_log(NULL) {
+    StateTable::StateTable(DBHandlePool<mariadb::DBHandle> &dbHandlePool):
+        group_id(-1), start_time({0, 0}), end_time({0, 0}), binary_log(NULL),
+        
+        _dbHandlePool(dbHandlePool),
+        _logger(createLogger("StateTable"))
+    {
         is_user_query2 = false;
     }
     
-    StateTable::StateTable(const StateTable &table) {
+    StateTable::StateTable(const StateTable &table):
+        _dbHandlePool(table._dbHandlePool)
+    {
         this->start_time = table.start_time;
         this->end_time = table.end_time;
         
@@ -85,6 +92,7 @@ namespace ultraverse::state {
         
         // read from beginning
         binaryLog.setStartPosition(4);
+        binaryLog.open();
         
         while (binaryLog.next()) {
             auto event = binaryLog.currentEvent();
@@ -109,26 +117,39 @@ namespace ultraverse::state {
             auto command = queryEvent->tokens()[0];
             auto what = queryEvent->tokens()[1];
             
+            auto query = std::make_shared<StateQuery>();
+            query->user_query = EN_USER_QUERY_NONE;
+            query->transactions.emplace_back(StateQuery::st_transaction(
+                state_log_time(0, 0), // FIXME
+                SQLCOM_DROP_DB, // FIXME
+                queryEvent->statement()
+            ));
+            
             if (command == SQL_DROP && what == SQL_DATABASE) {
-                // TODO: view_list.append()
-                // TODO: trigger_list.append()
-                // TODO: table_list.append()
+                _logger->debug("view_list.emplace_back({})", queryEvent->statement());
+                _logger->debug("trigger_list.emplace_back({})", queryEvent->statement());
+                _logger->debug("table_list.emplace_back({})", queryEvent->statement());
+                view_list.emplace_back(query);
+                trigger_list.emplace_back(query);
+                table_list.emplace_back(query);
             } else if (
                 (command == SQL_CREATE && what == SQL_VIEW) ||
                 (command == SQL_DROP   && what == SQL_VIEW)
             ) {
-                // TODO: view_list.append()
+                _logger->debug("view_list.emplace_back({})", queryEvent->statement());
+                view_list.emplace_back(query);
             } else if (
                 (command == SQL_CREATE && what == SQL_TRIGGER) ||
                 (command == SQL_DROP   && what == SQL_TRIGGER)
             ) {
-                // TODO: trigger_list.append()
+                _logger->debug("trigger_list.emplace_back({})", queryEvent->statement());
+                trigger_list.emplace_back(query);
             } else if (
                 (command == SQL_CREATE && what == SQL_PROCEDURE) ||
                 (command == SQL_DROP   && what == SQL_PROCEDURE) ||
                 (command == SQL_ALTER  && what == SQL_PROCEDURE)
             ) {
-                // TODO: procedure_list.append()
+                _logger->info("TODO: procedure_list.append()");
             } else if (
                 (command == SQL_CREATE  && what == SQL_TABLE) ||
                 (command == SQL_DROP    && what == SQL_TABLE) ||
@@ -138,11 +159,12 @@ namespace ultraverse::state {
                 (command == SQL_CREATE  && what == SQL_INDEX) ||
                 (command == SQL_DROP    && what == SQL_INDEX)
             ) {
-                // TODO: table_list.append()
+                _logger->debug("table_list.emplace_back({})", queryEvent->statement());
+                table_list.emplace_back(query);
             }
-
-            
         }
+    
+        binaryLog.close();
     }
     
     void StateTable::clearDefinitions() {

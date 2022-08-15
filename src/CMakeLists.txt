@@ -6,16 +6,25 @@ find_package(FLEX REQUIRED)
 
 pkg_check_modules(MARIADB REQUIRED mariadb)
 pkg_check_modules(FMT REQUIRED fmt)
+pkg_check_modules(SPDLOG REQUIRED spdlog)
+
+add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 
 set(ULTRAVERSE_DEPENDENCIES
     ${MARIADB_LIBRARIES}
     ${FMT_LIBRARIES}
+    ${SPDLOG_LIBRARIES}
     
     sqlparser
 )
 
 set(ULTRAVERSE_SRCS
     Application.cpp
+    
+    base/DBEvent.cpp
+    base/DBHandlePool.cpp
+    base/DBHandlePool.hpp
+    
     mariadb/BinaryLog.cpp
     mariadb/DBHandle.cpp
     mariadb/DBEvent.cpp
@@ -42,7 +51,7 @@ set(ULTRAVERSE_SRCS
     
     utils/log.cpp
     utils/log.hpp
-)
+    mariadb/binlog/BinaryLogReader.cpp mariadb/binlog/BinaryLogReader.hpp mariadb/binlog/BinaryLogReader.cpp mariadb/binlog/BinaryLogReader.hpp mariadb/binlog/BinaryLogEvents.hpp)
 
 include_directories(../dependencies/sql-parser/src)
 include_directories(../dependencies/sql-parser/src/parser)
@@ -51,6 +60,11 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR}/../dependencies/sql-parser)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
+
 add_executable(state_log_viewer ${ULTRAVERSE_SRCS} state_log_viewer.cpp)
+add_executable(state_log_writer ${ULTRAVERSE_SRCS} state_log_writer.cpp)
+add_executable(db_state_change ${ULTRAVERSE_SRCS} db_state_change.cpp)
 
 target_link_libraries(state_log_viewer ${ULTRAVERSE_DEPENDENCIES})
+target_link_libraries(state_log_writer ${ULTRAVERSE_DEPENDENCIES})
+target_link_libraries(db_state_change ${ULTRAVERSE_DEPENDENCIES})

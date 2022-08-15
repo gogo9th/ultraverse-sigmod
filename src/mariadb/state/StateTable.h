@@ -48,9 +48,9 @@ namespace ultraverse::state {
             EN_STATE_LOG_TABLE,
         };
         
-        StateTable(Query _user_transaction);
+        StateTable(DBHandlePool<mariadb::DBHandle> &dbHandlePool, Query _user_transaction);
         
-        StateTable();
+        StateTable(DBHandlePool<mariadb::DBHandle> &dbHandlePool);
         
         StateTable(const StateTable &table);
         
@@ -72,7 +72,7 @@ namespace ultraverse::state {
         
         
         LoggerPtr _logger;
-        DBHandlePool<mariadb::DBHandle> _dbHandlePool;
+        DBHandlePool<mariadb::DBHandle> &_dbHandlePool;
     public:
         
         /* v2 END */
