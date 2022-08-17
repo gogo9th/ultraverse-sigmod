@@ -12,6 +12,7 @@
 
 
 using LoggerPtr = std::shared_ptr<spdlog::logger>;
+
 LoggerPtr createLogger(const std::string &name);
 
 

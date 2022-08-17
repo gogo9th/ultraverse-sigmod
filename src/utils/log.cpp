@@ -6,8 +6,19 @@
 
 #include <cstdarg>
 
+inline auto initLoggerSink() {
+    auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_st>();
+    sink->set_level(spdlog::level::trace);
+    
+    return sink;
+}
+
+static auto loggerSink = initLoggerSink();
 LoggerPtr createLogger(const std::string &name) {
-    return spdlog::stdout_color_st(name);
+    auto logger = std::make_shared<spdlog::logger>(name, loggerSink);
+    logger->set_level(spdlog::level::trace);
+    
+    return logger;
 }
 
 /**
