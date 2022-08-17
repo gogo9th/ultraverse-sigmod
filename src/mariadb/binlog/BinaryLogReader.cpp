@@ -43,10 +43,12 @@ namespace ultraverse::mariadb {
         _stream.close();
     }
     
-    void BinaryLogReader::seek(int64_t position) {
+    bool BinaryLogReader::seek(int64_t position) {
         _logger->trace("seeking offset: {}", position);
         _stream.seekg(position);
         _pos = position;
+        
+        return _stream.good();
     }
     
     bool BinaryLogReader::next() {
@@ -75,6 +77,10 @@ namespace ultraverse::mariadb {
         seek(header->log_pos);
         
         return true;
+    }
+    
+    int BinaryLogReader::pos() {
+        return _pos;
     }
     
     std::shared_ptr<base::DBEvent> BinaryLogReader::currentEvent() {
@@ -152,5 +158,95 @@ namespace ultraverse::mariadb {
         
         return std::make_shared<TransactionIDEvent>(xid, timestamp);
     }
+    
+    BinaryLogSequentialReader::BinaryLogSequentialReader(const std::string &indexFile):
+        _logger(createLogger("BinaryLogSeqReader")),
+    
+        _indexFile(indexFile),
+        _currentIndex(0)
+    {
+        updateIndex();
+        seek(_currentIndex, 4);
+    }
+    
+    bool BinaryLogSequentialReader::seek(int index, int64_t position) {
+        assert(index < _logFileList.size());
+        
+        openLog(_logFileList[index]);
+        _currentIndex = index;
+        
+        return _binaryLogReader->seek(position);
+    }
+    
+    bool BinaryLogSequentialReader::next() {
+        while (true) {
+            if (_binaryLogReader == nullptr) {
+                return false;
+            }
+        
+            auto result = _binaryLogReader->next();
+            if (!result) {
+                using namespace std::chrono_literals;
+                
+                if (pollNext()) {
+                    continue;
+                }
+                std::this_thread::sleep_for(5s);
+            } else {
+                return true;
+            }
+        }
+    
+        return false;
+    }
+    
+    bool BinaryLogSequentialReader::pollNext() {
+        updateIndex();
+        if (_currentIndex + 1 != _logFileList.size()) {
+            seek(_currentIndex + 1, 4);
+            return true;
+        } else {
+            seek(_currentIndex, _binaryLogReader->pos());
+            return false;
+        }
+        
+        // ?
+        return false;
+    }
+    
+    void BinaryLogSequentialReader::updateIndex() {
+        _logFileList.clear();
+        std::ifstream stream(_indexFile, std::ios::in);
+        
+        if (!stream.good()) {
+            throw std::runtime_error(
+                fmt::format("could not open index file: {}", _indexFile)
+            );
+        }
+        
+        std::string line;
+        while (std::getline(stream, line)) {
+            _logFileList.push_back(line);
+        }
+    }
+    
+    void BinaryLogSequentialReader::openLog(const std::string &logFile) {
+        if (_binaryLogReader != nullptr) {
+            _binaryLogReader->close();
+            _binaryLogReader = nullptr;
+        }
+        
+        _binaryLogReader = std::make_unique<BinaryLogReader>(logFile);
+        _binaryLogReader->open();
+    }
+    
+    std::shared_ptr<base::DBEvent> BinaryLogSequentialReader::currentEvent() {
+        if (_binaryLogReader == nullptr) {
+            return nullptr;
+        }
+        
+        return _binaryLogReader->currentEvent();
+    }
+    
     
 }

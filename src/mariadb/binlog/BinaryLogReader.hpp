@@ -27,8 +27,10 @@ namespace ultraverse::mariadb {
         void open();
         void close();
         
-        void seek(int64_t position);
+        bool seek(int64_t position);
         bool next();
+        
+        int pos();
         
         std::shared_ptr<base::DBEvent> currentEvent();
         
@@ -55,6 +57,31 @@ namespace ultraverse::mariadb {
         bool _hasChecksum;
         
         std::shared_ptr<base::DBEvent> _currentEvent;
+    };
+    
+    class BinaryLogSequentialReader {
+    public:
+        explicit BinaryLogSequentialReader(const std::string &indexFile);
+    
+        bool seek(int index, int64_t position);
+        bool next();
+    
+        std::shared_ptr<base::DBEvent> currentEvent();
+        
+    private:
+        void updateIndex();
+        void openLog(const std::string &logFile);
+        
+        bool pollNext();
+        
+        LoggerPtr _logger;
+        
+        std::string _indexFile;
+        std::vector<std::string> _logFileList;
+        // TOOD: currentFile or currentIndex;
+        int _currentIndex;
+        
+        std::unique_ptr<BinaryLogReader> _binaryLogReader;
     };
 }
 
