@@ -135,6 +135,10 @@ namespace ultraverse::mariadb {
         return _timestamp;
     }
     
+    RowEvent::Type RowEvent::type() const {
+        return _type;
+    }
+    
     uint64_t RowEvent::tableId() const {
         return _tableId;
     }
@@ -145,16 +149,14 @@ namespace ultraverse::mariadb {
         while (pos < _dataSize) {
             {
                 auto rowSize = calculateRowSize(tableMapEvent, pos);
-                auto block = std::shared_ptr<uint8_t>(new uint8_t[rowSize]);
-                memcpy(block.get(), _rowData.get() + pos, rowSize);
+                auto block = std::string((char *) _rowData.get() + pos, rowSize);
                 _rowSet.push_back(block);
                 pos += rowSize;
             }
             
             if (_type == UPDATE) {
                 auto rowSize = calculateRowSize(tableMapEvent, pos);
-                auto block = std::shared_ptr<uint8_t>(new uint8_t[rowSize]);
-                memcpy(block.get(), _rowData.get() + pos, rowSize);
+                auto block = std::string((char *) _rowData.get() + pos, rowSize);
                 _changeSet.push_back(block);
                 pos += rowSize;
             }
@@ -193,11 +195,11 @@ namespace ultraverse::mariadb {
         return _affectedRows;
     }
     
-    std::shared_ptr<uint8_t> RowEvent::rowSet(int at) {
+    std::string RowEvent::rowSet(int at) {
         return _rowSet[at];
     }
     
-    std::shared_ptr<uint8_t> RowEvent::changeSet(int at) {
+    std::string RowEvent::changeSet(int at) {
         return _changeSet[at];
     }
 }

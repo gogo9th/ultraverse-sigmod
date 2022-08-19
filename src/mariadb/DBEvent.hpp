@@ -96,6 +96,8 @@ namespace ultraverse::mariadb {
         
         uint64_t timestamp() override;
         
+        Type type() const;
+        
         uint64_t tableId() const;
         
         void mapToTable(TableMapEvent &tableMapEvent);
@@ -109,11 +111,11 @@ namespace ultraverse::mariadb {
         /**
          * @note call mapToTable() first.
          */
-        std::shared_ptr<uint8_t> rowSet(int at);
+        std::string rowSet(int at);
         /**
          * @note call mapToTable() first.
          */
-        std::shared_ptr<uint8_t> changeSet(int at);
+        std::string changeSet(int at);
     private:
         int calculateRowSize(TableMapEvent &tableMapEvent, int basePos);
         
@@ -128,8 +130,8 @@ namespace ultraverse::mariadb {
         
         int _affectedRows;
         
-        std::vector<std::shared_ptr<uint8_t>> _rowSet;
-        std::vector<std::shared_ptr<uint8_t>> _changeSet;
+        std::vector<std::string> _rowSet;
+        std::vector<std::string> _changeSet;
         
     };
     
