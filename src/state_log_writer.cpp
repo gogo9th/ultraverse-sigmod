@@ -1,5 +1,6 @@
 #include <iostream>
 
+#include "mariadb/state/StateHash.hpp"
 #include "mariadb/DBHandle.hpp"
 #include "mariadb/BinaryLog.hpp"
 
@@ -29,6 +30,7 @@ public:
         BinaryLogSequentialReader seqReader("cheese-binlog.index");
         
         std::unordered_map<uint64_t, std::shared_ptr<TableMapEvent>> tableMap;
+        std::unordered_map<uint64_t, StateHash> stateHashMap;
         
     
         while (seqReader.next()) {
@@ -66,8 +68,29 @@ public:
                 auto rowEvent = std::dynamic_pointer_cast<RowEvent>(event);
                 _logger->info("[ROW] read row event: mapping table with id {}", rowEvent->tableId());
                 
+                
                 auto &table = tableMap[rowEvent->tableId()];
+                auto &hash = stateHashMap[rowEvent->tableId()];
                 rowEvent->mapToTable(*table);
+    
+                for (int i = 0; i < rowEvent->affectedRows(); i++) {
+                    switch (rowEvent->type()) {
+                        case RowEvent::INSERT:
+                            hash += rowEvent->rowSet(i);
+                            break;
+                        case RowEvent::DELETE:
+                            hash -= rowEvent->rowSet(i);
+                            break;
+                            
+                        case RowEvent::UPDATE:
+                            hash -= rowEvent->rowSet(i);
+                            hash += rowEvent->changeSet(i);
+                            break;
+                    }
+    
+                    hash.hexdump();
+                }
+    
                 _logger->info("affected rows: {}", rowEvent->affectedRows());
             }
             
