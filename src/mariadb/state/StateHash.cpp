@@ -5,7 +5,6 @@
 #include <cassert>
 #include <algorithm>
 
-
 #include "StateHash.hpp"
 
 namespace ultraverse::state {
@@ -37,7 +36,12 @@ namespace ultraverse::state {
         hashList.reserve(count);
         
         for (int i = 0; i < count; i++) {
-            hashList.push_back(BigNumPtr(BN_new(), BN_free));
+            BigNumPtr hash(BN_new(), BN_free);
+            
+            auto *rawPtr = hash.get();
+            BN_dec2bn(&rawPtr, "1");
+            
+            hashList.push_back(hash);
         }
         
         return hashList;
@@ -72,15 +76,20 @@ namespace ultraverse::state {
         return true;
     }
     
+    void StateHash::hexdump() {
+        int index = 0;
+        for (auto &hash: _hashList) {
+            auto hexstr = BN_bn2hex(hash.get());
+            std::printf("StateHash::hexdump(%d): %s\n", index++, hexstr);
+            OPENSSL_free(hexstr);
+        }
+    }
+    
     StateHash::HashValue StateHash::calculateHash(StateHash::Record &record) {
         HashValue hashValue;
         MD5_CTX md5Ctx;
         MD5_Init(&md5Ctx);
-        
-        for (auto &fieldVal: record) {
-            MD5_Update(&md5Ctx, fieldVal.c_str(), fieldVal.size());
-        }
-    
+        MD5_Update(&md5Ctx, record.c_str(), record.size());
         MD5_Final(hashValue.data(), &md5Ctx);
         
         return hashValue;
@@ -149,18 +158,16 @@ namespace ultraverse::state {
         }
     }
     
-    StateHash StateHash::operator+(StateHash::Record &record) {
-        StateHash result(*this);
-        result.compute(record, INSERT);
+    StateHash &StateHash::operator+=(StateHash::Record record) {
+        compute(record, INSERT);
         
-        return result;
+        return *this;
     }
     
-    StateHash StateHash::operator-(StateHash::Record &record) {
-        StateHash result(*this);
-        result.compute(record, DELETE);
+    StateHash &StateHash::operator-=(StateHash::Record record) {
+        compute(record, DELETE);
     
-        return result;
+        return *this;
     }
     
     bool StateHash::operator==(StateHash &other) {

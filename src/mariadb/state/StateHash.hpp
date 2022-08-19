@@ -41,10 +41,8 @@ namespace ultraverse::state {
         using HashValueList = std::vector<HashValue>;
         using HashStringList = std::vector<std::string>;
         
-        /** 변경된 row의 각 필드값 */
-        using FieldValue = std::string;
         /** 변경된 row의 전체 필드값 */
-        using Record = std::vector<FieldValue>;
+        using Record = std::string;
         
    
         /**
@@ -58,9 +56,10 @@ namespace ultraverse::state {
         StateHash(StateHash &other);
         
         void compute(Record &record, EventType type);
+        void hexdump();
         
-        StateHash operator+(Record &record);
-        StateHash operator-(Record &record);
+        StateHash& operator+=(Record record);
+        StateHash& operator-=(Record record);
         
         bool operator==(StateHash &other);
     private:
