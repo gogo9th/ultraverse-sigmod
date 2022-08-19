@@ -26,7 +26,7 @@ public:
         
         spdlog::set_level(spdlog::level::trace);
     
-        BinaryLogSequentialReader seqReader("/var/lib/mysql/cheese-binlog.index");
+        BinaryLogSequentialReader seqReader("cheese-binlog.index");
     
         while (seqReader.next()) {
             auto event = seqReader.currentEvent();
@@ -50,6 +50,11 @@ public:
             if (event->eventType() == event_type::TXNID) {
                 auto txnIDEvent = std::dynamic_pointer_cast<TransactionIDEvent>(event);
                 _logger->info("XID {} committed", txnIDEvent->transactionId());
+            }
+            
+            if (event->eventType() == event_type::ROW_QUERY) {
+                auto rowQueryEvent = std::dynamic_pointer_cast<RowQueryEvent>(event);
+                _logger->info("[ROW] query executed @ {}", rowQueryEvent->statement());
             }
         }
         

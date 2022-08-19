@@ -64,6 +64,22 @@ namespace ultraverse::mariadb::internal {
         TRANSACTION_CONTEXT_EVENT= 36,
         VIEW_CHANGE_EVENT= 37,
         XA_PREPARE_LOG_EVENT= 38,
+    
+        
+        // mariadb variants
+        ANNOTATE_ROWS_EVENT= 160,
+        BINLOG_CHECKPOINT_EVENT= 161,
+        GTID_EVENT= 162,
+        GTID_LIST_EVENT= 163,
+        START_ENCRYPTION_EVENT= 164,
+        QUERY_COMPRESSED_EVENT = 165,
+        WRITE_ROWS_COMPRESSED_EVENT_V1 = 166,
+        UPDATE_ROWS_COMPRESSED_EVENT_V1 = 167,
+        DELETE_ROWS_COMPRESSED_EVENT_V1 = 168,
+        WRITE_ROWS_COMPRESSED_EVENT = 169,
+        UPDATE_ROWS_COMPRESSED_EVENT = 170,
+        DELETE_ROWS_COMPRESSED_EVENT = 171,
+    
     };
     
     struct EventHeader {
@@ -105,6 +121,20 @@ namespace ultraverse::mariadb::internal {
     
     struct XIDEvent {
         int8 xid;
+    } PACKED_STRUCT;
+    
+    struct RowEventPostHeader {
+        int2 table_id_high;
+        int4 table_id_low;
+        
+        int2 flags;
+    } PACKED_STRUCT;
+    
+    /**
+     * not available in MariaDB
+     */
+    struct RowEventPostHeaderV2 {
+        int2 extra_data_length;
     } PACKED_STRUCT;
     
 }

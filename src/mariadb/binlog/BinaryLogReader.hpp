@@ -48,6 +48,12 @@ namespace ultraverse::mariadb {
         std::shared_ptr<base::TransactionIDEventBase>
         readXIDEvent(std::shared_ptr<internal::EventHeader> header);
         
+        std::shared_ptr<RowQueryEvent>
+        readRowAnnotationEvent(std::shared_ptr<internal::EventHeader> header);
+        
+        std::shared_ptr<RowEvent>
+        readRowEvent(std::shared_ptr<internal::EventHeader> header, RowEvent::Type eventType, bool isV2);
+        
         LoggerPtr _logger;
         std::string _filename;
         

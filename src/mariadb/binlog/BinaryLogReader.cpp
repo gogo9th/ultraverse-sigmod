@@ -70,6 +70,14 @@ namespace ultraverse::mariadb {
             _currentEvent = readQueryEvent(header);
         } else if (eventType == internal::XID_EVENT) {
             _currentEvent = readXIDEvent(header);
+        } else if (eventType == internal::ANNOTATE_ROWS_EVENT) {
+            _currentEvent = readRowAnnotationEvent(header);
+        } else if (eventType == internal::WRITE_ROWS_EVENT_V1) {
+            _currentEvent = readRowEvent(header, RowEvent::INSERT, false);
+        } else if (eventType == internal::UPDATE_ROWS_EVENT_V1) {
+            _currentEvent = readRowEvent(header, RowEvent::UPDATE, false);
+        } else if (eventType == internal::DELETE_ROWS_EVENT_V1) {
+            _currentEvent = readRowEvent(header, RowEvent::DELETE, false);
         } else {
             _logger->trace("unsupported event type: {}", (int) eventType);
         }
@@ -157,6 +165,48 @@ namespace ultraverse::mariadb {
         auto xid = xidEvent->xid;
         
         return std::make_shared<TransactionIDEvent>(xid, timestamp);
+    }
+    
+    std::shared_ptr<RowQueryEvent>
+    BinaryLogReader::readRowAnnotationEvent(std::shared_ptr<internal::EventHeader> header) {
+        auto queryLength = header->event_size - sizeof(internal::EventHeader);
+        
+        auto queryCStr = std::shared_ptr<uint8_t>(new uint8_t[queryLength]);
+        _stream.read((char *) queryCStr.get(), (int) queryLength);
+        
+        std::string query((char *) queryCStr.get(), (int) queryLength);
+        auto timestamp = header->timestamp;
+        
+        return std::make_shared<RowQueryEvent>(query, timestamp);
+    }
+    
+    std::shared_ptr<RowEvent>
+    BinaryLogReader::readRowEvent(std::shared_ptr<internal::EventHeader> header, RowEvent::Type eventType, bool isV2) {
+        auto postHeader = std::make_shared<internal::RowEventPostHeader>();
+        _stream.read((char *) postHeader.get(), sizeof(internal::RowEventPostHeader));
+        
+        if (isV2) {
+            auto postHeaderV2 = std::make_shared<internal::RowEventPostHeaderV2>();
+            _stream.read((char *) postHeaderV2.get(), sizeof(internal::RowEventPostHeaderV2));
+    
+            auto extraData = std::shared_ptr<uint8_t>(new uint8_t[postHeaderV2->extra_data_length]);
+            _stream.read((char *) extraData.get(), postHeaderV2->extra_data_length);
+        }
+        
+        uint64_t tableId = (postHeader->table_id_high << 4) | postHeader->table_id_low;
+        _logger->trace("tableId: {}", (int) tableId);
+        
+        uint8_t columns = 0;
+        _stream.read((char *) &columns, sizeof(uint8_t));
+        
+        auto colsSize = (int) ((columns + 7) / 8);
+        
+        auto bitmapBefore = std::unique_ptr<uint8_t>(new uint8_t[colsSize]);
+        auto bitmapAfter  = std::unique_ptr<uint8_t>(new uint8_t[colsSize]);
+        
+        _stream.read((char *) bitmapBefore.get(), colsSize);
+        _stream.read((char *) bitmapAfter.get(), colsSize);
+        
     }
     
     BinaryLogSequentialReader::BinaryLogSequentialReader(const std::string &indexFile):
@@ -247,6 +297,8 @@ namespace ultraverse::mariadb {
         
         return _binaryLogReader->currentEvent();
     }
+    
+    
     
     
 }

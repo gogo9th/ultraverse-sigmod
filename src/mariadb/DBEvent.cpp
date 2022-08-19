@@ -69,4 +69,18 @@ namespace ultraverse::mariadb {
         return _database;
     }
     
+    RowQueryEvent::RowQueryEvent(const std::string &statement, uint64_t timestamp):
+        _statement(statement),
+        _timestamp(timestamp)
+    {
+    
+    }
+    
+    uint64_t RowQueryEvent::timestamp() {
+        return _timestamp;
+    }
+    
+    std::string RowQueryEvent::statement() {
+        return _statement;
+    }
 }

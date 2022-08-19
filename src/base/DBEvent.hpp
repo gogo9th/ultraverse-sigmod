@@ -20,6 +20,9 @@ namespace ultraverse::event_type {
         
         TXNID = 10,
         QUERY = 11,
+        
+        ROW_EVENT = 20,
+        ROW_QUERY = 21,
     };
 }
 
