@@ -313,8 +313,12 @@ namespace ultraverse::mariadb {
         auto bitmapAfter  = std::unique_ptr<uint8_t>(new uint8_t[colsSize]);
         
         _stream.read((char *) bitmapBefore.get(), colsSize);
-        _stream.read((char *) bitmapAfter.get(), colsSize);
-        totalRead += colsSize * 2;
+        totalRead += colsSize;
+        
+        if (eventType == RowEvent::UPDATE) {
+            _stream.read((char *) bitmapAfter.get(), colsSize);
+            totalRead += colsSize;
+        }
         
         auto dataSize = header->event_size - totalRead;
         auto data = std::shared_ptr<uint8_t>(new uint8_t[dataSize]);
