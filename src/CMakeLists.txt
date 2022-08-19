@@ -51,7 +51,19 @@ set(ULTRAVERSE_SRCS
     
     utils/log.cpp
     utils/log.hpp
-    mariadb/binlog/BinaryLogReader.cpp mariadb/binlog/BinaryLogReader.hpp mariadb/binlog/BinaryLogReader.cpp mariadb/binlog/BinaryLogReader.hpp mariadb/binlog/BinaryLogEvents.hpp mariadb/state/StateHash.cpp mariadb/state/StateHash.hpp)
+    mariadb/binlog/BinaryLogReader.cpp
+    mariadb/binlog/BinaryLogReader.hpp
+    mariadb/binlog/BinaryLogReader.cpp
+    mariadb/binlog/BinaryLogReader.hpp
+    mariadb/binlog/BinaryLogEvents.hpp
+    mariadb/state/StateHash.cpp
+    mariadb/state/StateHash.hpp
+    
+    mariadb/state/new/Query.cpp
+    mariadb/state/new/Query.hpp
+    mariadb/state/new/Transaction.cpp
+    mariadb/state/new/Transaction.hpp
+    )
 
 include_directories(../dependencies/sql-parser/src)
 include_directories(../dependencies/sql-parser/src/parser)

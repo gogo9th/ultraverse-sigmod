@@ -100,6 +100,9 @@ namespace ultraverse::mariadb {
         
         uint64_t tableId() const;
         
+        /**
+         * FIXME: 이거 모든 필드 해석할 수 있어야됨 안그러면 롤백 못하지 않나..??
+         */
         void mapToTable(TableMapEvent &tableMapEvent);
         
         /**
