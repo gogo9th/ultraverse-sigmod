@@ -51,6 +51,31 @@ namespace ultraverse::mariadb {
         std::string _database;
     };
     
+    class TableMapEvent: public base::DBEvent {
+    public:
+        TableMapEvent(uint64_t tableId, std::string database, std::string table, std::vector<int> columns, uint64_t timestamp);
+        
+        event_type::Value eventType() override {
+            return event_type::TABLE_MAP;
+        }
+       
+        uint64_t timestamp() override;
+        
+        uint64_t tableId() const;
+        
+        std::string database() const;
+        std::string table() const;
+        
+        int sizeOf(int columnIndex) const;
+        
+    private:
+        uint64_t _timestamp;
+        uint64_t _tableId;
+        
+        std::string _database;
+        std::string _table;
+        std::vector<int> _columns;
+    };
     
     class RowEvent: public base::DBEvent {
     public:
@@ -60,15 +85,51 @@ namespace ultraverse::mariadb {
             DELETE
         };
         
+        explicit RowEvent(Type type, uint64_t tableId, int columns,
+                          std::shared_ptr<uint8_t> rowData, int dataSize,
+                          uint64_t timestamp);
+        
+        
         event_type::Value eventType() override {
             return event_type::ROW_EVENT;
         }
         
+        uint64_t timestamp() override;
         
+        uint64_t tableId() const;
         
+        void mapToTable(TableMapEvent &tableMapEvent);
+        
+        /**
+         * @note call mapToTable() first.
+         */
+        [[nodiscard]]
+        int affectedRows() const;
+    
+        /**
+         * @note call mapToTable() first.
+         */
+        std::shared_ptr<uint8_t> rowSet(int at);
+        /**
+         * @note call mapToTable() first.
+         */
+        std::shared_ptr<uint8_t> changeSet(int at);
     private:
-        std::vector<std::vector<std::string>> rowSet;
-        std::vector<std::vector<std::string>> changeSet;
+        int calculateRowSize(TableMapEvent &tableMapEvent, int basePos);
+        
+        Type _type;
+        
+        uint64_t _timestamp;
+        uint64_t _tableId;
+        int _columns;
+        
+        std::shared_ptr<uint8_t> _rowData;
+        int _dataSize;
+        
+        int _affectedRows;
+        
+        std::vector<std::shared_ptr<uint8_t>> _rowSet;
+        std::vector<std::shared_ptr<uint8_t>> _changeSet;
         
     };
     

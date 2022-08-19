@@ -123,6 +123,13 @@ namespace ultraverse::mariadb::internal {
         int8 xid;
     } PACKED_STRUCT;
     
+    struct TableMapEventPostHeader {
+        int2 table_id_high;
+        int4 table_id_low;
+        
+        int2 flags;
+    } PACKED_STRUCT;
+    
     struct RowEventPostHeader {
         int2 table_id_high;
         int4 table_id_low;

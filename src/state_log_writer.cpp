@@ -27,6 +27,9 @@ public:
         spdlog::set_level(spdlog::level::trace);
     
         BinaryLogSequentialReader seqReader("cheese-binlog.index");
+        
+        std::unordered_map<uint64_t, std::shared_ptr<TableMapEvent>> tableMap;
+        
     
         while (seqReader.next()) {
             auto event = seqReader.currentEvent();
@@ -50,6 +53,22 @@ public:
             if (event->eventType() == event_type::TXNID) {
                 auto txnIDEvent = std::dynamic_pointer_cast<TransactionIDEvent>(event);
                 _logger->info("XID {} committed", txnIDEvent->transactionId());
+            }
+            
+            if (event->eventType() == event_type::TABLE_MAP) {
+                auto tableMapEvent = std::dynamic_pointer_cast<TableMapEvent>(event);
+                _logger->info("[ROW] read table map: {}.{}", tableMapEvent->database(), tableMapEvent->table());
+                
+                tableMap[tableMapEvent->tableId()] = tableMapEvent;
+            }
+            
+            if (event->eventType() == event_type::ROW_EVENT) {
+                auto rowEvent = std::dynamic_pointer_cast<RowEvent>(event);
+                _logger->info("[ROW] read row event: mapping table with id {}", rowEvent->tableId());
+                
+                auto &table = tableMap[rowEvent->tableId()];
+                rowEvent->mapToTable(*table);
+                _logger->info("affected rows: {}", rowEvent->affectedRows());
             }
             
             if (event->eventType() == event_type::ROW_QUERY) {

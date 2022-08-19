@@ -9,6 +9,7 @@
 #include "../DBEvent.hpp"
 
 #include "BinaryLogReader.hpp"
+#include "ProtocolBinary.hpp"
 
 namespace ultraverse::mariadb {
     BinaryLogReader::BinaryLogReader(const std::string &filename):
@@ -70,6 +71,8 @@ namespace ultraverse::mariadb {
             _currentEvent = readQueryEvent(header);
         } else if (eventType == internal::XID_EVENT) {
             _currentEvent = readXIDEvent(header);
+        } else if (eventType == internal::TABLE_MAP_EVENT) {
+            _currentEvent = readTableMapEvent(header);
         } else if (eventType == internal::ANNOTATE_ROWS_EVENT) {
             _currentEvent = readRowAnnotationEvent(header);
         } else if (eventType == internal::WRITE_ROWS_EVENT_V1) {
@@ -167,6 +170,104 @@ namespace ultraverse::mariadb {
         return std::make_shared<TransactionIDEvent>(xid, timestamp);
     }
     
+    std::shared_ptr<TableMapEvent> BinaryLogReader::readTableMapEvent(std::shared_ptr<internal::EventHeader> header) {
+        auto postHeader = std::make_shared<internal::TableMapEventPostHeader>();
+        _stream.read((char *) postHeader.get(), sizeof(internal::TableMapEventPostHeader));
+    
+        uint64_t tableId = (postHeader->table_id_high << 4) | postHeader->table_id_low;
+        
+        uint8_t schemaNameLength = 0;
+        uint8_t tableNameLength = 0;
+        _stream.read((char *) &schemaNameLength, sizeof(uint8_t));
+        
+        auto schemaNameCStr = std::shared_ptr<uint8_t>(new uint8_t[schemaNameLength + 1]);
+        _stream.read((char *) schemaNameCStr.get(), schemaNameLength + 1);
+        
+        _stream.read((char *) &tableNameLength, sizeof(uint8_t));
+    
+        auto tableNameCStr = std::shared_ptr<uint8_t>(new uint8_t[tableNameLength + 1]);
+        _stream.read((char *) tableNameCStr.get(), tableNameLength + 1);
+    
+        uint8_t columns = 0;
+        _stream.read((char *) &columns, sizeof(uint8_t));
+        
+        auto columnTypeDef = std::shared_ptr<uint8_t>(new uint8_t[columns]);
+        _stream.read((char *) columnTypeDef.get(), columns);
+        
+        std::string schemaName((char *) schemaNameCStr.get(), schemaNameLength);
+        std::string tableName((char *) tableNameCStr.get(), tableNameLength);
+        
+        std::vector<int> columnTypeDef2;
+        columnTypeDef2.reserve(columns);
+        
+        for (int i = 0; i < columns; i++) {
+            using namespace internal;
+            switch (columnTypeDef.get()[i]) {
+                case MYSQL_TYPE_STRING:
+                case MYSQL_TYPE_VARCHAR:
+                case MYSQL_TYPE_VAR_STRING:
+                case MYSQL_TYPE_ENUM:
+                case MYSQL_TYPE_SET:
+                case MYSQL_TYPE_LONG_BLOB:
+                case MYSQL_TYPE_MEDIUM_BLOB:
+                case MYSQL_TYPE_BLOB:
+                case MYSQL_TYPE_TINY_BLOB:
+                case MYSQL_TYPE_GEOMETRY:
+                case MYSQL_TYPE_BIT:
+                case MYSQL_TYPE_DECIMAL:
+                case MYSQL_TYPE_NEWDECIMAL:
+                    columnTypeDef2.push_back(-1);
+                    break;
+                    
+                case MYSQL_TYPE_LONGLONG:
+                    columnTypeDef2.push_back(8);
+                    break;
+                    
+                case MYSQL_TYPE_LONG:
+                case MYSQL_TYPE_INT24:
+                    columnTypeDef2.push_back(4);
+                    break;
+                    
+                case MYSQL_TYPE_SHORT:
+                case MYSQL_TYPE_YEAR:
+                    columnTypeDef2.push_back(2);
+                    break;
+                    
+                case MYSQL_TYPE_TINY:
+                    columnTypeDef2.push_back(1);
+                    break;
+                    
+                case MYSQL_TYPE_DOUBLE:
+                    columnTypeDef2.push_back(8);
+                    break;
+                    
+                case MYSQL_TYPE_FLOAT:
+                    columnTypeDef2.push_back(4);
+                    break;
+                    
+                case MYSQL_TYPE_DATE:
+                case MYSQL_TYPE_DATETIME:
+                case MYSQL_TYPE_TIMESTAMP:
+                case MYSQL_TYPE_TIME:
+                    columnTypeDef2.push_back(-1);
+                    break;
+                    
+                default:
+                    throw std::runtime_error(
+                        fmt::format("unsupported field type {}.", columnTypeDef.get()[i])
+                    );
+            }
+        }
+        
+        auto timestamp = header->timestamp;
+        
+        return std::make_shared<TableMapEvent>(
+            tableId,
+            schemaName, tableName, columnTypeDef2,
+            timestamp
+        );
+    }
+    
     std::shared_ptr<RowQueryEvent>
     BinaryLogReader::readRowAnnotationEvent(std::shared_ptr<internal::EventHeader> header) {
         auto queryLength = header->event_size - sizeof(internal::EventHeader);
@@ -182,15 +283,20 @@ namespace ultraverse::mariadb {
     
     std::shared_ptr<RowEvent>
     BinaryLogReader::readRowEvent(std::shared_ptr<internal::EventHeader> header, RowEvent::Type eventType, bool isV2) {
+        int totalRead = sizeof(internal::EventHeader);
+        
         auto postHeader = std::make_shared<internal::RowEventPostHeader>();
         _stream.read((char *) postHeader.get(), sizeof(internal::RowEventPostHeader));
+        totalRead += sizeof(internal::RowEventPostHeader);
         
         if (isV2) {
             auto postHeaderV2 = std::make_shared<internal::RowEventPostHeaderV2>();
             _stream.read((char *) postHeaderV2.get(), sizeof(internal::RowEventPostHeaderV2));
+            totalRead += sizeof(internal::RowEventPostHeaderV2);
     
             auto extraData = std::shared_ptr<uint8_t>(new uint8_t[postHeaderV2->extra_data_length]);
             _stream.read((char *) extraData.get(), postHeaderV2->extra_data_length);
+            totalRead += postHeaderV2->extra_data_length;
         }
         
         uint64_t tableId = (postHeader->table_id_high << 4) | postHeader->table_id_low;
@@ -198,6 +304,8 @@ namespace ultraverse::mariadb {
         
         uint8_t columns = 0;
         _stream.read((char *) &columns, sizeof(uint8_t));
+        totalRead += sizeof(uint8_t);
+        
         
         auto colsSize = (int) ((columns + 7) / 8);
         
@@ -206,7 +314,20 @@ namespace ultraverse::mariadb {
         
         _stream.read((char *) bitmapBefore.get(), colsSize);
         _stream.read((char *) bitmapAfter.get(), colsSize);
+        totalRead += colsSize * 2;
         
+        auto dataSize = header->event_size - totalRead;
+        auto data = std::shared_ptr<uint8_t>(new uint8_t[dataSize]);
+        _stream.read((char *) data.get(), dataSize);
+        
+        auto timestamp = header->timestamp;
+        
+        return std::make_shared<RowEvent>(
+            eventType,
+            tableId, columns,
+            data, dataSize,
+            timestamp
+        );
     }
     
     BinaryLogSequentialReader::BinaryLogSequentialReader(const std::string &indexFile):

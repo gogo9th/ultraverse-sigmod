@@ -2,7 +2,10 @@
 // Created by cheesekun on 8/10/22.
 //
 
+#include <cstdlib>
+
 #include "DBEvent.hpp"
+
 
 namespace ultraverse::mariadb {
     TransactionIDEvent::TransactionIDEvent(const MARIADB_RPL_EVENT *rplEvent):
@@ -69,6 +72,36 @@ namespace ultraverse::mariadb {
         return _database;
     }
     
+    TableMapEvent::TableMapEvent(uint64_t tableId, std::string database, std::string table, std::vector<int> columns, uint64_t timestamp):
+        _timestamp(timestamp),
+        _tableId(tableId),
+        _database(database),
+        _table(table),
+        _columns(columns)
+    {
+    
+    }
+    
+    uint64_t TableMapEvent::timestamp() {
+        return _timestamp;
+    }
+    
+    uint64_t TableMapEvent::tableId() const {
+        return _tableId;
+    }
+    
+    std::string TableMapEvent::database() const {
+        return _database;
+    }
+    
+    std::string TableMapEvent::table() const {
+        return _table;
+    }
+    
+    int TableMapEvent::sizeOf(int columnIndex) const {
+        return _columns[columnIndex];
+    }
+    
     RowQueryEvent::RowQueryEvent(const std::string &statement, uint64_t timestamp):
         _statement(statement),
         _timestamp(timestamp)
@@ -82,5 +115,89 @@ namespace ultraverse::mariadb {
     
     std::string RowQueryEvent::statement() {
         return _statement;
+    }
+    
+    RowEvent::RowEvent(Type type, uint64_t tableId, int columns,
+                       std::shared_ptr<uint8_t> rowData, int dataSize,
+                       uint64_t timestamp):
+        _timestamp(timestamp),
+       
+        _type(type),
+        _tableId(tableId),
+        _columns(columns),
+        _rowData(std::move(rowData)),
+        _dataSize(dataSize)
+    {
+        
+    }
+    
+    uint64_t RowEvent::timestamp() {
+        return _timestamp;
+    }
+    
+    uint64_t RowEvent::tableId() const {
+        return _tableId;
+    }
+    
+    void RowEvent::mapToTable(TableMapEvent &tableMapEvent) {
+        int pos = 0;
+        
+        while (pos < _dataSize) {
+            {
+                auto rowSize = calculateRowSize(tableMapEvent, pos);
+                auto block = std::shared_ptr<uint8_t>(new uint8_t[rowSize]);
+                memcpy(block.get(), _rowData.get() + pos, rowSize);
+                _rowSet.push_back(block);
+                pos += rowSize;
+            }
+            
+            if (_type == UPDATE) {
+                auto rowSize = calculateRowSize(tableMapEvent, pos);
+                auto block = std::shared_ptr<uint8_t>(new uint8_t[rowSize]);
+                memcpy(block.get(), _rowData.get() + pos, rowSize);
+                _changeSet.push_back(block);
+                pos += rowSize;
+            }
+        }
+        
+        _affectedRows = _rowSet.size();
+    }
+    
+    int RowEvent::calculateRowSize(TableMapEvent &tableMapEvent, int basePos) {
+        uint64_t nullFields = 0;
+        int nullFieldsSize = (_columns + 7) / 8;
+        
+        memcpy(&nullFields, _rowData.get() + basePos, (_columns + 7) / 8);
+        
+        int rowSize = 0;
+    
+        for (int i = 0; i < _columns; i++) {
+            int columnSize = tableMapEvent.sizeOf(i);
+            
+            if ((nullFields & (1 << i)) != 0) {
+                continue;
+            }
+        
+            if (columnSize == -1) {
+                int strLength = (_rowData.get()[basePos + nullFieldsSize + rowSize]) + 1;
+                rowSize += strLength;
+            } else {
+                rowSize += columnSize;
+            }
+        }
+        
+        return nullFieldsSize + rowSize;
+    }
+    
+    int RowEvent::affectedRows() const {
+        return _affectedRows;
+    }
+    
+    std::shared_ptr<uint8_t> RowEvent::rowSet(int at) {
+        return _rowSet[at];
+    }
+    
+    std::shared_ptr<uint8_t> RowEvent::changeSet(int at) {
+        return _changeSet[at];
     }
 }
