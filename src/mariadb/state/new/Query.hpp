@@ -14,6 +14,8 @@ namespace ultraverse::state::v2 {
     class Query {
     public:
         enum QueryType: uint8_t {
+            UNKNOWN,
+            
             CREATE,
             DROP,
             ALTER,
