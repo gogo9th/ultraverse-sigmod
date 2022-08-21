@@ -8,6 +8,8 @@
 #include <memory>
 #include <unordered_map>
 
+#include <cereal/access.hpp>
+
 #include "mariadb/state/StateHash.hpp"
 
 namespace ultraverse::state::v2 {
@@ -38,13 +40,25 @@ namespace ultraverse::state::v2 {
     
         Query();
         
+        std::string database() const;
+        void setDatabase(std::string database);
+        
+        std::string statement() const;
+        void setStatement(std::string statement);
+        
+        uint32_t affectedRows() const;
+        
+        void setBeforeHash(std::string tableName, StateHash &hash);
+        void setAfterHash(std::string tableName, StateHash &hash);
+        
         bool isDDL();
         bool isDML();
+    
+        template <typename Archive>
+        void serialize(Archive &archive);
         
     private:
         uint64_t _timestamp;
-        
-        uint64_t _nextPos;
         
         std::string _database;
         std::string _statement;
@@ -67,5 +81,7 @@ namespace ultraverse::state::v2 {
     };
 }
 
+
+#include "Query.cereal.cpp"
 
 #endif //ULTRAVERSE_STATE_QUERY_HPP

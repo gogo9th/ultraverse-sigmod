@@ -1,0 +1,33 @@
+//
+// Created by cheesekun on 8/21/22.
+//
+
+#include <cereal/archives/binary.hpp>
+
+#include "StateLogWriter.hpp"
+
+namespace ultraverse::state::v2 {
+    StateLogWriter::StateLogWriter(const std::string &logPath):
+        _logPath(logPath)
+    {
+    }
+    
+    StateLogWriter::~StateLogWriter() {
+    
+    }
+    
+    void StateLogWriter::open() {
+        _stream = std::ofstream(_logPath, std::ios::out | std::ios::binary);
+    }
+    
+    void StateLogWriter::close() {
+        _stream.close();
+    }
+    
+    StateLogWriter &StateLogWriter::operator<<(Transaction &transaction) {
+        cereal::BinaryOutputArchive archive(_stream);
+        archive(transaction);
+        
+        _stream.flush();
+    }
+}

@@ -62,6 +62,13 @@ namespace ultraverse::state {
         StateHash& operator-=(Record record);
         
         bool operator==(StateHash &other);
+        
+        template <typename Archive>
+        void save(Archive &archive) const;
+    
+        template <typename Archive>
+        void load(Archive &archive);
+        
     private:
         static std::vector<BigNumPtr> allocateHashList(int count);
         static inline BigNumPtr copyBigNumPtr(BigNumPtr source);
@@ -77,5 +84,7 @@ namespace ultraverse::state {
     };
 }
 
+
+#include "StateHash.cereal.cpp"
 
 #endif //ULTRAVERSE_STATEHASH_HPP

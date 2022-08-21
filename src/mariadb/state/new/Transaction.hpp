@@ -19,51 +19,80 @@ namespace ultraverse::state::v2 {
      */
     using gid_t = uint64_t;
     
+    class StateLogReader;
+    
+    struct TransactionHeader {
+        uint64_t timestamp;
+        
+        gid_t gid;
+        int xid;
+        bool isSuccessful;
+        
+        uint8_t flags;
+        
+        uint64_t nextPos;
+    } __attribute__ ((packed));
+    
     class Transaction {
     public:
-        static const uint8_t FLAG_IS_IGNORABLE = 0b00000001;
-        static const uint8_t FLAG_CONTAINS_DDL = 0b00000010;
+        static const uint8_t FLAG_HAS_DEPENDENCY  = 0b00000001;
+        static const uint8_t FLAG_CONTAINS_DDL    = 0b00000010;
+        /**
+         * indicates the hash is unreliable since row data has omitted (or corrupted)
+         */
+        static const uint8_t FLAG_UNRELIABLE_HASH = 0b00000100;
         
-        Transaction();
+        explicit Transaction();
         
-        void setGid(int gid);
-        void setXid(int xid);
+        gid_t gid() const;
+        void setGid(gid_t gid);
+        
+        uint64_t xid() const;
+        void setXid(uint64_t xid);
+        
+        uint64_t timestamp() const;
         void setTimestamp(uint64_t timestamp);
         
-        /**
-         * loads skipped fields. (eg. _queries)
-         */
-        void loadMore();
-    
+        uint8_t flags();
+        void setFlags(uint8_t flags);
+        
         /**
          * appends query object to transaction.
          * @param query
          */
-        Transaction &operator<<(std::shared_ptr<Query> query);
+        Transaction &operator<<(std::shared_ptr<Query> &query);
         
+        Transaction &operator+=(TransactionHeader &header);
+        
+        template <typename Archive>
+        void serialize(Archive &archive);
     private:
-        uint64_t timestamp;
+        friend class StateLogReader;
+        
+        uint64_t _timestamp;
         
         gid_t _gid;
-        int _xid;
+        uint64_t _xid;
         bool _isSuccessful;
+    
+        uint8_t _flags;
         
         uint64_t _nextPos;
         
-        // binlog reference
-        std::string _referenceFile;
-        uint64_t _referencePos;
+        std::vector<gid_t> _dependencies;
         
         // Pair<TABLE_NAME, HASH>
         std::unordered_map<std::string, StateHash> _beforeHash;
         std::unordered_map<std::string, StateHash> _afterHash;
+    
+        // binlog reference
+        std::string _referenceFile;
+        uint64_t _referencePos;
         
-        
-        bool _isFullyLoaded;
-        
-        // 당장은 skip하나 추가적으로 로드할 수 있는 필드들
         std::vector<std::shared_ptr<Query>> _queries;
     };
 }
+
+#include "Transaction.cereal.cpp"
 
 #endif //ULTRAVERSE_STATE_TRANSACTION_HPP

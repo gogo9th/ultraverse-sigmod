@@ -1,0 +1,70 @@
+//
+// Created by cheesekun on 8/21/22.
+//
+
+#include <cassert>
+
+#include <cereal/types/vector.hpp>
+#include <cereal/types/memory.hpp>
+#include <cereal/types/unordered_map.hpp>
+
+#include "StateHash.hpp"
+
+namespace ultraverse::state {
+    
+    template <typename Archive>
+    void StateHash::save(Archive &archive) const {
+        assert(!_hashList.empty());
+        assert(!_moduloList.empty());
+        assert(_hashList.size() == _moduloList.size());
+    
+        int32_t size = BN_num_bytes(_hashList[0].get());
+        int32_t listSize = _hashList.size();
+        auto dstPtr = std::make_unique<std::vector<uint8_t>>(
+            size * (_hashList.size() * 2)
+        );
+        dstPtr->reserve(
+            size * (_hashList.size() * 2)
+        );
+    
+        auto i = 0;
+        for (auto &hash: _moduloList) {
+            BN_bn2binpad(hash.get(), dstPtr->data() + (size * i++), size);
+        }
+        for (auto &hash: _hashList) {
+            BN_bn2binpad(hash.get(), dstPtr->data() + (size * i++), size);
+        }
+    
+        archive(size);
+        archive(listSize);
+        archive(dstPtr);
+    }
+    
+    template <typename Archive>
+    void StateHash::load(Archive &archive) {
+        int32_t bnSize = 0;
+        int32_t listSize = 0;
+        std::unique_ptr<std::vector<uint8_t>> srcPtr;
+    
+        _moduloList.reserve(listSize / 2);
+        _hashList.reserve(listSize / 2);
+        
+        archive(bnSize);
+        archive(listSize);
+        archive(srcPtr);
+    
+        assert(bnSize != 0);
+        assert(listSize != 0);
+        
+        for (auto i = 0; i < listSize; i++) {
+            auto bignum = std::make_shared<StateHash::BigNum>(BN_new(), BN_free);
+            BN_bin2bn(srcPtr->data() + (bnSize * i), bnSize, bignum.get());
+            
+            if (i < listSize / 2) {
+                _moduloList.emplace_back(std::move(bignum));
+            } else {
+                _hashList.emplace_back(std::move(bignum));
+            }
+        }
+    }
+}

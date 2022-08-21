@@ -63,10 +63,11 @@ set(ULTRAVERSE_SRCS
     mariadb/state/new/Query.hpp
     mariadb/state/new/Transaction.cpp
     mariadb/state/new/Transaction.hpp
-    )
+    mariadb/state/new/StateLogReader.cpp mariadb/state/new/StateLogReader.hpp mariadb/state/new/StateLogWriter.cpp mariadb/state/new/StateLogWriter.hpp)
 
 include_directories(../dependencies/sql-parser/src)
 include_directories(../dependencies/sql-parser/src/parser)
+include_directories(../dependencies/cereal/include)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../dependencies/sql-parser)
 
 

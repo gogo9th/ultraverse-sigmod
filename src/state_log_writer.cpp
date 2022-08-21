@@ -1,5 +1,7 @@
 #include <iostream>
 
+#include "mariadb/state/new/Transaction.hpp"
+#include "mariadb/state/new/StateLogWriter.hpp"
 #include "mariadb/state/StateHash.hpp"
 #include "mariadb/DBHandle.hpp"
 #include "mariadb/BinaryLog.hpp"
@@ -12,12 +14,12 @@
 using namespace ultraverse::mariadb;
 using namespace ultraverse::state;
 
-class StateLogWriter: public ultraverse::Application {
+class StateLogWriterApp: public ultraverse::Application {
 public:
-    StateLogWriter(int argc, char **argv):
+    StateLogWriterApp(int argc, char **argv):
         Application(argc, argv),
         
-        _logger(createLogger("StateLogWriter"))
+        _logger(createLogger("StateLogWriterApp"))
     {
     
     }
@@ -32,6 +34,11 @@ public:
         std::unordered_map<uint64_t, std::shared_ptr<TableMapEvent>> tableMap;
         std::unordered_map<uint64_t, StateHash> stateHashMap;
         
+        v2::StateLogWriter stateLogWriter("cheese-binlog.ultstate");
+        stateLogWriter.open();
+        
+        auto pendingTxn = std::make_shared<v2::Transaction>();
+        auto pendingQuery = std::make_shared<v2::Query>();
     
         while (seqReader.next()) {
             auto event = seqReader.currentEvent();
@@ -43,6 +50,19 @@ public:
             if (event->eventType() == event_type::QUERY) {
                 auto queryEvent = std::dynamic_pointer_cast<QueryEvent>(event);
                 queryEvent->tokenize();
+                
+                pendingQuery->setDatabase(queryEvent->database());
+                pendingQuery->setStatement(queryEvent->statement());
+                
+                *pendingTxn << pendingQuery;
+                pendingTxn->setFlags(
+                    pendingTxn->flags() |
+                    v2::Transaction::FLAG_UNRELIABLE_HASH
+                );
+                
+                pendingQuery = std::make_shared<v2::Query>();
+                
+                
             
                 if (queryEvent->isDDL()) {
                 
@@ -55,6 +75,11 @@ public:
             if (event->eventType() == event_type::TXNID) {
                 auto txnIDEvent = std::dynamic_pointer_cast<TransactionIDEvent>(event);
                 _logger->info("XID {} committed", txnIDEvent->transactionId());
+                
+                pendingTxn->setXid(txnIDEvent->transactionId());
+                stateLogWriter << *pendingTxn;
+                
+                pendingTxn = std::make_shared<v2::Transaction>();
             }
             
             if (event->eventType() == event_type::TABLE_MAP) {
@@ -68,10 +93,11 @@ public:
                 auto rowEvent = std::dynamic_pointer_cast<RowEvent>(event);
                 _logger->info("[ROW] read row event: mapping table with id {}", rowEvent->tableId());
                 
-                
                 auto &table = tableMap[rowEvent->tableId()];
                 auto &hash = stateHashMap[rowEvent->tableId()];
                 rowEvent->mapToTable(*table);
+                
+                pendingQuery->setBeforeHash(table->table(), hash);
     
                 for (int i = 0; i < rowEvent->affectedRows(); i++) {
                     switch (rowEvent->type()) {
@@ -91,49 +117,33 @@ public:
                     hash.hexdump();
                 }
     
+                pendingQuery->setAfterHash(table->table(), hash);
+                
+                pendingQuery->setDatabase(table->database());
+                
+                *pendingTxn << pendingQuery;
+                pendingTxn->setFlags(
+                    pendingTxn->flags() |
+                    v2::Transaction::FLAG_UNRELIABLE_HASH
+                );
+                
+                pendingQuery = std::make_shared<v2::Query>();
+                
+    
                 _logger->info("affected rows: {}", rowEvent->affectedRows());
             }
             
             if (event->eventType() == event_type::ROW_QUERY) {
                 auto rowQueryEvent = std::dynamic_pointer_cast<RowQueryEvent>(event);
+    
+                pendingQuery->setStatement(rowQueryEvent->statement());
+                
                 _logger->info("[ROW] query executed @ {}", rowQueryEvent->statement());
             }
         }
         
-        /*
-        BinaryLogReader reader("cheese-binlog.000021");
-        reader.open();
-        reader.seek(4);
-    
-        while (reader.next()) {
-            auto event = reader.currentEvent();
+        stateLogWriter.close();
         
-            if (event == nullptr) {
-                continue;
-            }
-        
-            if (event->eventType() == event_type::QUERY) {
-                auto queryEvent = std::dynamic_pointer_cast<QueryEvent>(event);
-                queryEvent->tokenize();
-                
-                if (queryEvent->isDDL()) {
-                
-                } else if (queryEvent->isDML()) {
-                
-                }
-                _logger->info("Query executed @ {}", queryEvent->statement());
-            }
-        
-            if (event->eventType() == event_type::TXNID) {
-                auto txnIDEvent = std::dynamic_pointer_cast<TransactionIDEvent>(event);
-                _logger->info("XID {} committed", txnIDEvent->transactionId());
-            }
-        }
-         */
-    
-    
-    
-    
         return 0;
     }
     
@@ -142,6 +152,6 @@ private:
 };
 
 int main(int argc, char **argv) {
-    StateLogWriter application(argc, argv);
+    StateLogWriterApp application(argc, argv);
     return application.exec();
 }
