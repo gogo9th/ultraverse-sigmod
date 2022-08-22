@@ -5,14 +5,25 @@
 #ifndef ULTRAVERSE_APPLICATION_HPP
 #define ULTRAVERSE_APPLICATION_HPP
 
-#include "mariadb/state/StateThreadPool.h"
+#include <string>
+#include <unordered_map>
 
 namespace ultraverse {
     class Application {
     public:
-        Application(int argc, char **argv);
+        explicit Application();
     
-        int exec();
+        virtual std::string optString() = 0;
+        
+        int exec(int argc, char **argv);
+        virtual int main() = 0;
+        
+        bool isArgSet(char flag);
+        std::string getArg(char flag);
+    private:
+        void parseArgs(int argc, char **argv);
+        
+        std::unordered_map<char, std::string> _args;
     };
 }
 

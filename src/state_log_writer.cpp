@@ -11,147 +11,216 @@
 #include "utils/log.hpp"
 #include "Application.hpp"
 
-using namespace ultraverse::mariadb;
-using namespace ultraverse::state;
+using namespace ultraverse;
 
 class StateLogWriterApp: public ultraverse::Application {
 public:
-    StateLogWriterApp(int argc, char **argv):
-        Application(argc, argv),
+    StateLogWriterApp():
+        Application(),
         
         _logger(createLogger("StateLogWriterApp"))
     {
     
     }
     
-    int exec() {
-        using namespace ultraverse;
-        
-        spdlog::set_level(spdlog::level::trace);
+    std::string optString() override {
+        return "b:o:c:r:dvVh";
+    }
     
-        BinaryLogSequentialReader seqReader("cheese-binlog.index");
+    int main() override {
+        if (isArgSet('h')) {
+            std::cout <<
+            "statelogd - state-logging daemon\n"
+            "\n"
+            "Options: \n"
+            "    -b file        specify MySQL-variant binlog.index file\n"
+            "    -o file        specify log output (.ultstatelog)\n"
+            "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
+            "    -r file        restore state and resume from given .ultchkpoint file\n"
+            "    -d             force discard previous log and start over\n"
+            "    -v             set logger level to DEBUG\n"
+            "    -V             set logger level to TRACE\n"
+            "    -h             print this help and exit application\n";
+
+            return 0;
+        }
         
-        std::unordered_map<uint64_t, std::shared_ptr<TableMapEvent>> tableMap;
-        std::unordered_map<uint64_t, StateHash> stateHashMap;
+        if (isArgSet('v')) {
+            spdlog::set_level(spdlog::level::debug);
+        } else if (isArgSet('V')) {
+            spdlog::set_level(spdlog::level::trace);
+        }
         
-        v2::StateLogWriter stateLogWriter("cheese-binlog.ultstate");
-        stateLogWriter.open();
+        if (!isArgSet('b')) {
+            _logger->error("FATAL: binlog.index file must be specified (-b)");
+            return 1;
+        } else {
+            _binlogIndexPath = getArg('b');
+        }
         
-        auto pendingTxn = std::make_shared<v2::Transaction>();
-        auto pendingQuery = std::make_shared<v2::Query>();
+        if (!isArgSet('o')) {
+            _logger->error("FATAL: output.ultstatelog file must be specified (-o)");
+            return 1;
+        } else {
+            _stateLogPath = getArg('o');
+        }
+        
+        _threadNum = isArgSet('c') ?
+            std::stoi(getArg('c')) :
+            std::thread::hardware_concurrency() + 1;
+        
+        _checkpointPath = isArgSet('r') ?
+            getArg('r') :
+            "statelogd.ultchkpoint";
+        
+        
+        writerMain();
+        return 0;
+    }
     
-        while (seqReader.next()) {
-            auto event = seqReader.currentEvent();
+    [[noreturn]]
+    void writerMain() {
+        _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(_binlogIndexPath);
+        _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(_stateLogPath);
+        
+        _stateLogWriter->open();
+        
+        _pendingTxn = std::make_shared<state::v2::Transaction>();
+        _pendingQuery = std::make_shared<state::v2::Query>();
+    
+        while (_binlogReader->next()) {
+            auto event = _binlogReader->currentEvent();
         
             if (event == nullptr) {
                 continue;
             }
-        
-            if (event->eventType() == event_type::QUERY) {
-                auto queryEvent = std::dynamic_pointer_cast<QueryEvent>(event);
-                queryEvent->tokenize();
-                
-                pendingQuery->setDatabase(queryEvent->database());
-                pendingQuery->setStatement(queryEvent->statement());
-                
-                *pendingTxn << pendingQuery;
-                pendingTxn->setFlags(
-                    pendingTxn->flags() |
-                    v2::Transaction::FLAG_UNRELIABLE_HASH
-                );
-                
-                pendingQuery = std::make_shared<v2::Query>();
-                
-                
             
-                if (queryEvent->isDDL()) {
-                
-                } else if (queryEvent->isDML()) {
-                
-                }
-                _logger->info("Query executed @ {}", queryEvent->statement());
-            }
-        
-            if (event->eventType() == event_type::TXNID) {
-                auto txnIDEvent = std::dynamic_pointer_cast<TransactionIDEvent>(event);
-                _logger->info("XID {} committed", txnIDEvent->transactionId());
-                
-                pendingTxn->setXid(txnIDEvent->transactionId());
-                stateLogWriter << *pendingTxn;
-                
-                pendingTxn = std::make_shared<v2::Transaction>();
-            }
-            
-            if (event->eventType() == event_type::TABLE_MAP) {
-                auto tableMapEvent = std::dynamic_pointer_cast<TableMapEvent>(event);
-                _logger->info("[ROW] read table map: {}.{}", tableMapEvent->database(), tableMapEvent->table());
-                
-                tableMap[tableMapEvent->tableId()] = tableMapEvent;
-            }
-            
-            if (event->eventType() == event_type::ROW_EVENT) {
-                auto rowEvent = std::dynamic_pointer_cast<RowEvent>(event);
-                _logger->info("[ROW] read row event: mapping table with id {}", rowEvent->tableId());
-                
-                auto &table = tableMap[rowEvent->tableId()];
-                auto &hash = stateHashMap[rowEvent->tableId()];
-                rowEvent->mapToTable(*table);
-                
-                pendingQuery->setBeforeHash(table->table(), hash);
-    
-                for (int i = 0; i < rowEvent->affectedRows(); i++) {
-                    switch (rowEvent->type()) {
-                        case RowEvent::INSERT:
-                            hash += rowEvent->rowSet(i);
-                            break;
-                        case RowEvent::DELETE:
-                            hash -= rowEvent->rowSet(i);
-                            break;
-                            
-                        case RowEvent::UPDATE:
-                            hash -= rowEvent->rowSet(i);
-                            hash += rowEvent->changeSet(i);
-                            break;
-                    }
-    
-                    hash.hexdump();
-                }
-    
-                pendingQuery->setAfterHash(table->table(), hash);
-                
-                pendingQuery->setDatabase(table->database());
-                
-                *pendingTxn << pendingQuery;
-                pendingTxn->setFlags(
-                    pendingTxn->flags() |
-                    v2::Transaction::FLAG_UNRELIABLE_HASH
-                );
-                
-                pendingQuery = std::make_shared<v2::Query>();
-                
-    
-                _logger->info("affected rows: {}", rowEvent->affectedRows());
-            }
-            
-            if (event->eventType() == event_type::ROW_QUERY) {
-                auto rowQueryEvent = std::dynamic_pointer_cast<RowQueryEvent>(event);
-    
-                pendingQuery->setStatement(rowQueryEvent->statement());
-                
-                _logger->info("[ROW] query executed @ {}", rowQueryEvent->statement());
+            switch (event->eventType()) {
+                case event_type::QUERY:
+                    processQueryEvent(std::dynamic_pointer_cast<mariadb::QueryEvent>(event));
+                    break;
+                case event_type::TXNID:
+                    processTransactionIDEvent(std::dynamic_pointer_cast<mariadb::TransactionIDEvent>(event));
+                    break;
+                    
+                // row events
+                case event_type::TABLE_MAP:
+                    processTableMapEvent(std::dynamic_pointer_cast<mariadb::TableMapEvent>(event));
+                    break;
+                case event_type::ROW_EVENT:
+                    processRowEvent(std::dynamic_pointer_cast<mariadb::RowEvent>(event));
+                    break;
+                case event_type::ROW_QUERY:
+                    processRowQueryEvent(std::dynamic_pointer_cast<mariadb::RowQueryEvent>(event));
+                    break;
+                    
+                default:
+                    break;
             }
         }
+    }
+    
+    /**
+     * inserts pending query object to transaction
+     */
+    void finalizeQuery() {
+        *_pendingTxn << _pendingQuery;
+        _pendingQuery = std::make_shared<state::v2::Query>();
+    }
+    
+    void finalizeTransaction() {
+        *_stateLogWriter << *_pendingTxn;
+        _pendingTxn = std::make_shared<state::v2::Transaction>();
+    }
+    
+    void processQueryEvent(std::shared_ptr<mariadb::QueryEvent> event) {
+        event->tokenize();
         
-        stateLogWriter.close();
+        if (event->isDDL()) {
         
-        return 0;
+        } else if (event->isDML()) {
+        
+        }
+        
+        _pendingQuery->setDatabase(event->database());
+        _pendingQuery->setStatement(event->statement());
+        
+        finalizeQuery();
+        _pendingTxn->setFlags(
+            _pendingTxn->flags() |
+            state::v2::Transaction::FLAG_UNRELIABLE_HASH
+        );
+    }
+    
+    void processTransactionIDEvent(std::shared_ptr<mariadb::TransactionIDEvent> event) {
+        _logger->info("Transaction ID #{} processed.", event->transactionId());
+        _pendingTxn->setXid(event->transactionId());
+        finalizeTransaction();
+    }
+    
+    void processTableMapEvent(std::shared_ptr<mariadb::TableMapEvent> event) {
+        _logger->debug("[ROW] read row event: table id {} will be mapped with {}.{}", event->tableId(), event->database(), event->table());
+        _tableMap[event->tableId()] = event;
+    }
+    
+    void processRowEvent(std::shared_ptr<mariadb::RowEvent> event) {
+        _logger->trace("[ROW] processing row event");
+        
+        auto &table = _tableMap[event->tableId()];
+        auto &hash = _stateHashMap[event->tableId()];
+        event->mapToTable(*table);
+    
+        _pendingQuery->setBeforeHash(table->table(), hash);
+    
+        for (int i = 0; i < event->affectedRows(); i++) {
+            switch (event->type()) {
+                case mariadb::RowEvent::INSERT:
+                    hash += event->rowSet(i);
+                    break;
+                case mariadb::RowEvent::DELETE:
+                    hash -= event->rowSet(i);
+                    break;
+            
+                case mariadb::RowEvent::UPDATE:
+                    hash -= event->rowSet(i);
+                    hash += event->changeSet(i);
+                    break;
+            }
+        
+            hash.hexdump();
+        }
+    
+        _pendingQuery->setAfterHash(table->table(), hash);
+        _pendingQuery->setDatabase(table->database());
+        finalizeQuery();
+    }
+    
+    void processRowQueryEvent(std::shared_ptr<mariadb::RowQueryEvent> event) {
+        _pendingQuery->setStatement(event->statement());
     }
     
 private:
     LoggerPtr _logger;
+    std::string _binlogIndexPath;
+    std::string _stateLogPath;
+    
+    std::string _checkpointPath;
+    bool _discardCheckpoint = false;
+    
+    int _threadNum = 1;
+    
+    
+    std::unique_ptr<mariadb::BinaryLogSequentialReader> _binlogReader;
+    std::unique_ptr<state::v2::StateLogWriter> _stateLogWriter;
+    
+    std::unordered_map<uint64_t, std::shared_ptr<mariadb::TableMapEvent>> _tableMap;
+    std::unordered_map<uint64_t, state::StateHash> _stateHashMap;
+    
+    std::shared_ptr<state::v2::Transaction> _pendingTxn;
+    std::shared_ptr<state::v2::Query> _pendingQuery;
 };
 
 int main(int argc, char **argv) {
-    StateLogWriterApp application(argc, argv);
-    return application.exec();
+    StateLogWriterApp application;
+    return application.exec(argc, argv);
 }
