@@ -137,19 +137,27 @@ public:
         event->tokenize();
         
         if (event->isDDL()) {
-        
+            _pendingQuery->setFlags(
+                _pendingQuery->flags() |
+                state::v2::Query::FLAG_IS_DDL
+            );
+            
+            _pendingTxn->setFlags(
+                _pendingTxn->flags() |
+                state::v2::Transaction::FLAG_CONTAINS_DDL
+            );
         } else if (event->isDML()) {
-        
+            // rowset, changeset이 없으므로 해시 계산 불가능
+            _pendingTxn->setFlags(
+                _pendingTxn->flags() |
+                state::v2::Transaction::FLAG_UNRELIABLE_HASH
+            );
         }
         
         _pendingQuery->setDatabase(event->database());
         _pendingQuery->setStatement(event->statement());
         
         finalizeQuery();
-        _pendingTxn->setFlags(
-            _pendingTxn->flags() |
-            state::v2::Transaction::FLAG_UNRELIABLE_HASH
-        );
     }
     
     void processTransactionIDEvent(std::shared_ptr<mariadb::TransactionIDEvent> event) {
@@ -186,8 +194,6 @@ public:
                     hash += event->changeSet(i);
                     break;
             }
-        
-            hash.hexdump();
         }
     
         _pendingQuery->setAfterHash(table->table(), hash);

@@ -42,4 +42,12 @@ namespace ultraverse::state::v2 {
     void Query::setAfterHash(std::string tableName, StateHash &hash) {
         _afterHash[tableName] = hash;
     }
+    
+    uint8_t Query::flags() {
+        return _flags;
+    }
+    
+    void Query::setFlags(uint8_t flags) {
+        _flags = flags;
+    }
 }

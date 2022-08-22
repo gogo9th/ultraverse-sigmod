@@ -16,6 +16,8 @@ namespace ultraverse::state::v2 {
             _database,
             _statement,
             
+            _flags,
+            
             _referenceFile,
             _referencePos,
             

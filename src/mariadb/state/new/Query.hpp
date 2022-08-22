@@ -51,9 +51,9 @@ namespace ultraverse::state::v2 {
         void setBeforeHash(std::string tableName, StateHash &hash);
         void setAfterHash(std::string tableName, StateHash &hash);
         
-        bool isDDL();
-        bool isDML();
-    
+        uint8_t flags();
+        void setFlags(uint8_t flags);
+        
         template <typename Archive>
         void serialize(Archive &archive);
         
@@ -62,6 +62,8 @@ namespace ultraverse::state::v2 {
         
         std::string _database;
         std::string _statement;
+        
+        uint8_t _flags;
     
         // binlog reference
         std::string _referenceFile;
