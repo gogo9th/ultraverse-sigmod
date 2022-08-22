@@ -9,6 +9,7 @@
 #include <cstdio>
 
 #include <string>
+#include <unordered_set>
 
 #include "SQLParser.h"
 #include "mariadb/state/state_log_hdr.h"
@@ -67,16 +68,37 @@ namespace ultraverse::base {
          * @return returns false if fails.
          */
         bool tokenize();
+        /**
+         * try to parse SQL statement if needed.
+         */
+        bool parse();
         
         std::vector<int16_t> tokens() const;
         std::vector<size_t> tokenPos() const;
         
         bool isDDL() const;
         bool isDML() const;
+    
+        std::vector<std::string> &readSet();
+        std::vector<std::string> &writeSet();
         
     private:
+        void extractReadWriteSet(const hsql::InsertStatement *insert);
+        void extractReadWriteSet(const hsql::DeleteStatement *del);
+        void extractReadWriteSet(const hsql::UpdateStatement *update);
+        void extractReadWriteSet(const hsql::SelectStatement *select);
+        
+        void walkExpr(const hsql::Expr *expr, std::vector<std::string> &readSet, const std::string &rootTable);
+        
         std::vector<int16_t> _tokens;
         std::vector<size_t> _tokenPos;
+    
+        std::unordered_set<std::string> _readSet;
+        std::unordered_set<std::string> _writeSet;
+        
+        hsql::SQLParserResult _parseResult;
+        
+        
     };
 }
 
