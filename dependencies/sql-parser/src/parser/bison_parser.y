@@ -1317,7 +1317,7 @@ update_clause_commalist:
 	;
 
 update_clause:
-		IDENTIFIER '=' expr {
+		x_compat_ident '=' expr {
 			$$ = new UpdateClause();
 			$$->column = $1;
 			$$->value = $3;
@@ -1637,8 +1637,8 @@ between_expr:
 	;
 
 column_name:
-		IDENTIFIER { $$ = Expr::makeColumnRef($1); }
-	|	IDENTIFIER '.' IDENTIFIER { $$ = Expr::makeColumnRef($1, $3); }
+		x_compat_ident { $$ = Expr::makeColumnRef($1); }
+	|	IDENTIFIER '.' x_compat_ident { $$ = Expr::makeColumnRef($1, $3); }
 	|	'*' { $$ = Expr::makeStar(); }
 	|	IDENTIFIER '.' '*' { $$ = Expr::makeStar($1); }
 	;
@@ -1887,6 +1887,7 @@ x_compat_ident:
         IDENTIFIER
     |   VALUE  { $$ = new char[6]; strcpy($$, "value"); }
     |   VALUES { $$ = new char[7]; strcpy($$, "values"); }
+    |   ID { $$ = new char[3]; strcpy($$, "id"); }
     ;
 
 %%
