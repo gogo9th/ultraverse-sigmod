@@ -25,6 +25,10 @@ namespace ultraverse::state::v2 {
     }
     
     StateLogWriter &StateLogWriter::operator<<(Transaction &transaction) {
+        auto header = transaction.header();
+        
+        _stream.write((char *) &header, sizeof(TransactionHeader));
+        
         cereal::BinaryOutputArchive archive(_stream);
         archive(transaction);
         

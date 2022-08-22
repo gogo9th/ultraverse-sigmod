@@ -48,6 +48,19 @@ namespace ultraverse::state::v2 {
         _flags = flags;
     }
     
+    TransactionHeader Transaction::header() {
+        TransactionHeader header;
+        
+        header.timestamp = _timestamp;
+        header.gid = _gid;
+        header.xid = _xid;
+        header.isSuccessful = _isSuccessful;
+        header.flags = _flags;
+        header.nextPos = _nextPos;
+        
+        return std::move(header);
+    }
+    
     Transaction &Transaction::operator<<(std::shared_ptr<Query> &query) {
         _queries.push_back(query);
         return *this;

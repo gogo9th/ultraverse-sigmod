@@ -56,6 +56,8 @@ namespace ultraverse::state::v2 {
         uint8_t flags();
         void setFlags(uint8_t flags);
         
+        TransactionHeader header();
+        
         /**
          * appends query object to transaction.
          * @param query

@@ -129,6 +129,7 @@ public:
     }
     
     void finalizeTransaction() {
+        _pendingTxn->setGid(_gid++);
         *_stateLogWriter << *_pendingTxn;
         _pendingTxn = std::make_shared<state::v2::Transaction>();
     }
@@ -215,6 +216,7 @@ private:
     
     int _threadNum = 1;
     
+    int _gid = 1;
     
     std::unique_ptr<mariadb::BinaryLogSequentialReader> _binlogReader;
     std::unique_ptr<state::v2::StateLogWriter> _stateLogWriter;
