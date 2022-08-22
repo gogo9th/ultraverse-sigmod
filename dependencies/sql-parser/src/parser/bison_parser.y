@@ -945,6 +945,8 @@ int yyerror(YYLTYPE* llocp, SQLParserResult* result, yyscan_t scanner, const cha
 %type <update_vec>		update_clause_commalist
 %type <column_vec>		column_def_commalist
 
+%type <sval>            x_compat_ident
+
 /******************************
  ** Token Precedence and Associativity
  ** Precedence: lowest to highest
@@ -1877,9 +1879,15 @@ opt_semicolon:
 
 
 ident_commalist:
-		IDENTIFIER { $$ = new std::vector<char*>(); $$->push_back($1); }
-	|	ident_commalist ',' IDENTIFIER { $1->push_back($3); $$ = $1; }
+		x_compat_ident { $$ = new std::vector<char*>(); $$->push_back($1); }
+	|	ident_commalist ',' x_compat_ident { $1->push_back($3); $$ = $1; }
 	;
+
+x_compat_ident:
+        IDENTIFIER
+    |   VALUE  { $$ = new char[6]; strcpy($$, "value"); }
+    |   VALUES { $$ = new char[7]; strcpy($$, "values"); }
+    ;
 
 %%
 /*********************************
