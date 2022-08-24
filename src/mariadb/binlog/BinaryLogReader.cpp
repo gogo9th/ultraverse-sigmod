@@ -124,8 +124,12 @@ namespace ultraverse::mariadb {
         bool hasChecksum = (eventSize - sizeof(internal::EventHeader)) > fdEventSize;
         
         if (hasChecksum) {
-            _hasChecksum = true;
-            _logger->warn("the log file includes CRC32 checksum, but this will be ignored");
+            uint8_t checksumMethod = eventLengths.get()[restBodyLength - 5];
+            
+            if (checksumMethod != 0) {
+                _hasChecksum = true;
+                _logger->warn("the log file includes CRC32 checksum, but this will be ignored");
+            }
         }
     }
     
@@ -145,7 +149,8 @@ namespace ultraverse::mariadb {
         auto queryLength =
             header->event_size - (
                 (sizeof(internal::EventHeader) + sizeof(internal::QueryEventPostHeader)) +
-                (statusVarsLength + schemaLength + 1)
+                (statusVarsLength + schemaLength + 1) +
+                (_hasChecksum ? 4 : 0)
             );
         
         auto queryCStr = std::shared_ptr<uint8_t>(new uint8_t[queryLength]);
