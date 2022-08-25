@@ -3,12 +3,11 @@ set(CMAKE_CXX_STANDARD 17)
 find_package(PkgConfig REQUIRED)
 find_package(BISON REQUIRED)
 find_package(FLEX REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 pkg_check_modules(MARIADB REQUIRED mariadb)
 pkg_check_modules(FMT REQUIRED fmt)
 pkg_check_modules(SPDLOG REQUIRED spdlog)
-
-add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 
 set(ULTRAVERSE_DEPENDENCIES
     ${MARIADB_LIBRARIES}
@@ -16,6 +15,7 @@ set(ULTRAVERSE_DEPENDENCIES
     ${SPDLOG_LIBRARIES}
     
     sqlparser
+    OpenSSL::SSL
 )
 
 set(ULTRAVERSE_SRCS
@@ -63,7 +63,10 @@ set(ULTRAVERSE_SRCS
     mariadb/state/new/Query.hpp
     mariadb/state/new/Transaction.cpp
     mariadb/state/new/Transaction.hpp
-    mariadb/state/new/StateLogReader.cpp mariadb/state/new/StateLogReader.hpp mariadb/state/new/StateLogWriter.cpp mariadb/state/new/StateLogWriter.hpp)
+#    mariadb/state/new/StateLogReader.cpp
+#    mariadb/state/new/StateLogReader.hpp
+    mariadb/state/new/StateLogWriter.cpp
+    mariadb/state/new/StateLogWriter.hpp)
 
 include_directories(../dependencies/sql-parser/src)
 include_directories(../dependencies/sql-parser/src/parser)
