@@ -250,10 +250,14 @@ namespace ultraverse::mariadb {
                     columnTypeDef2.push_back(4);
                     break;
                     
+                // TODO: https://mariadb.com/kb/en/rows_event_v1v2/
                 case MYSQL_TYPE_DATE:
                 case MYSQL_TYPE_DATETIME:
                 case MYSQL_TYPE_TIMESTAMP:
                 case MYSQL_TYPE_TIME:
+                case MYSQL_TYPE_DATETIME2:
+                case MYSQL_TYPE_TIME2:
+                case MYSQL_TYPE_TIMESTAMP2:
                     columnTypeDef2.push_back(-1);
                     break;
                     
