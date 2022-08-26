@@ -23,6 +23,16 @@ namespace ultraverse::state::v2 {
     void StateLogWriter::close() {
         _stream.close();
     }
+
+    bool StateLogWriter::seek(int64_t position) {
+        _stream.seekp(position);
+
+        return _stream.good();
+    }
+
+    int64_t StateLogWriter::pos() {
+        return _stream.tellp();
+    }
     
     StateLogWriter &StateLogWriter::operator<<(Transaction &transaction) {
         auto header = transaction.header();

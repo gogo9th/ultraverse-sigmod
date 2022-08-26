@@ -1,4 +1,11 @@
+#include <cereal/types/unordered_map.hpp>
+#include <cereal/types/memory.hpp>
+#include <cereal/archives/binary.hpp>
+#include <cereal/types/utility.hpp>
+
 #include <iostream>
+#include <fstream>
+#include <signal.h>
 
 #include "mariadb/state/new/Transaction.hpp"
 #include "mariadb/state/new/StateLogWriter.hpp"
@@ -68,11 +75,10 @@ public:
         _threadNum = isArgSet('c') ?
             std::stoi(getArg('c')) :
             std::thread::hardware_concurrency() + 1;
-        
-        _checkpointPath = isArgSet('r') ?
-            getArg('r') :
-            "statelogd.ultchkpoint";
-        
+
+        if (isArgSet('r')) {
+            _checkpointPath = getArg('r');
+        }
         
         writerMain();
         return 0;
@@ -87,10 +93,28 @@ public:
         
         _pendingTxn = std::make_shared<state::v2::Transaction>();
         _pendingQuery = std::make_shared<state::v2::Query>();
+
+        if (!_checkpointPath.empty()) {
+            int pos;
+            std::ifstream is(_checkpointPath, std::ios::binary);
+            if (is) {
+                cereal::BinaryInputArchive archive(is);
+                archive(_stateHashMap);
+                std::cout << "restore\n";
+                std::cout << "name: " << _checkpointPath << '\n';
+                std::cout << "gid: " << _gid << "\n";
+                std::cout << "pos: " << pos << '\n';
+            } else {
+                throw std::runtime_error(
+                        fmt::format("cannot find file {}.", _checkpointPath)
+                );
+            }
+            _binlogReader->seek(_gid, pos);
+        }
     
         while (_binlogReader->next()) {
             auto event = _binlogReader->currentEvent();
-        
+
             if (event == nullptr) {
                 continue;
             }
@@ -205,6 +229,22 @@ public:
     void processRowQueryEvent(std::shared_ptr<mariadb::RowQueryEvent> event) {
         _pendingQuery->setStatement(event->statement());
     }
+
+    void sigintHandler(int param) {
+        std::string checkpointPath = _stateLogPath.substr(0, _stateLogPath.find_last_of('.')) + ".ultchkpoint";
+        int pos = _binlogReader->pos();
+        std::cout << "SIGINT\n";
+        std::cout << "name: " << checkpointPath << '\n';
+        std::cout << "gid: " << _gid << "\n";
+        std::cout << "pos: " << pos << '\n';
+        std::ofstream os(checkpointPath, std::ios::binary);
+        if (os.is_open()) {
+            cereal::BinaryOutputArchive archive(os);
+            archive(_gid, pos, _tableMap, _stateHashMap, _pendingTxn, _pendingQuery);
+            os.close();
+        }
+        exit(1);
+    }
     
 private:
     LoggerPtr _logger;
@@ -220,7 +260,7 @@ private:
     
     std::unique_ptr<mariadb::BinaryLogSequentialReader> _binlogReader;
     std::unique_ptr<state::v2::StateLogWriter> _stateLogWriter;
-    
+
     std::unordered_map<uint64_t, std::shared_ptr<mariadb::TableMapEvent>> _tableMap;
     std::unordered_map<uint64_t, state::StateHash> _stateHashMap;
     
@@ -228,7 +268,13 @@ private:
     std::shared_ptr<state::v2::Query> _pendingQuery;
 };
 
+StateLogWriterApp application;
+
+void sigintHandler(int param) {
+    application.sigintHandler(param);
+}
+
 int main(int argc, char **argv) {
-    StateLogWriterApp application;
+    signal(SIGINT, sigintHandler);
     return application.exec(argc, argv);
 }

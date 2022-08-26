@@ -17,6 +17,8 @@ namespace ultraverse::state::v2 {
         
         void open();
         void close();
+        bool seek(int64_t position);
+        int64_t pos();
         
         StateLogWriter &operator<<(Transaction &transaction);
         

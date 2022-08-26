@@ -8,6 +8,8 @@
 #include <mysql/mysql.h>
 #include <mysql/mariadb_rpl.h>
 
+#include <cereal/access.hpp>
+
 #include "base/DBEvent.hpp"
 
 namespace ultraverse::mariadb {
@@ -54,6 +56,7 @@ namespace ultraverse::mariadb {
     class TableMapEvent: public base::DBEvent {
     public:
         TableMapEvent(uint64_t tableId, std::string database, std::string table, std::vector<int> columns, uint64_t timestamp);
+        TableMapEvent() : _timestamp(0), _tableId(0) {};
         
         event_type::Value eventType() override {
             return event_type::TABLE_MAP;
@@ -67,6 +70,9 @@ namespace ultraverse::mariadb {
         std::string table() const;
         
         int sizeOf(int columnIndex) const;
+
+        template <typename Archive>
+        void serialize(Archive &archive);
         
     private:
         uint64_t _timestamp;
@@ -162,6 +168,6 @@ namespace ultraverse::mariadb {
 
 }
 
-
+#include "DBEvent.cereal.cpp"
 
 #endif //ULTRAVERSE_MARIADB_DBEVENT_HPP

@@ -74,6 +74,7 @@ namespace ultraverse::mariadb {
     
         bool seek(int index, int64_t position);
         bool next();
+        int pos();
     
         std::shared_ptr<base::DBEvent> currentEvent();
         

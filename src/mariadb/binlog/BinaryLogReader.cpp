@@ -432,7 +432,10 @@ namespace ultraverse::mariadb {
         return _binaryLogReader->currentEvent();
     }
     
-    
-    
-    
+    int BinaryLogSequentialReader::pos() {
+        if (_binaryLogReader == nullptr) {
+            return -1;
+        }
+        return _binaryLogReader->pos();
+    }
 }
