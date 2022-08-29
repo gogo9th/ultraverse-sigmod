@@ -47,13 +47,13 @@ namespace ultraverse::state {
         return hashList;
     }
     
-    inline StateHash::BigNumPtr StateHash::copyBigNumPtr(StateHash::BigNumPtr source) {
+    inline StateHash::BigNumPtr StateHash::copyBigNumPtr(const StateHash::BigNumPtr &source) {
         BigNumPtr destination(BN_new(), BN_free);
         BN_copy(destination.get(), source.get());
         return destination;
     }
     
-    std::vector<StateHash::BigNumPtr> StateHash::copyHashList(std::vector<BigNumPtr> &source) {
+    std::vector<StateHash::BigNumPtr> StateHash::copyHashList(const std::vector<BigNumPtr> &source) {
         std::vector<BigNumPtr> destination(source.size());
         std::transform(source.begin(), source.end(), std::back_inserter(destination), [](auto &sourceVal) {
             return StateHash::copyBigNumPtr(sourceVal);
@@ -95,7 +95,7 @@ namespace ultraverse::state {
         return hashValue;
     }
     
-    StateHash::BigNumPtr StateHash::prime(StateHash::HashValue digest, const StateHash::BigNumPtr modulo) {
+    StateHash::BigNumPtr StateHash::prime(StateHash::HashValue digest, const StateHash::BigNumPtr &modulo) {
         MD5_CTX md5Ctx;
         BigNumPtr bn;
         
@@ -126,7 +126,7 @@ namespace ultraverse::state {
         assert(_moduloList.size() == _hashList.size());
     }
     
-    StateHash::StateHash(StateHash &other):
+    StateHash::StateHash(const StateHash &other):
         _moduloList(copyHashList(other._moduloList)),
         _hashList(copyHashList(other._hashList))
     {

@@ -5,10 +5,13 @@
 #ifndef ULTRAVERSE_STATE_STATEHASH_HPP
 #define ULTRAVERSE_STATE_STATEHASH_HPP
 
+#undef OPENSSL_NO_SSL_INTERN
+
 #include <memory>
 #include <array>
 #include <vector>
 #include <string>
+#include <functional>
 
 #include <openssl/bn.h>
 #include <openssl/sha.h>
@@ -50,10 +53,10 @@ namespace ultraverse::state {
          */
         static std::vector<BigNumPtr> generateModulo(int count);
         
-        explicit StateHash();
+        StateHash();
         explicit StateHash(std::vector<BigNumPtr> moduloList, std::vector<BigNumPtr> hashList);
         
-        StateHash(StateHash &other);
+        StateHash(const StateHash &other);
         
         void compute(Record &record, EventType type);
         void hexdump();
@@ -71,13 +74,13 @@ namespace ultraverse::state {
         
     private:
         static std::vector<BigNumPtr> allocateHashList(int count);
-        static inline BigNumPtr copyBigNumPtr(BigNumPtr source);
-        static std::vector<BigNumPtr> copyHashList(std::vector<BigNumPtr> &source);
+        static inline BigNumPtr copyBigNumPtr(const BigNumPtr &source);
+        static std::vector<BigNumPtr> copyHashList(const std::vector<BigNumPtr> &source);
         static bool compareHashList(const std::vector<BigNumPtr> &a, const std::vector<BigNumPtr> &b);
         
         static HashValue calculateHash(Record &record);
         
-        BigNumPtr prime(HashValue digest, const BigNumPtr modulo);
+        BigNumPtr prime(HashValue digest, const BigNumPtr &modulo);
         
         std::vector<BigNumPtr> _moduloList;
         std::vector<BigNumPtr> _hashList;

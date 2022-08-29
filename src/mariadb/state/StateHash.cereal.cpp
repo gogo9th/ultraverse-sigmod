@@ -4,6 +4,8 @@
 
 #include <cassert>
 
+#include <openssl/bn.h>
+
 #include <cereal/types/vector.hpp>
 #include <cereal/types/memory.hpp>
 #include <cereal/types/unordered_map.hpp>
@@ -57,13 +59,13 @@ namespace ultraverse::state {
         assert(listSize != 0);
         
         for (auto i = 0; i < listSize; i++) {
-            auto bignum = std::make_shared<StateHash::BigNum>(BN_new(), BN_free);
+            StateHash::BigNumPtr bignum(BN_new(), BN_free);
             BN_bin2bn(srcPtr->data() + (bnSize * i), bnSize, bignum.get());
             
             if (i < listSize / 2) {
-                _moduloList.emplace_back(std::move(bignum));
+                _moduloList.push_back(bignum);
             } else {
-                _hashList.emplace_back(std::move(bignum));
+                _hashList.push_back(bignum);
             }
         }
     }
