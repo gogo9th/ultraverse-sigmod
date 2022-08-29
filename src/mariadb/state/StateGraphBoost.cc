@@ -1,7 +1,4 @@
-#include <boost/graph/adjacency_list.hpp>
-#include <boost/graph/graphviz.hpp>
-
-#include "nlohmann/json.hpp"
+#include <nlohmann/json.hpp>
 
 #include "StateGraphBoost.h"
 #include "StateUtil.h"
@@ -12,12 +9,6 @@
 #include <graphviz/cdt.h>
 
 namespace ultraverse::state {
-    struct VertexP {
-        StateQuery *query;
-    };
-    
-    typedef boost::adjacency_list<boost::vecS, boost::vecS, boost::bidirectionalS, VertexP> ListGraph;
-    ListGraph g;
     
     StateGraphBoost::StateGraphBoost()
         : StateGraph() {
@@ -26,15 +17,14 @@ namespace ultraverse::state {
     StateGraphBoost::~StateGraphBoost() {
     }
     
-    void StateGraphBoost::AddQueries(const StateTable::Query &q) {
-        auto node_idx = add_vertex(VertexP{q.get()}, g);
-        CreateEdge(node_idx);
+    void StateGraphBoost::addTransaction(std::shared_ptr<v2::Transaction> transaction) {
+        auto nodeIdx = add_vertex(TxnNode { std::move(transaction) }, _graph);
+        CreateEdge(nodeIdx);
     }
     
-    void StateGraphBoost::AddQueries(const StateTable::QueryList &list) {
-        for (auto &i: list) {
-            auto node_idx = add_vertex(VertexP{i.get()}, g);
-            CreateEdge(node_idx);
+    void StateGraphBoost::addTransactions(std::vector<std::shared_ptr<v2::Transaction>> &transactions) {
+        for (auto &transaction: transactions) {
+            addTransaction(transaction);
         }
     }
     
@@ -46,9 +36,9 @@ namespace ultraverse::state {
             auto p = node_queue.front();
             node_queue.pop_front();
             
-            auto out = out_edges(p, g);
+            auto out = out_edges(p, _graph);
             for (auto iter = out.first; iter != out.second; ++iter) {
-                auto target_idx = target(*iter, g);
+                auto target_idx = target(*iter, _graph);
                 if (target_idx == child_idx) {
                     return true;
                 }
@@ -60,56 +50,56 @@ namespace ultraverse::state {
     }
     
     void StateGraphBoost::CreateEdge(size_t node_idx, size_t pnode_idx, const std::string &table) {
-        auto value_map = get(&VertexP::query, g);
-        StateQuery *curr = value_map[node_idx];
-        StateQuery *prev = value_map[pnode_idx];
+        auto value_map = get(&TxnNode::transaction, _graph);
+        auto &curr = _graph[node_idx];
+        auto &prev = _graph[pnode_idx];
         
-        auto in = in_edges(node_idx, g);
+        auto in = in_edges(node_idx, _graph);
         for (auto iter = in.first; iter != in.second; ++iter) {
-            auto source_idx = source(*iter, g);
+            auto source_idx = source(*iter, _graph);
             // 동일한 연결이 있었는지 확인
             if (source_idx == pnode_idx)
                 return;
             
             // 바로 위에 연결된 노드가 동일한 종속성을 가지면 추가로 연결할 필요 없음
-            StateQuery *source_query = value_map[source_idx];
-            if (std::find(source_query->read_set.begin(), source_query->read_set.end(), table) !=
-                source_query->read_set.end()) {
+            std::shared_ptr<v2::Transaction> &sourceTransaction = value_map[source_idx];
+            if (std::find(sourceTransaction->readSet().begin(), sourceTransaction->readSet().end(), table) !=
+                sourceTransaction->readSet().end()) {
                 return;
             }
-            if (std::find(source_query->write_set.begin(), source_query->write_set.end(), table) !=
-                source_query->write_set.end()) {
+            if (std::find(sourceTransaction->writeSet().begin(), sourceTransaction->writeSet().end(), table) !=
+                sourceTransaction->writeSet().end()) {
                 return;
             }
         }
         
-        auto edge = add_edge(pnode_idx, node_idx, g);
+        auto edge = add_edge(pnode_idx, node_idx, _graph);
         
         // 간접적인 연결이 있으면 연결 해제
         // 종속 노드에서 부터 모두 탐색
-        auto out = out_edges(pnode_idx, g);
+        auto out = out_edges(pnode_idx, _graph);
         for (auto iter = out.first; iter != out.second; ++iter) {
-            auto target_idx = target(*iter, g);
+            auto target_idx = target(*iter, _graph);
             if (target_idx == node_idx)
                 continue;
             
             if (HasChildNode(target_idx, node_idx) == true) {
-                remove_edge(edge.first, g);
+                remove_edge(edge.first, _graph);
                 return;
             }
         }
         
-        prev->AddReference(curr);
-        curr->ref.IncReference();
+        prev.addReference(curr);
+        curr.ref().IncReference();
     }
     
     void StateGraphBoost::CreateEdge(size_t node_idx) {
-        auto value_map = get(&VertexP::query, g);
-        StateQuery *curr = value_map[node_idx];
+        auto value_map = get(&TxnNode::transaction, _graph);
+        auto &curr = _graph[node_idx];
         
         std::vector<std::string> table_list;
-        table_list.insert(table_list.begin(), curr->write_set.begin(), curr->write_set.end());
-        table_list.insert(table_list.begin(), curr->read_set.begin(), curr->read_set.end());
+        table_list.insert(table_list.begin(), curr.transaction->writeSet().begin(), curr.transaction->writeSet().end());
+        table_list.insert(table_list.begin(), curr.transaction->readSet().begin(), curr.transaction->readSet().end());
         StateUtil::unique_vector(table_list);
         
         std::multimap<int, std::string> prior_map;
@@ -125,25 +115,22 @@ namespace ultraverse::state {
             CreateEdge(node_idx, i.first, i.second);
         }
         
-        for (auto &i: curr->write_set) {
+        for (auto &i: curr.transaction->writeSet()) {
             write_node_idx_map[i] = node_idx;
         }
     }
     
-    std::vector<StateQuery *> StateGraphBoost::GetQueries() {
-        if (query_list.size() > 0)
-            return query_list;
-        
-        debug("[StateGraphGvc::GetQueries] Analyze Query");
+    void StateGraphBoost::buildQueryList() {
+        _logger->info("Building query list..");
         
         std::list<size_t> all_nodes;
         std::vector<size_t> head_nodes;
         
-        all_nodes.assign(g.vertex_set().begin(), g.vertex_set().end());
+        all_nodes.assign(_graph.vertex_set().begin(), _graph.vertex_set().end());
         
         size_t thread_count = StateThreadPool::Instance().Size();
         
-        auto value_map = get(&VertexP::query, g);
+        auto value_map = get(&TxnNode::transaction, _graph);
         
         std::vector<std::future<std::vector<size_t>>> futures;
         while (true) {
@@ -174,13 +161,23 @@ namespace ultraverse::state {
             MakeQueryList(head_nodes);
             
             all_nodes.remove_if(
-                [&value_map](const size_t idx) {
+                [this, &value_map](const size_t idx) {
                     auto q = value_map[idx];
-                    return q->is_valid_query == 1 ? true : false;
+                    _logger->warn("FIXME: q->is_valid_query == 1 is not implemented yet");
+                    // return q->is_valid_query == 1 ? true : false;
+                    return true;
                 });
         }
+    }
+    
+    const std::vector<StateGraphBoost::TxnNode *> &StateGraphBoost::getTransactions() {
+        if (_transactionList.empty()) {
+            buildQueryList();
+        }
         
-        return query_list;
+        assert(!_transactionList.empty());
+        
+        return _transactionList;
     }
     
     void StateGraphBoost::MakeOutputFilename(const std::string &type, const std::string &filepath) {
@@ -214,6 +211,21 @@ namespace ultraverse::state {
                     }
                 };
                 
+                static void print_set(std::ostream &outStream, const std::unordered_set<std::string> &s) {
+                    if (s.size() == 0) {
+                        return;
+                    }
+                    
+                    int i = 0;
+                    for (auto &val: s) {
+                        outStream << val;
+                        
+                        if (i < s.size() - 1) {
+                            outStream << ", ";
+                        }
+                    }
+                };
+                
                 static void
                 print_map(std::ostream &outStream, const std::map<std::string, std::vector<std::string>> &m) {
                     if (m.size() == 0) {
@@ -241,21 +253,23 @@ namespace ultraverse::state {
                 void operator()(std::ostream &outStream, size_t idx) {
                     std::map<std::string, std::vector<std::string>> read_map, write_map;
                     
-                    auto q = boost::get(&VertexP::query, _Graph, idx);
-                    outStream << "[label=\"{xid " << q->xid;
+                    auto txn = boost::get(&TxnNode::transaction, _Graph, idx);
+                    outStream << "[label=\"{xid " << txn->xid();
                     
                     outStream << "|{read set|";
-                    vertexWriter::print_vector(outStream, q->read_set);
+                    vertexWriter::print_set(outStream, txn->readSet());
                     outStream << '}';
                     
                     outStream << "|{write set|";
-                    vertexWriter::print_vector(outStream, q->write_set);
+                    vertexWriter::print_set(outStream, txn->writeSet());
                     outStream << '}';
                     
-                    for (auto &i: q->transactions) {
+                    for (auto &i: txn->queries()) {
                         read_map.clear();
                         write_map.clear();
-                        for (auto &f: i.foreign_set) {
+                        for (auto &f: i->foreignKeySet()) {
+                            std::cerr << ("FIXME: i->foreignKeySet() is string!") << std::endl;
+                            /*
                             if (f.access_type == en_table_access_read) {
                                 for (auto &c: f.columns) {
                                     read_map[f.table].push_back(c);
@@ -265,17 +279,18 @@ namespace ultraverse::state {
                                     write_map[f.table].push_back(c);
                                 }
                             }
+                             */
                         }
                         
-                        std::string convert_query = i.query;
+                        std::string convert_query = i->statement();
                         vertexWriter::replace(convert_query, "@", "");
                         vertexWriter::replace(convert_query, "<", "\\<");
                         vertexWriter::replace(convert_query, ">", "\\>");
                         
                         outStream << "|{"
                                   << idx << '|'
-                                  << i.time.sec << '.'
-                                  << i.time.sec_part << '|'
+                                 // << i.time.sec << '.'
+                                 // << i.time.sec_part << '|'
                                   << convert_query << "|{";
                         
                         outStream << "{read columns|";
@@ -301,7 +316,7 @@ namespace ultraverse::state {
                 };
             };
             
-            write_graphviz(ofstream, g, vertexWriter(g), boost::default_writer(), graphWriter());
+            write_graphviz(ofstream, _graph, vertexWriter(_graph), boost::default_writer(), graphWriter());
             ofstream.close();
             
             DotConvert(type, prev_filepath, filepath);
@@ -314,13 +329,13 @@ namespace ultraverse::state {
             fout.open(filepath + "." + type);
             nlohmann::json j;
             
-            for (auto &e: g.m_edges) {
-                auto source = boost::get(&VertexP::query, g, e.m_source);
-                auto target = boost::get(&VertexP::query, g, e.m_target);
+            for (auto &e: _graph.m_edges) {
+                auto source = boost::get(&TxnNode::transaction, _graph, e.m_source);
+                auto target = boost::get(&TxnNode::transaction, _graph, e.m_target);
                 
                 nlohmann::json obj;
-                obj["source_idx"] = source->xid;
-                obj["target_idx"] = target->xid;
+                obj["source_idx"] = source->xid();
+                obj["target_idx"] = target->xid();
                 j.emplace_back(obj);
             }
             
@@ -329,10 +344,10 @@ namespace ultraverse::state {
             std::ofstream fout;
             fout.open(filepath + "." + type);
             
-            for (auto &e: g.m_edges) {
-                auto source = boost::get(&VertexP::query, g, e.m_source);
-                auto target = boost::get(&VertexP::query, g, e.m_target);
-                fout << source->xid << " -> " << target->xid << std::endl;
+            for (auto &e: _graph.m_edges) {
+                auto source = boost::get(&TxnNode::transaction, _graph, e.m_source);
+                auto target = boost::get(&TxnNode::transaction, _graph, e.m_target);
+                fout << source->xid() << " -> " << target->xid() << std::endl;
             }
         }
     }
@@ -362,14 +377,14 @@ namespace ultraverse::state {
     std::vector<size_t> StateGraphBoost::GetHeadNodes(NodeList::iterator begin, NodeList::iterator end) {
         std::vector<size_t> ret;
         
-        auto value_map = get(&VertexP::query, g);
+        auto value_map = get(&TxnNode::transaction, _graph);
         
         // 참조되지 않은 노드 탐색 (head)
         for (auto iter = begin; iter != end; ++iter) {
-            auto q = value_map[*iter];
-            if (q->ref.IsReferenced() == false && q->write_set.size() != 0) {
+            auto q = _graph[*iter];
+            if (!q.ref().IsReferenced() && q.transaction->writeSet().size() != 0) {
                 ret.push_back(*iter);
-                q->is_valid_query = 1;
+                // q->is_valid_query = 1;
             }
         }
         
@@ -384,7 +399,7 @@ namespace ultraverse::state {
 //      단, 마지막 parent 가 실행될 때 까지 대기했다가 실행
 // 분리된 head 들은 동시에 실행하여 병렬 실행 구현
     void StateGraphBoost::AnalyzeQueries(std::vector<size_t> &head_nodes) {
-        auto value_map = get(&VertexP::query, g);
+        auto value_map = get(&TxnNode::transaction, _graph);
         
         size_t curr_idx = (size_t) -1;
         size_t next_idx = (size_t) -1;
@@ -394,10 +409,11 @@ namespace ultraverse::state {
             // head 에서 부터 1:1 로 참조하는 노드 탐색
             // 1:N 으로 참조하면 제일 마지막에 참조한 노드가 연결
             while ((next_idx = GetNextNode(curr_idx)) != (size_t) -1) {
-                auto curr_query = value_map[curr_idx];
-                auto next_query = value_map[next_idx];
-                curr_query->SetNext(next_query);
-                next_query->is_valid_query = 1;
+                auto &curr_query = _graph[curr_idx];
+                auto &next_query = _graph[next_idx];
+                curr_query.setNext(next_query);
+                _logger->warn("FIXME: next_query->is_valid_query is not implemented yet");
+                //next_query->is_valid_query = 1;
                 
                 curr_idx = next_idx;
             }
@@ -408,24 +424,24 @@ namespace ultraverse::state {
             // head 는 GetHeadQueries 함수에서 연결된 노드의 참조 제거함
             // curr 이 head 라면 참조 제거를 하지 않아야 함
             if (curr_idx != n) {
-                auto out = out_edges(curr_idx, g);
+                auto out = out_edges(curr_idx, _graph);
                 for (auto iter = out.first; iter != out.second; ++iter) {
-                    value_map[target(*iter, g)]->ref.DecReference();
+                    _graph[target(*iter, _graph)].ref().DecReference();
                 }
             }
         }
     }
     
     size_t StateGraphBoost::GetNextNode(size_t node_idx) {
-        if (out_degree(node_idx, g) != 1)
+        if (out_degree(node_idx, _graph) != 1)
             return (size_t) -1;
         
-        auto value_map = get(&VertexP::query, g);
-        auto out = out_edges(node_idx, g);
-        node_idx = target(*out.first, g);
+        auto value_map = get(&TxnNode::transaction, _graph);
+        auto out = out_edges(node_idx, _graph);
+        node_idx = target(*out.first, _graph);
         
-        auto q = value_map[node_idx];
-        if (q->ref.TryAccess()) {
+        auto &q = _graph[node_idx];
+        if (q.ref().TryAccess()) {
             return node_idx;
         } else {
             return (size_t) -1;
@@ -433,16 +449,16 @@ namespace ultraverse::state {
     }
     
     void StateGraphBoost::MakeQueryList(std::vector<size_t> &head_nodes) {
-        auto value_map = get(&VertexP::query, g);
+        auto value_map = get(&TxnNode::transaction, _graph);
         for (auto &n: head_nodes) {
-            auto out = out_edges(n, g);
+            auto out = out_edges(n, _graph);
             for (auto iter = out.first; iter != out.second; ++iter) {
-                value_map[target(*iter, g)]->ref.DecReference();
+                _graph[target(*iter, _graph)].ref().DecReference();
             }
             
-            auto q = value_map[n];
-            q->ref.NoneReference();
-            query_list.push_back(q);
+            auto &q = _graph[n];
+            q.ref().NoneReference();
+            _transactionList.push_back(&q);
         }
     }
     
@@ -462,7 +478,7 @@ namespace ultraverse::state {
       
         std::map<uint16_t, struct result> command_map;
       
-        auto value_map = get(&VertexP::query, g);
+        auto value_map = get(&QueryNode::query, g);
         for (const auto &i : g.vertex_set())
         {
           auto q = value_map[i];

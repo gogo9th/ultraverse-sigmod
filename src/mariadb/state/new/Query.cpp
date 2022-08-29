@@ -50,4 +50,16 @@ namespace ultraverse::state::v2 {
     void Query::setFlags(uint8_t flags) {
         _flags = flags;
     }
+    
+    std::unordered_set<std::string> &Query::readSet() {
+        return _readSet;
+    }
+    
+    std::unordered_set<std::string> &Query::writeSet() {
+        return _writeSet;
+    }
+    
+    std::unordered_set<std::string> &Query::foreignKeySet() {
+        return _foreignKeySet;
+    }
 }

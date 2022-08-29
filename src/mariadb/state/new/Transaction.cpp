@@ -48,6 +48,18 @@ namespace ultraverse::state::v2 {
         _flags = flags;
     }
     
+    std::unordered_set<std::string> &Transaction::readSet() {
+        return _readSet;
+    }
+    
+    std::unordered_set<std::string> &Transaction::writeSet() {
+        return _writeSet;
+    }
+    
+    void Transaction::updateRWSet() {
+        // not implemented
+    }
+    
     TransactionHeader Transaction::header() {
         TransactionHeader header;
         
@@ -59,6 +71,10 @@ namespace ultraverse::state::v2 {
         header.nextPos = _nextPos;
         
         return std::move(header);
+    }
+    
+    std::vector<std::shared_ptr<Query>> &Transaction::queries() {
+        return _queries;
     }
     
     Transaction &Transaction::operator<<(std::shared_ptr<Query> &query) {

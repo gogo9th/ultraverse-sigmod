@@ -6,6 +6,7 @@
 #define ULTRAVERSE_STATE_QUERY_HPP
 
 #include <memory>
+#include <unordered_set>
 #include <unordered_map>
 
 #include <cereal/access.hpp>
@@ -54,6 +55,11 @@ namespace ultraverse::state::v2 {
         uint8_t flags();
         void setFlags(uint8_t flags);
         
+        std::unordered_set<std::string> &readSet();
+        std::unordered_set<std::string> &writeSet();
+        std::unordered_set<std::string> &foreignKeySet();
+        
+        
         template <typename Archive>
         void serialize(Archive &archive);
         
@@ -72,10 +78,10 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, StateHash> _beforeHash;
         std::unordered_map<std::string, StateHash> _afterHash;
     
-        std::vector<std::string> _affectedTables;
-        std::vector<std::string> _readSet;
-        std::vector<std::string> _writeSet;
-        std::vector<std::string> _foreignKeySet;
+        std::unordered_set<std::string> _affectedTables;
+        std::unordered_set<std::string> _readSet;
+        std::unordered_set<std::string> _writeSet;
+        std::unordered_set<std::string> _foreignKeySet;
         
         uint32_t _affectedRows;
         std::vector<std::string> _rowSet;

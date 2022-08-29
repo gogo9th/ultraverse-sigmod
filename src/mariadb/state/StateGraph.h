@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 
+#include "new/Query.hpp"
+#include "new/Transaction.hpp"
+
 #include "StateUserQuery.h"
 #include "StateTable.h"
 
@@ -13,6 +16,9 @@ namespace ultraverse::state {
         StateGraph() {}
         
         virtual ~StateGraph() {}
+        
+        virtual void addTransaction(std::shared_ptr<v2::Transaction> query) = 0;
+        virtual void addTransactions(std::vector<std::shared_ptr<v2::Transaction>> &transactions) = 0;
         
         virtual void AddQueries(const StateTable::Query &q) = 0;
         

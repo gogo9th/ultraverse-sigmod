@@ -55,8 +55,16 @@ namespace ultraverse::state::v2 {
         
         uint8_t flags();
         void setFlags(uint8_t flags);
+    
+        std::unordered_set<std::string> &readSet();
+        std::unordered_set<std::string> &writeSet();
+        
+        void updateRWSet();
         
         TransactionHeader header();
+        
+        std::vector<std::shared_ptr<Query>> &queries();
+    
         
         /**
          * appends query object to transaction.
@@ -92,6 +100,9 @@ namespace ultraverse::state::v2 {
         uint64_t _referencePos;
         
         std::vector<std::shared_ptr<Query>> _queries;
+    
+        std::unordered_set<std::string> _readSet;
+        std::unordered_set<std::string> _writeSet;
     };
 }
 

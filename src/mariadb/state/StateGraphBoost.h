@@ -4,6 +4,10 @@
 #include <string>
 #include <vector>
 
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/graphviz.hpp>
+
+#include "StateReference.hpp"
 #include "StateUserQuery.h"
 #include "StateTable.h"
 #include "StateGraph.h"
@@ -11,15 +15,69 @@
 namespace ultraverse::state {
     class StateGraphBoost : public StateGraph {
     public:
+        struct TxnNode {
+            // StateQuery *query;
+            std::shared_ptr<v2::Transaction> transaction;
+            
+            TxnNode() {
+            
+            }
+            
+            TxnNode(std::shared_ptr<v2::Transaction> transaction):
+                transaction(transaction)
+            {
+            
+            }
+            
+            TxnNode(const TxnNode &source):
+                transaction(source.transaction)
+            {
+            
+            }
+            
+            bool addReference(TxnNode &vertex) {
+                auto iter = std::find_if(_refList.begin(), _refList.end(), [&vertex](const auto &r) {
+                    // ??
+                    return r == &vertex._ref;
+                });
+                
+                if (iter == _refList.end()) {
+                    _refList.push_back(&vertex._ref);
+                    return true;
+                }
+                
+                return false;
+            }
+            
+            void setNext(TxnNode &vertex) {
+                _next = &vertex;
+            }
+            
+            // TODO:
+            // QueryNode *notifyAndGetNext();
+            
+            TxnNode *next() {
+                return _next;
+            }
+            
+            StateReference &ref() {
+                return _ref;
+            }
+            
+        private:
+            StateReference _ref;
+            TxnNode *_next;
+            std::vector<StateReference *> _refList;
+        };
+        
         StateGraphBoost();
         
         ~StateGraphBoost();
         
-        virtual void AddQueries(const StateTable::Query &q);
+        void addTransaction(std::shared_ptr<v2::Transaction> transaction) override;
+        void addTransactions(std::vector<std::shared_ptr<v2::Transaction>> &transactions) override;
         
-        virtual void AddQueries(const StateTable::QueryList &list);
-        
-        virtual std::vector<StateQuery *> GetQueries();
+        const std::vector<TxnNode *> &getTransactions();
         
         virtual void PrintSummary();
         
@@ -30,6 +88,11 @@ namespace ultraverse::state {
         void MakeEdgeOutputFile(const std::string &type, const std::string &filepath);
     
     private:
+        using ListGraph =
+            boost::adjacency_list<boost::vecS, boost::vecS, boost::bidirectionalS, TxnNode>;
+        
+        void buildQueryList();
+        
         void CreateEdge(size_t node_idx);
         
         bool HasChildNode(size_t node_idx, size_t child_idx);
@@ -47,8 +110,10 @@ namespace ultraverse::state {
         typedef std::list<size_t> NodeList;
         
         std::vector<size_t> GetHeadNodes(NodeList::iterator begin, NodeList::iterator end);
-        
-        std::vector<StateQuery *> query_list;
+    
+        LoggerPtr _logger;
+        ListGraph _graph;
+        std::vector<TxnNode *> _transactionList;
         std::map<std::string, size_t> write_node_idx_map;
     };
 }
