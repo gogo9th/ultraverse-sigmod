@@ -363,7 +363,7 @@ namespace ultraverse::mariadb {
     }
     
     bool BinaryLogSequentialReader::next() {
-        while (true) {
+        while (!terminateSignal) {
             if (_binaryLogReader == nullptr) {
                 return false;
             }
@@ -437,5 +437,13 @@ namespace ultraverse::mariadb {
             return -1;
         }
         return _binaryLogReader->pos();
+    }
+
+    void BinaryLogSequentialReader::terminate() {
+        terminateSignal = true;
+    }
+
+    int BinaryLogSequentialReader::logFileListSize() {
+        return _logFileList.size();
     }
 }

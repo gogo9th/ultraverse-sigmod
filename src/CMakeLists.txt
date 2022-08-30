@@ -78,7 +78,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 
 add_executable(state_log_viewer ${ULTRAVERSE_SRCS} state_log_viewer.cpp)
-add_executable(state_log_writer ${ULTRAVERSE_SRCS} state_log_writer.cpp)
+add_executable(state_log_writer ${ULTRAVERSE_SRCS} statelogd.cpp)
 add_executable(db_state_change ${ULTRAVERSE_SRCS} db_state_change.cpp)
 
 target_link_libraries(state_log_viewer ${ULTRAVERSE_DEPENDENCIES})

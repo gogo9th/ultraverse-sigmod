@@ -75,8 +75,11 @@ namespace ultraverse::mariadb {
         bool seek(int index, int64_t position);
         bool next();
         int pos();
+        int logFileListSize();
     
         std::shared_ptr<base::DBEvent> currentEvent();
+
+        void terminate();
         
     private:
         void updateIndex();
@@ -90,6 +93,8 @@ namespace ultraverse::mariadb {
         std::vector<std::string> _logFileList;
         // TOOD: currentFile or currentIndex;
         int _currentIndex;
+
+        bool terminateSignal = false;
         
         std::unique_ptr<BinaryLogReader> _binaryLogReader;
     };

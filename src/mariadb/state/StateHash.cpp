@@ -54,7 +54,7 @@ namespace ultraverse::state {
     }
     
     std::vector<StateHash::BigNumPtr> StateHash::copyHashList(const std::vector<BigNumPtr> &source) {
-        std::vector<BigNumPtr> destination(source.size());
+        std::vector<BigNumPtr> destination;
         std::transform(source.begin(), source.end(), std::back_inserter(destination), [](auto &sourceVal) {
             return StateHash::copyBigNumPtr(sourceVal);
         });
