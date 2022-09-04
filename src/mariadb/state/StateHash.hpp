@@ -74,7 +74,7 @@ namespace ultraverse::state {
         
     private:
         static std::vector<BigNumPtr> allocateHashList(int count);
-        static inline BigNumPtr copyBigNumPtr(const BigNumPtr &source);
+        static BigNumPtr copyBigNumPtr(const BigNumPtr &source);
         static std::vector<BigNumPtr> copyHashList(const std::vector<BigNumPtr> &source);
         static bool compareHashList(const std::vector<BigNumPtr> &a, const std::vector<BigNumPtr> &b);
         

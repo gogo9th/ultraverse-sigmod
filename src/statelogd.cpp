@@ -95,19 +95,26 @@ public:
         _pendingQuery = std::make_shared<state::v2::Query>();
 
         if (!_checkpointPath.empty()) {
+            _logger->info("ultraverse state loaded: {}", _checkpointPath);
             int pos;
             std::ifstream is(_checkpointPath, std::ios::binary);
             if (is) {
                 cereal::BinaryInputArchive archive(is);
+                archive(_gid);
+                archive(pos);
+                archive(_tableMap);
                 archive(_stateHashMap);
-                std::cout << "restore\n";
-                std::cout << "name: " << _checkpointPath << '\n';
-                std::cout << "gid: " << _gid << "\n";
-                std::cout << "pos: " << pos << '\n';
+                archive(_pendingTxn);
+                archive(_pendingQuery);
+
+                _logger->info("gid: {}", _gid);
             } else {
                 throw std::runtime_error(
                         fmt::format("cannot find file {}.", _checkpointPath)
                 );
+            }
+            if (_gid >= _binlogReader->logFileListSize()) {
+                _gid = _binlogReader->logFileListSize() - 1;
             }
             _binlogReader->seek(_gid, pos);
         }
@@ -141,7 +148,11 @@ public:
                 default:
                     break;
             }
+            if (terminateStatus) {
+                break;
+            }
         }
+        terminateProcess();
     }
     
     /**
@@ -153,6 +164,7 @@ public:
     }
     
     void finalizeTransaction() {
+        _logger->info("finalizeTransaction: {}", _gid);
         _pendingTxn->setGid(_gid++);
         *_stateLogWriter << *_pendingTxn;
         _pendingTxn = std::make_shared<state::v2::Transaction>();
@@ -231,19 +243,21 @@ public:
     }
 
     void sigintHandler(int param) {
+        terminateStatus = true;
+        _binlogReader->terminate();
+    }
+
+    void terminateProcess() {
         std::string checkpointPath = _stateLogPath.substr(0, _stateLogPath.find_last_of('.')) + ".ultchkpoint";
         int pos = _binlogReader->pos();
-        std::cout << "SIGINT\n";
-        std::cout << "name: " << checkpointPath << '\n';
-        std::cout << "gid: " << _gid << "\n";
-        std::cout << "pos: " << pos << '\n';
+        _logger->info("ultraverse state saved: {}", checkpointPath);
         std::ofstream os(checkpointPath, std::ios::binary);
         if (os.is_open()) {
             cereal::BinaryOutputArchive archive(os);
             archive(_gid, pos, _tableMap, _stateHashMap, _pendingTxn, _pendingQuery);
             os.close();
         }
-        exit(1);
+
     }
     
 private:
@@ -256,7 +270,7 @@ private:
     
     int _threadNum = 1;
     
-    int _gid = 1;
+    int _gid = 0;
     
     std::unique_ptr<mariadb::BinaryLogSequentialReader> _binlogReader;
     std::unique_ptr<state::v2::StateLogWriter> _stateLogWriter;
@@ -266,6 +280,8 @@ private:
     
     std::shared_ptr<state::v2::Transaction> _pendingTxn;
     std::shared_ptr<state::v2::Query> _pendingQuery;
+
+    bool terminateStatus = false;
 };
 
 StateLogWriterApp application;
