@@ -89,12 +89,11 @@ public:
         _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(_binlogIndexPath);
         _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(_stateLogPath);
         
-        _stateLogWriter->open();
-        
         _pendingTxn = std::make_shared<state::v2::Transaction>();
         _pendingQuery = std::make_shared<state::v2::Query>();
 
         if (!_checkpointPath.empty()) {
+            _stateLogWriter->open(std::ios::out | std::ios::binary | std::ios::app);
             _logger->info("ultraverse state loaded: {}", _checkpointPath);
             int pos;
             std::ifstream is(_checkpointPath, std::ios::binary);
@@ -117,6 +116,9 @@ public:
                 _gid = _binlogReader->logFileListSize() - 1;
             }
             _binlogReader->seek(_gid, pos);
+        }
+        else {
+            _stateLogWriter->open(std::ios::out | std::ios::binary);
         }
     
         while (_binlogReader->next()) {

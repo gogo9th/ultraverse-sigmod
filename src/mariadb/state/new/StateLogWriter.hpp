@@ -15,7 +15,7 @@ namespace ultraverse::state::v2 {
         StateLogWriter(const std::string &logPath);
         ~StateLogWriter();
         
-        void open();
+        void open(std::ios_base::openmode openMode);
         void close();
         bool seek(int64_t position);
         int64_t pos();
