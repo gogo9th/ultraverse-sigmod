@@ -36,22 +36,19 @@ namespace ultraverse::state::v2 {
     
     StateLogWriter &StateLogWriter::operator<<(Transaction &transaction) {
         auto header = transaction.header();
-
-        _stream.write((char *) &header, sizeof(TransactionHeader));
-
-        cereal::BinaryOutputArchive archive(_stream);
+        std::stringstream tmpStream;
+        cereal::BinaryOutputArchive archive(tmpStream);
         archive(transaction);
+        std::string transactionString = tmpStream.str();
 
+        std::cout << "pos: " << pos() << '\n';
+
+        auto nextPos = sizeof(TransactionHeader) + transactionString.size() + _stream.tellp();
+        header.nextPos = nextPos;
+
+        std::cout << "nextPos: " << nextPos << '\n';
+        _stream.write((char *)&header, sizeof(TransactionHeader));
+        _stream.write(transactionString.c_str(), transactionString.size());
         _stream.flush();
-//        auto header = transaction.header();
-//        std::stringstream tmpStream;
-//        cereal::BinaryOutputArchive archive(tmpStream);
-//        archive(transaction);
-//        std::string transactionString = tmpStream.str();
-//
-//        auto nextPos = _stream.tellp() + sizeof(TransactionHeader) + transactionString.size();
-//        header.nextPos = nextPos;
-//        _stream.write((char *)&header, sizeof(TransactionHeader));
-//        _stream.write(transactionString.c_str(), transactionString.size());
     }
 }
