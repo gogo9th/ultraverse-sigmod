@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <memory>
 
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphviz.hpp>
@@ -12,6 +13,7 @@
 #include "StateTable.h"
 #include "StateGraph.h"
 
+
 namespace ultraverse::state {
     class StateGraphBoost : public StateGraph {
     public:
@@ -19,18 +21,22 @@ namespace ultraverse::state {
             // StateQuery *query;
             std::shared_ptr<v2::Transaction> transaction;
             
-            TxnNode() {
+            TxnNode():
+                _ref(new StateReference)
+            {
             
             }
             
             TxnNode(std::shared_ptr<v2::Transaction> transaction):
-                transaction(transaction)
+                transaction(transaction),
+                _ref(new StateReference)
             {
             
             }
             
             TxnNode(const TxnNode &source):
-                transaction(source.transaction)
+                transaction(source.transaction),
+                _ref(source._ref)
             {
             
             }
@@ -38,11 +44,11 @@ namespace ultraverse::state {
             bool addReference(TxnNode &vertex) {
                 auto iter = std::find_if(_refList.begin(), _refList.end(), [&vertex](const auto &r) {
                     // ??
-                    return r == &vertex._ref;
+                    return r == vertex._ref;
                 });
                 
                 if (iter == _refList.end()) {
-                    _refList.push_back(&vertex._ref);
+                    _refList.push_back(vertex._ref);
                     return true;
                 }
                 
@@ -60,14 +66,16 @@ namespace ultraverse::state {
                 return _next;
             }
             
-            StateReference &ref() {
+            std::shared_ptr<StateReference> ref() {
                 return _ref;
             }
-            
+    
+            bool isValid = false;
         private:
-            StateReference _ref;
-            TxnNode *_next;
-            std::vector<StateReference *> _refList;
+            std::shared_ptr<StateReference> _ref;
+            TxnNode *_next = nullptr;
+            std::vector<std::shared_ptr<StateReference>> _refList;
+            
         };
         
         StateGraphBoost();

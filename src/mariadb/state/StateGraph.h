@@ -20,11 +20,11 @@ namespace ultraverse::state {
         virtual void addTransaction(std::shared_ptr<v2::Transaction> query) = 0;
         virtual void addTransactions(std::vector<std::shared_ptr<v2::Transaction>> &transactions) = 0;
         
-        virtual void AddQueries(const StateTable::Query &q) = 0;
+        // virtual void AddQueries(const StateTable::Query &q) = 0;
         
-        virtual void AddQueries(const StateTable::QueryList &list) = 0;
+        // virtual void AddQueries(const StateTable::QueryList &list) = 0;
         
-        virtual std::vector<StateQuery *> GetQueries() = 0;
+        // virtual std::vector<StateQuery *> GetQueries() = 0;
         
         virtual void PrintSummary() = 0;
         

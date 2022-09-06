@@ -1456,7 +1456,7 @@ StateTable::QueryList::iterator StateTable::BinaryFindList(QueryList &list, cons
         }
         
         debug("[StateTable::AddQueries] Add Redo Query %d", valid_log_list.size());
-        graph->AddQueries(valid_log_list);
+        // graph->AddQueries(valid_log_list);
     }
     
     std::string StateTable::GetDbNameFromDropDbQuery(const std::string &query) {

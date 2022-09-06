@@ -10,15 +10,18 @@
 
 namespace ultraverse::state {
     
-    StateGraphBoost::StateGraphBoost()
-        : StateGraph() {
+    StateGraphBoost::StateGraphBoost():
+        StateGraph(),
+        _logger(createLogger("StateGraphBoost"))
+    {
     }
     
     StateGraphBoost::~StateGraphBoost() {
     }
     
     void StateGraphBoost::addTransaction(std::shared_ptr<v2::Transaction> transaction) {
-        auto nodeIdx = add_vertex(TxnNode { std::move(transaction) }, _graph);
+        auto x = TxnNode { std::move(transaction) };
+        auto nodeIdx = add_vertex(std::move(x), _graph);
         CreateEdge(nodeIdx);
     }
     
@@ -83,18 +86,17 @@ namespace ultraverse::state {
             if (target_idx == node_idx)
                 continue;
             
-            if (HasChildNode(target_idx, node_idx) == true) {
+            if (HasChildNode(target_idx, node_idx)) {
                 remove_edge(edge.first, _graph);
                 return;
             }
         }
         
         prev.addReference(curr);
-        curr.ref().IncReference();
+        curr.ref()->IncReference();
     }
     
     void StateGraphBoost::CreateEdge(size_t node_idx) {
-        auto value_map = get(&TxnNode::transaction, _graph);
         auto &curr = _graph[node_idx];
         
         std::vector<std::string> table_list;
@@ -161,11 +163,9 @@ namespace ultraverse::state {
             MakeQueryList(head_nodes);
             
             all_nodes.remove_if(
-                [this, &value_map](const size_t idx) {
-                    auto q = value_map[idx];
-                    _logger->warn("FIXME: q->is_valid_query == 1 is not implemented yet");
-                    // return q->is_valid_query == 1 ? true : false;
-                    return true;
+                [this](const size_t idx) {
+                    auto &q = _graph[idx];
+                    return q.isValid;
                 });
         }
     }
@@ -175,7 +175,7 @@ namespace ultraverse::state {
             buildQueryList();
         }
         
-        assert(!_transactionList.empty());
+        // assert(!_transactionList.empty());
         
         return _transactionList;
     }
@@ -377,14 +377,12 @@ namespace ultraverse::state {
     std::vector<size_t> StateGraphBoost::GetHeadNodes(NodeList::iterator begin, NodeList::iterator end) {
         std::vector<size_t> ret;
         
-        auto value_map = get(&TxnNode::transaction, _graph);
-        
         // 참조되지 않은 노드 탐색 (head)
         for (auto iter = begin; iter != end; ++iter) {
-            auto q = _graph[*iter];
-            if (!q.ref().IsReferenced() && q.transaction->writeSet().size() != 0) {
+            auto &q = _graph[*iter];
+            if (!q.ref()->IsReferenced() && q.transaction->writeSet().size() != 0) {
                 ret.push_back(*iter);
-                // q->is_valid_query = 1;
+                q.isValid = true;
             }
         }
         
@@ -399,8 +397,6 @@ namespace ultraverse::state {
 //      단, 마지막 parent 가 실행될 때 까지 대기했다가 실행
 // 분리된 head 들은 동시에 실행하여 병렬 실행 구현
     void StateGraphBoost::AnalyzeQueries(std::vector<size_t> &head_nodes) {
-        auto value_map = get(&TxnNode::transaction, _graph);
-        
         size_t curr_idx = (size_t) -1;
         size_t next_idx = (size_t) -1;
         for (auto &n: head_nodes) {
@@ -412,8 +408,7 @@ namespace ultraverse::state {
                 auto &curr_query = _graph[curr_idx];
                 auto &next_query = _graph[next_idx];
                 curr_query.setNext(next_query);
-                _logger->warn("FIXME: next_query->is_valid_query is not implemented yet");
-                //next_query->is_valid_query = 1;
+                next_query.isValid = true;
                 
                 curr_idx = next_idx;
             }
@@ -426,7 +421,7 @@ namespace ultraverse::state {
             if (curr_idx != n) {
                 auto out = out_edges(curr_idx, _graph);
                 for (auto iter = out.first; iter != out.second; ++iter) {
-                    _graph[target(*iter, _graph)].ref().DecReference();
+                    _graph[target(*iter, _graph)].ref()->DecReference();
                 }
             }
         }
@@ -441,7 +436,7 @@ namespace ultraverse::state {
         node_idx = target(*out.first, _graph);
         
         auto &q = _graph[node_idx];
-        if (q.ref().TryAccess()) {
+        if (q.ref()->TryAccess()) {
             return node_idx;
         } else {
             return (size_t) -1;
@@ -449,15 +444,14 @@ namespace ultraverse::state {
     }
     
     void StateGraphBoost::MakeQueryList(std::vector<size_t> &head_nodes) {
-        auto value_map = get(&TxnNode::transaction, _graph);
         for (auto &n: head_nodes) {
             auto out = out_edges(n, _graph);
             for (auto iter = out.first; iter != out.second; ++iter) {
-                _graph[target(*iter, _graph)].ref().DecReference();
+                _graph[target(*iter, _graph)].ref()->DecReference();
             }
             
             auto &q = _graph[n];
-            q.ref().NoneReference();
+            q.ref()->NoneReference();
             _transactionList.push_back(&q);
         }
     }
