@@ -5,6 +5,7 @@
 
 #include "mariadb/state/StateThreadPool.h"
 #include "mariadb/state/StateTable.h"
+#include "mariadb/state/new/StateChanger.hpp"
 
 #include "mariadb/BinaryLog.hpp"
 
@@ -15,27 +16,85 @@ using namespace ultraverse::mariadb;
 using namespace ultraverse::state;
 
 namespace ultraverse {
-    int DBStateChangeApp::exec() {
-        spdlog::set_level(spdlog::level::debug);
+    DBStateChangeApp::DBStateChangeApp():
+        _logger(createLogger("statechange"))
+    {
+        // FIXME
+        StateThreadPool::Instance().Resize(1);
+    }
+    
+    std::string DBStateChangeApp::optString() {
+        return "s:i:d:g:c:vVh";
+    }
+    
+    int DBStateChangeApp::main() {
+        using namespace ultraverse::state::v2;
         
-        DBHandlePool<mariadb::DBHandle> dbHandlePool(
-            1,
-            "localhost",
-            3306,
-            "root",
-            "mypass"
-        );
+        if (isArgSet('h')) {
+            std::cout <<
+            "statechange - rollback database state\n"
+            "\n"
+            "Options: \n"
+            "    -s file        database backup (.sql)\n"
+            "    -i file        ultraverse state log (.ultstatelog)\n"
+            "    -d database    database name\n"
+            "    -g gid         gid to rollback\n"
+            "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
+            "    -v             set logger level to DEBUG\n"
+            "    -V             set logger level to TRACE\n"
+            "    -h             print this help and exit application\n";
+            return 0;
+        }
         
-        StateTable stateTable(dbHandlePool);
-        stateTable.updateDefinitions();
+        if (!isArgSet('i')) {
+            _logger->error("FATAL: .ultstatelog file must be specified (-i)");
+            return 1;
+        } else if (!isArgSet('d')) {
+            _logger->error("FATAL: database name must be specified (-d)");
+            return 1;
+        } else if (!isArgSet('g')) {
+            _logger->error("FATAL: gid must be specified (-g)");
+            return 1;
+        }
+    
+        StateChangePlan changePlan;
         
+        if (isArgSet('s')) {
+            changePlan.setDBDumpPath(getArg('s'));
+        } else {
+            _logger->warn("database dump file is not specified; this will make slow");
+        }
+        changePlan.setStateLogPath(getArg('i'));
+        changePlan.setDBName(getArg('d'));
+        changePlan.setRollbackGid(std::stoi(getArg('g')));
+        
+        StateChanger stateChanger(changePlan);
+        
+        stateChanger.prepare();
+        
+        std::cout << "\n\n==== PLAN EXPLANATION ====\n";
+        stateChanger.explain();
+        
+        if (!confirm("Proceed?")) {
+            return 2;
+        }
+        
+        stateChanger.start();
         
         return 0;
+    }
+    
+    bool DBStateChangeApp::confirm(std::string message) {
+        std::cout << message << " (Y/n)\n> ";
+        std::string input;
+        std::cin >> input;
+        
+        return input == "Y";
     }
 }
 
 
 int main(int argc, char **argv) {
-    ultraverse::DBStateChangeApp application(argc, argv);
-    return application.exec();
+    ultraverse::DBStateChangeApp application;
+    return application.exec(argc, argv);
 }

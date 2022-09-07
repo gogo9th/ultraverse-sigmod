@@ -79,8 +79,8 @@ namespace ultraverse::base {
         bool isDDL() const;
         bool isDML() const;
     
-        std::vector<std::string> &readSet();
-        std::vector<std::string> &writeSet();
+        std::unordered_set<std::string> &readSet();
+        std::unordered_set<std::string> &writeSet();
         
     private:
         void extractReadWriteSet(const hsql::InsertStatement *insert);

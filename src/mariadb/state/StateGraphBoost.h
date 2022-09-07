@@ -13,6 +13,7 @@
 #include "StateTable.h"
 #include "StateGraph.h"
 
+#include "new/StateChangeContext.hpp"
 
 namespace ultraverse::state {
     class StateGraphBoost : public StateGraph {
@@ -78,7 +79,7 @@ namespace ultraverse::state {
             
         };
         
-        StateGraphBoost();
+        StateGraphBoost(std::shared_ptr<v2::StateChangeContext> _context);
         
         ~StateGraphBoost();
         
@@ -123,6 +124,8 @@ namespace ultraverse::state {
         ListGraph _graph;
         std::vector<TxnNode *> _transactionList;
         std::map<std::string, size_t> write_node_idx_map;
+        
+        std::shared_ptr<v2::StateChangeContext> _context;
     };
 }
 

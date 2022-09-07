@@ -12,6 +12,14 @@ namespace ultraverse::state::v2 {
     template <typename Archive>
     void Transaction::serialize(Archive &archive) {
         archive(
+            _timestamp,
+            
+            _gid,
+            _xid,
+            _isSuccessful,
+            _flags,
+            _nextPos,
+            
             _dependencies,
             
             _beforeHash,
@@ -20,7 +28,10 @@ namespace ultraverse::state::v2 {
             _referenceFile,
             _referencePos,
             
-            _queries
+            _queries,
+            
+            _readSet,
+            _writeSet
         );
     }
 }

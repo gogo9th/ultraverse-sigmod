@@ -5,6 +5,7 @@
 #ifndef ULTRAVERSE_STATE_STATELOGREADER_HPP
 #define ULTRAVERSE_STATE_STATELOGREADER_HPP
 
+#include <fstream>
 #include <memory>
 
 #include "Transaction.hpp"
@@ -12,10 +13,23 @@
 namespace ultraverse::state::v2 {
     class StateLogReader {
     public:
-        void next();
+        StateLogReader(const std::string &logPath);
+        ~StateLogReader();
+        
+        void open();
+        void close();
+        
+        bool next();
     
-        std::unique_ptr<TransactionHeader> txnHeader();
-        std::unique_ptr<Transaction> txnBody();
+        std::shared_ptr<TransactionHeader> txnHeader();
+        std::shared_ptr<Transaction> txnBody();
+        
+    private:
+        std::string _logPath;
+        std::ifstream _stream;
+        
+        std::shared_ptr<TransactionHeader> _currentHeader;
+        std::shared_ptr<Transaction> _currentBody;
     };
 }
 

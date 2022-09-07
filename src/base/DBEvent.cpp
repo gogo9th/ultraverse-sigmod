@@ -24,7 +24,7 @@ namespace ultraverse::base {
         }
       
         const hsql::SQLStatement* statement = _parseResult.getStatement(0);
-        hsql::printStatementInfo(statement);
+        // hsql::printStatementInfo(statement);
     
         if (statement->isType(hsql::kStmtInsert)) {
             extractReadWriteSet(static_cast<const hsql::InsertStatement *>(statement));
@@ -105,6 +105,13 @@ namespace ultraverse::base {
         }
     }
     
+    std::unordered_set<std::string> &QueryEventBase::readSet() {
+        return _readSet;
+    }
+    
+    std::unordered_set<std::string> &QueryEventBase::writeSet() {
+        return _writeSet;
+    }
     
     std::vector<int16_t> QueryEventBase::tokens() const {
         return _tokens;

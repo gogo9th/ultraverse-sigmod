@@ -5,16 +5,23 @@
 #ifndef ULTRAVERSE_DB_STATE_CHANGE_HPP
 #define ULTRAVERSE_DB_STATE_CHANGE_HPP
 
+#include "utils/log.hpp"
 #include "Application.hpp"
 
 namespace ultraverse {
-    class DBStateChangeApp : Application {
+    class DBStateChangeApp: public Application {
     public:
-        DBStateChangeApp(int argc, char **argv): Application(argc, argv) {
+        DBStateChangeApp();
         
-        }
+        std::string optString() override;
         
-        int exec();
+        int main() override;
+        
+        bool confirm(std::string message);
+        
+    private:
+        LoggerPtr _logger;
+        
     };
 }
 

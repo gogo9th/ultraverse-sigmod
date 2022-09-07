@@ -79,6 +79,10 @@ namespace ultraverse::state::v2 {
     
     Transaction &Transaction::operator<<(std::shared_ptr<Query> &query) {
         _queries.push_back(query);
+    
+        _readSet.insert(query->readSet().begin(), query->readSet().end());
+        _writeSet.insert(query->writeSet().begin(), query->writeSet().end());
+        
         return *this;
     }
     
