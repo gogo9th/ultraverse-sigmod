@@ -1653,6 +1653,7 @@ literal:
 
 string_literal:
 		STRING { $$ = Expr::makeLiteral($1); }
+	|   IDENTIFIER { $$ = Expr::makeLiteral($1); }
 	;
 
 bool_literal:
