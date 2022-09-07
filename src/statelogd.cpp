@@ -94,6 +94,7 @@ public:
         
         _pendingTxn = std::make_shared<state::v2::Transaction>();
         _pendingQuery = std::make_shared<state::v2::Query>();
+        
 
         if (!_checkpointPath.empty()) {
             _logger->info("ultraverse state loaded: {}", _checkpointPath);
@@ -119,6 +120,8 @@ public:
             }
             _binlogReader->seek(_gid, pos);
         }
+        
+        std::shared_ptr<mariadb::RowQueryEvent> pendingRowQueryEvent;
     
         while (_binlogReader->next()) {
             auto event = _binlogReader->currentEvent();
@@ -129,7 +132,7 @@ public:
             
             switch (event->eventType()) {
                 case event_type::QUERY:
-                    _pendingQueries.push_back(
+                    _pendingQueries.push(
                         _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, event = std::move(event)]() {
                             return processQueryEvent(std::dynamic_pointer_cast<mariadb::QueryEvent>(event));
                         })
@@ -144,27 +147,19 @@ public:
                     processTableMapEvent(std::dynamic_pointer_cast<mariadb::TableMapEvent>(event));
                     break;
                 case event_type::ROW_EVENT: {
-                    _pendingQueries.push_back(
-                        _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, event = std::move(event)]() {
+                    _pendingQueries.push(
+                        _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, event = std::move(event), pendingRowQueryEvent = std::move(pendingRowQueryEvent)]() {
                             auto pendingQuery = std::make_shared<state::v2::Query>();
                             processRowEvent(std::dynamic_pointer_cast<mariadb::RowEvent>(event), pendingQuery);
+                            processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
             
                             return pendingQuery;
                         })
                     );
                 }
                     break;
-                case event_type::ROW_QUERY: {
-                    _pendingQueries.push_back(
-                        _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, event = std::move(event)]() {
-                            auto pendingQuery = std::make_shared<state::v2::Query>();
-                            processRowQueryEvent(std::dynamic_pointer_cast<mariadb::RowQueryEvent>(event), pendingQuery);
-            
-                            return pendingQuery;
-                        })
-                    );
-                }
-                    // processRowQueryEvent(std::dynamic_pointer_cast<mariadb::RowQueryEvent>(event));
+                case event_type::ROW_QUERY:
+                    pendingRowQueryEvent = std::dynamic_pointer_cast<mariadb::RowQueryEvent>(event);
                     break;
                     
                 default:
@@ -194,6 +189,11 @@ public:
     
     std::shared_ptr<state::v2::Query> processQueryEvent(std::shared_ptr<mariadb::QueryEvent> event) {
         auto pendingQuery = std::make_shared<state::v2::Query>();
+    
+        pendingQuery->setTimestamp(event->timestamp());
+        pendingQuery->setDatabase(event->database());
+        pendingQuery->setStatement(event->statement());
+        
         event->tokenize();
         
         if (event->isDDL()) {
@@ -201,13 +201,20 @@ public:
                 pendingQuery->flags() |
                 state::v2::Query::FLAG_IS_DDL
             );
-            
-            /*
-            _pendingTxn->setFlags(
-                _pendingTxn->flags() |
+    
+    
+            auto transaction = std::make_shared<state::v2::Transaction>();
+            transaction->setFlags(
+                transaction->flags() |
                 state::v2::Transaction::FLAG_CONTAINS_DDL
             );
-             */
+    
+            *transaction << pendingQuery;
+            transaction->setXid(_gid++);
+    
+            *_stateLogWriter << *transaction;
+            
+            return nullptr;
         } else if (event->isDML()) {
             // rowset, changeset이 없으므로 해시 계산 불가능
             event->parse();
@@ -226,35 +233,27 @@ public:
              */
         }
         
-        pendingQuery->setDatabase(event->database());
-        pendingQuery->setStatement(event->statement());
-        
-        // finalizeQuery();
-        /*
-        if (event->isDDL()) {
-            _pendingTxn->setXid(0);
-            finalizeTransaction();
-        }
-         */
-        
         return pendingQuery;
     }
     
     void processTransactionIDEvent(std::shared_ptr<mariadb::TransactionIDEvent> event) {
-        _logger->info("Transaction ID #{} processed.", event->transactionId());
-        _pendingTxn->setXid(event->transactionId());
-        
-        for (auto &promise: _pendingQueries) {
+        while (!_pendingQueries.empty()) {
+            auto promise = std::move(_pendingQueries.front());
+            _pendingQueries.pop();
+            
             auto future = promise->get_future();
             future.wait();
             auto pendingQuery = future.get();
             
+            if (pendingQuery == nullptr) {
+                continue;
+            }
             
             *_pendingTxn << pendingQuery;
         }
-        
-        _pendingQueries.clear();
-        
+    
+        _logger->info("Transaction ID #{} processed.", event->transactionId());
+        _pendingTxn->setXid(event->transactionId());
         finalizeTransaction();
     }
     
@@ -273,6 +272,7 @@ public:
         auto hash = _stateHashMap[event->tableId()];
         event->mapToTable(*table);
     
+        pendingQuery->setTimestamp(event->timestamp());
         pendingQuery->setBeforeHash(table->table(), hash);
     
         for (int i = 0; i < event->affectedRows(); i++) {
@@ -350,7 +350,7 @@ private:
     std::shared_ptr<state::v2::Query> _pendingQuery;
     
     
-    std::vector<std::shared_ptr<std::promise<std::shared_ptr<state::v2::Query>>>> _pendingQueries;
+    std::queue<std::shared_ptr<std::promise<std::shared_ptr<state::v2::Query>>>> _pendingQueries;
     std::mutex _tableMapMutex;
 
     bool terminateStatus = false;

@@ -10,9 +10,10 @@
 
 namespace ultraverse::state {
     
-    StateGraphBoost::StateGraphBoost():
+    StateGraphBoost::StateGraphBoost(std::shared_ptr<v2::StateChangeContext> context):
         StateGraph(),
-        _logger(createLogger("StateGraphBoost"))
+        _logger(createLogger("StateGraphBoost")),
+        _context(context)
     {
     }
     
