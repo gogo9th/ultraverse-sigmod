@@ -35,6 +35,7 @@ namespace ultraverse::state::v2 {
     }
     
     StateLogWriter &StateLogWriter::operator<<(Transaction &transaction) {
+        std::scoped_lock<std::mutex> _scopedLock(_mutex);
         auto header = transaction.header();
         
         _stream.write((char *) &header, sizeof(TransactionHeader));
@@ -43,5 +44,6 @@ namespace ultraverse::state::v2 {
         archive(transaction);
         
         _stream.flush();
+        
     }
 }

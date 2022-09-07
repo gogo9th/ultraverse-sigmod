@@ -17,7 +17,8 @@ namespace ultraverse::state {
     template <typename Archive>
     void StateHash::save(Archive &archive) const {
         if (_hashList.empty() || _moduloList.empty()) {
-            archive(0);
+            int32_t size = 0;
+            archive(size);
             return;
         }
         

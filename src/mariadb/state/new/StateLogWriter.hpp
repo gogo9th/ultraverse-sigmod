@@ -6,6 +6,7 @@
 #define ULTRAVERSE_STATE_STATELOGWRITER_HPP
 
 #include <fstream>
+#include <mutex>
 
 #include "Transaction.hpp"
 
@@ -26,6 +27,7 @@ namespace ultraverse::state::v2 {
     private:
         std::string _logPath;
         std::ofstream _stream;
+        std::mutex _mutex;
     };
 }
 
