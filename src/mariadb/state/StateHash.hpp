@@ -58,6 +58,9 @@ namespace ultraverse::state {
         
         StateHash(const StateHash &other);
         
+        void init();
+        bool isInitialized() const;
+        
         void compute(Record &record, EventType type);
         void hexdump();
         

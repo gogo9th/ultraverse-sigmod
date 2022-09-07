@@ -197,11 +197,19 @@ public:
         event->tokenize();
         
         if (event->isDDL()) {
+            event->parseDDL();
+            
             pendingQuery->setFlags(
                 pendingQuery->flags() |
                 state::v2::Query::FLAG_IS_DDL
             );
     
+            pendingQuery->readSet().insert(
+                event->readSet().begin(), event->readSet().end()
+            );
+            pendingQuery->writeSet().insert(
+                event->writeSet().begin(), event->writeSet().end()
+            );
     
             auto transaction = std::make_shared<state::v2::Transaction>();
             transaction->setFlags(
@@ -210,7 +218,10 @@ public:
             );
     
             *transaction << pendingQuery;
-            transaction->setXid(_gid++);
+            transaction->setGid(_gid++);
+            transaction->setXid(0);
+            
+            
     
             *_stateLogWriter << *transaction;
             
@@ -268,9 +279,14 @@ public:
         
         _tableMapMutex.lock();
         auto table = _tableMap[event->tableId()];
-        _tableMapMutex.unlock();
-        auto hash = _stateHashMap[event->tableId()];
+        auto &hash = _stateHashMap[event->tableId()];
+        
+        if (!hash.isInitialized()) {
+            hash.init();
+        }
+        
         event->mapToTable(*table);
+        _tableMapMutex.unlock();
     
         pendingQuery->setTimestamp(event->timestamp());
         pendingQuery->setBeforeHash(table->table(), hash);

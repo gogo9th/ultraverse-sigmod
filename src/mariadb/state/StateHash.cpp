@@ -114,8 +114,7 @@ namespace ultraverse::state {
         return bn;
     }
     
-    StateHash::StateHash():
-        StateHash(generateModulo(DEFAULT_MODULO_COUNT), allocateHashList(DEFAULT_MODULO_COUNT))
+    StateHash::StateHash()
     {
     }
     
@@ -131,6 +130,15 @@ namespace ultraverse::state {
         _hashList(copyHashList(other._hashList))
     {
         assert(_moduloList.size() == _hashList.size());
+    }
+    
+    void StateHash::init() {
+        _moduloList = generateModulo(DEFAULT_MODULO_COUNT);
+        _hashList = allocateHashList(DEFAULT_MODULO_COUNT);
+    }
+    
+    bool StateHash::isInitialized() const {
+        return _moduloList.size() != 0;
     }
     
     void StateHash::compute(StateHash::Record &record, StateHash::EventType type) {

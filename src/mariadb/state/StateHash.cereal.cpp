@@ -16,8 +16,11 @@ namespace ultraverse::state {
     
     template <typename Archive>
     void StateHash::save(Archive &archive) const {
-        assert(!_hashList.empty());
-        assert(!_moduloList.empty());
+        if (_hashList.empty() || _moduloList.empty()) {
+            archive(0);
+            return;
+        }
+        
         assert(_hashList.size() == _moduloList.size());
     
         int32_t size = BN_num_bytes(_hashList[0].get());
@@ -53,6 +56,11 @@ namespace ultraverse::state {
         _hashList.reserve(listSize / 2);
 
         archive(bnSize);
+        
+        if (bnSize == 0) {
+            return;
+        }
+        
         archive(listSize);
         archive(srcPtr);
 
