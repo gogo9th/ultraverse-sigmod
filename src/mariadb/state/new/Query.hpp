@@ -41,6 +41,9 @@ namespace ultraverse::state::v2 {
     
         Query();
         
+        uint64_t timestamp() const;
+        void setTimestamp(uint64_t timestamp);
+        
         std::string database() const;
         void setDatabase(std::string database);
         

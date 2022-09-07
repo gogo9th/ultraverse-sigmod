@@ -15,6 +15,14 @@ namespace ultraverse::state::v2 {
     
     }
     
+    uint64_t Query::timestamp() const {
+        return _timestamp;
+    }
+    
+    void Query::setTimestamp(uint64_t timestamp) {
+        _timestamp = timestamp;
+    }
+    
     std::string Query::database() const {
         return _database;
     }
