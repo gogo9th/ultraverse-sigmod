@@ -20,16 +20,37 @@ namespace ultraverse::state {
     StateGraphBoost::~StateGraphBoost() {
     }
     
-    void StateGraphBoost::addTransaction(std::shared_ptr<v2::Transaction> transaction) {
-        auto x = TxnNode { std::move(transaction) };
-        auto nodeIdx = add_vertex(std::move(x), _graph);
-        CreateEdge(nodeIdx);
+    std::pair<uint64_t, bool> StateGraphBoost::addTransaction(std::shared_ptr<v2::Transaction> transaction) {
+        std::scoped_lock<std::mutex> _lock(_nodeMutex);
+        auto nodeIdx = add_vertex(std::make_shared<TxnNode>(std::move(transaction)), _graph);
+        
+        _graph[nodeIdx]->nodeIdx = nodeIdx;
+        
+        bool isEntrypoint = CreateEdge(nodeIdx);
+        return std::make_pair(nodeIdx, isEntrypoint);
     }
     
     void StateGraphBoost::addTransactions(std::vector<std::shared_ptr<v2::Transaction>> &transactions) {
         for (auto &transaction: transactions) {
             addTransaction(transaction);
         }
+    }
+    
+    void StateGraphBoost::removeTransaction(uint64_t nodeIdx) {
+        std::scoped_lock<std::mutex> _lock(_nodeMutex);
+        auto node = _graph[nodeIdx];
+        
+        
+        if (node->transaction != nullptr) {
+            node->transaction.reset();
+            node->isProcessed = true;
+        }
+    
+        clear_vertex(nodeIdx, _graph);
+    }
+    
+    std::shared_ptr<StateGraphBoost::TxnNode> StateGraphBoost::getTxnNode(uint64_t index) {
+        return _graph[index];
     }
     
     bool StateGraphBoost::HasChildNode(size_t node_idx, size_t child_idx) {
@@ -54,7 +75,6 @@ namespace ultraverse::state {
     }
     
     void StateGraphBoost::CreateEdge(size_t node_idx, size_t pnode_idx, const std::string &table) {
-        auto value_map = get(&TxnNode::transaction, _graph);
         auto &curr = _graph[node_idx];
         auto &prev = _graph[pnode_idx];
         
@@ -66,7 +86,7 @@ namespace ultraverse::state {
                 return;
             
             // 바로 위에 연결된 노드가 동일한 종속성을 가지면 추가로 연결할 필요 없음
-            std::shared_ptr<v2::Transaction> &sourceTransaction = value_map[source_idx];
+            std::shared_ptr<v2::Transaction> &sourceTransaction = _graph[source_idx]->transaction;
             if (std::find(sourceTransaction->readSet().begin(), sourceTransaction->readSet().end(), table) !=
                 sourceTransaction->readSet().end()) {
                 return;
@@ -93,34 +113,50 @@ namespace ultraverse::state {
             }
         }
         
-        prev.addReference(curr);
-        curr.ref()->IncReference();
+        prev->addReference(curr);
+        curr->ref()->IncReference();
     }
     
-    void StateGraphBoost::CreateEdge(size_t node_idx) {
+    bool StateGraphBoost::CreateEdge(size_t node_idx) {
         auto &curr = _graph[node_idx];
         
+        bool isEntrypoint = false;
+        
         std::vector<std::string> table_list;
-        table_list.insert(table_list.begin(), curr.transaction->writeSet().begin(), curr.transaction->writeSet().end());
-        table_list.insert(table_list.begin(), curr.transaction->readSet().begin(), curr.transaction->readSet().end());
+        table_list.insert(table_list.begin(), curr->transaction->writeSet().begin(), curr->transaction->writeSet().end());
+        table_list.insert(table_list.begin(), curr->transaction->readSet().begin(), curr->transaction->readSet().end());
         StateUtil::unique_vector(table_list);
         
         std::multimap<int, std::string> prior_map;
+        
+        if (table_list.empty()) {
+            isEntrypoint = true;
+        }
+        
         for (auto &i: table_list) {
             auto iter = write_node_idx_map.find(i);
-            if (iter != write_node_idx_map.end()) {
+            if (iter != write_node_idx_map.end() && !_graph[iter->second]->isProcessed) {
                 prior_map.insert(std::pair<int, std::string>(iter->second, i));
+            } else {
+                isEntrypoint = true;
             }
         }
         
         //가장 가까운 노드부터 추가
         for (auto &i: r_wrap(prior_map)) {
             CreateEdge(node_idx, i.first, i.second);
+            _graph[node_idx]->dependencies.push_back(i.first);
+            if (_graph[i.first]->next() == nullptr) {
+                _graph[i.first]->setNext(_graph[node_idx]);
+            }
+            
         }
         
-        for (auto &i: curr.transaction->writeSet()) {
+        for (auto &i: curr->transaction->writeSet()) {
             write_node_idx_map[i] = node_idx;
         }
+        
+        return isEntrypoint;
     }
     
     void StateGraphBoost::buildQueryList() {
@@ -132,8 +168,6 @@ namespace ultraverse::state {
         all_nodes.assign(_graph.vertex_set().begin(), _graph.vertex_set().end());
         
         size_t thread_count = StateThreadPool::Instance().Size();
-        
-        auto value_map = get(&TxnNode::transaction, _graph);
         
         std::vector<std::future<std::vector<size_t>>> futures;
         while (true) {
@@ -166,7 +200,7 @@ namespace ultraverse::state {
             all_nodes.remove_if(
                 [this](const size_t idx) {
                     auto &q = _graph[idx];
-                    return q.isValid;
+                    return q->isValid;
                 });
         }
     }
@@ -254,7 +288,7 @@ namespace ultraverse::state {
                 void operator()(std::ostream &outStream, size_t idx) {
                     std::map<std::string, std::vector<std::string>> read_map, write_map;
                     
-                    auto txn = boost::get(&TxnNode::transaction, _Graph, idx);
+                    auto txn = _Graph[idx]->transaction;
                     outStream << "[label=\"{xid " << txn->xid();
                     
                     outStream << "|{read set|";
@@ -331,8 +365,8 @@ namespace ultraverse::state {
             nlohmann::json j;
             
             for (auto &e: _graph.m_edges) {
-                auto source = boost::get(&TxnNode::transaction, _graph, e.m_source);
-                auto target = boost::get(&TxnNode::transaction, _graph, e.m_target);
+                auto source = _graph[e.m_source]->transaction;
+                auto target = _graph[e.m_target]->transaction;
                 
                 nlohmann::json obj;
                 obj["source_idx"] = source->xid();
@@ -346,8 +380,8 @@ namespace ultraverse::state {
             fout.open(filepath + "." + type);
             
             for (auto &e: _graph.m_edges) {
-                auto source = boost::get(&TxnNode::transaction, _graph, e.m_source);
-                auto target = boost::get(&TxnNode::transaction, _graph, e.m_target);
+                auto source = _graph[e.m_source]->transaction;
+                auto target = _graph[e.m_target]->transaction;
                 fout << source->xid() << " -> " << target->xid() << std::endl;
             }
         }
@@ -381,9 +415,9 @@ namespace ultraverse::state {
         // 참조되지 않은 노드 탐색 (head)
         for (auto iter = begin; iter != end; ++iter) {
             auto &q = _graph[*iter];
-            if (!q.ref()->IsReferenced() && q.transaction->writeSet().size() != 0) {
+            if (!q->ref()->IsReferenced() && q->transaction->writeSet().size() != 0) {
                 ret.push_back(*iter);
-                q.isValid = true;
+                q->isValid = true;
             }
         }
         
@@ -408,8 +442,8 @@ namespace ultraverse::state {
             while ((next_idx = GetNextNode(curr_idx)) != (size_t) -1) {
                 auto &curr_query = _graph[curr_idx];
                 auto &next_query = _graph[next_idx];
-                curr_query.setNext(next_query);
-                next_query.isValid = true;
+                curr_query->setNext(next_query);
+                next_query->isValid = true;
                 
                 curr_idx = next_idx;
             }
@@ -422,7 +456,7 @@ namespace ultraverse::state {
             if (curr_idx != n) {
                 auto out = out_edges(curr_idx, _graph);
                 for (auto iter = out.first; iter != out.second; ++iter) {
-                    _graph[target(*iter, _graph)].ref()->DecReference();
+                    _graph[target(*iter, _graph)]->ref()->DecReference();
                 }
             }
         }
@@ -432,12 +466,11 @@ namespace ultraverse::state {
         if (out_degree(node_idx, _graph) != 1)
             return (size_t) -1;
         
-        auto value_map = get(&TxnNode::transaction, _graph);
         auto out = out_edges(node_idx, _graph);
         node_idx = target(*out.first, _graph);
         
         auto &q = _graph[node_idx];
-        if (q.ref()->TryAccess()) {
+        if (q->ref()->TryAccess()) {
             return node_idx;
         } else {
             return (size_t) -1;
@@ -448,12 +481,12 @@ namespace ultraverse::state {
         for (auto &n: head_nodes) {
             auto out = out_edges(n, _graph);
             for (auto iter = out.first; iter != out.second; ++iter) {
-                _graph[target(*iter, _graph)].ref()->DecReference();
+                _graph[target(*iter, _graph)]->ref()->DecReference();
             }
             
             auto &q = _graph[n];
-            q.ref()->NoneReference();
-            _transactionList.push_back(&q);
+            q->ref()->NoneReference();
+            // _transactionList.push_back(&q);
         }
     }
     

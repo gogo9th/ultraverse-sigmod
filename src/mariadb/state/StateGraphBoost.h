@@ -42,39 +42,44 @@ namespace ultraverse::state {
             
             }
             
-            bool addReference(TxnNode &vertex) {
+            bool addReference(std::shared_ptr<TxnNode> vertex) {
                 auto iter = std::find_if(_refList.begin(), _refList.end(), [&vertex](const auto &r) {
                     // ??
-                    return r == vertex._ref;
+                    return r == vertex->_ref;
                 });
                 
                 if (iter == _refList.end()) {
-                    _refList.push_back(vertex._ref);
+                    _refList.push_back(vertex->_ref);
                     return true;
                 }
                 
                 return false;
             }
             
-            void setNext(TxnNode &vertex) {
-                _next = &vertex;
+            void setNext(std::shared_ptr<TxnNode> vertex) {
+                _next = vertex;
             }
             
             // TODO:
             // QueryNode *notifyAndGetNext();
             
-            TxnNode *next() {
+            std::shared_ptr<TxnNode> next() {
                 return _next;
             }
             
             std::shared_ptr<StateReference> ref() {
                 return _ref;
             }
-    
+            
             bool isValid = false;
+            bool isProcessed = false;
+            
+            uint64_t nodeIdx = 0;
+            std::vector<uint64_t> dependencies;
         private:
+            
             std::shared_ptr<StateReference> _ref;
-            TxnNode *_next = nullptr;
+            std::shared_ptr<TxnNode> _next = nullptr;
             std::vector<std::shared_ptr<StateReference>> _refList;
             
         };
@@ -83,10 +88,15 @@ namespace ultraverse::state {
         
         ~StateGraphBoost();
         
-        void addTransaction(std::shared_ptr<v2::Transaction> transaction) override;
-        void addTransactions(std::vector<std::shared_ptr<v2::Transaction>> &transactions) override;
+        std::pair<uint64_t, bool> addTransaction(std::shared_ptr<v2::Transaction> transaction);
+        void addTransactions(std::vector<std::shared_ptr<v2::Transaction>> &transactions);
+        
+        void removeTransaction(uint64_t nodeIdx);
+        
+        std::shared_ptr<TxnNode> getTxnNode(uint64_t index);
         
         const std::vector<TxnNode *> &getTransactions();
+        
         
         virtual void PrintSummary();
         
@@ -95,14 +105,19 @@ namespace ultraverse::state {
         virtual void MakeOutputFile(const std::string &type, FILE *fp) {};
         
         void MakeEdgeOutputFile(const std::string &type, const std::string &filepath);
+        
+        void dump() {
+            std::scoped_lock<std::mutex> _lock(_nodeMutex);
+            boost::write_graphviz(std::cout, _graph);
+        }
     
     private:
         using ListGraph =
-            boost::adjacency_list<boost::vecS, boost::vecS, boost::bidirectionalS, TxnNode>;
+            boost::adjacency_list<boost::vecS, boost::vecS, boost::bidirectionalS, std::shared_ptr<TxnNode>>;
         
         void buildQueryList();
         
-        void CreateEdge(size_t node_idx);
+        bool CreateEdge(size_t node_idx);
         
         bool HasChildNode(size_t node_idx, size_t child_idx);
         
@@ -124,6 +139,8 @@ namespace ultraverse::state {
         ListGraph _graph;
         std::vector<TxnNode *> _transactionList;
         std::map<std::string, size_t> write_node_idx_map;
+        
+        std::mutex _nodeMutex;
         
         std::shared_ptr<v2::StateChangeContext> _context;
     };
