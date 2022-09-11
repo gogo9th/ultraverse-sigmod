@@ -12,7 +12,8 @@
 namespace ultraverse::mariadb {
     
     DBHandle::DBHandle():
-        _handle(mysql_init(nullptr), mysql_close)
+        _handle(mysql_init(nullptr), mysql_close),
+        _logger(createLogger("mariadb::DBHandle"))
     {
         unsigned int timeout = 15;
         mysql_options(_handle.get(), MYSQL_OPT_CONNECT_TIMEOUT, (const char *)&timeout);
@@ -27,12 +28,12 @@ namespace ultraverse::mariadb {
         mysql_real_connect(_handle.get(), host.c_str(), user.c_str(), password.c_str(), nullptr, port, nullptr, 0);
         if (mysql_errno(_handle.get()) != 0) {
             throw std::runtime_error(
-                fmt::format("mysql_real_connect returned {}.", mysql_errno(_handle.get()))
+                fmt::format("mysql_real_connect returned {}: {}", mysql_errno(_handle.get()), mysql_error(_handle.get()))
             );
         }
         
-        // disableAutoCommit();
-        disableBinlogChecksum();
+        disableAutoCommit();
+        // disableBinlogChecksum();
     }
     
     void DBHandle::disconnect() {
@@ -42,7 +43,7 @@ namespace ultraverse::mariadb {
     void DBHandle::disableAutoCommit() {
         if (mysql_autocommit(_handle.get(), false) != 0) {
             throw std::runtime_error(
-                fmt::format("failed to autocommit: %s", mysql_error(_handle.get()))
+                fmt::format("failed to turn off autocommit: %s", mysql_error(_handle.get()))
             );
         }
     }
@@ -83,6 +84,19 @@ namespace ultraverse::mariadb {
 
     }
     
+    int DBHandle::executeQuery(const std::string query) {
+        // _logger->trace("executing query: {}", query);
+        
+        if (mysql_real_query(_handle.get(), query.c_str(), query.size()) != 0) {
+            auto mysqlErrno = mysql_errno(_handle.get());
+            auto *message = mysql_error(_handle.get());
+            _logger->warn("executeQuery() returned non-zero code: {} ({})", mysqlErrno, message);
+            return mysqlErrno;
+        }
+        
+        return 0;
+    }
+    
     std::shared_ptr<MYSQL> DBHandle::handle() {
         return _handle;
     }
@@ -90,4 +104,5 @@ namespace ultraverse::mariadb {
     DBHandle::operator MYSQL *() {
         return _handle.get();
     }
+ 
 }

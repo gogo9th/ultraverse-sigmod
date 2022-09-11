@@ -43,9 +43,18 @@ namespace ultraverse {
             "    -D             dry-run\n"
             "    -v             set logger level to DEBUG\n"
             "    -V             set logger level to TRACE\n"
-            "    -h             print this help and exit application\n";
+            "    -h             print this help and exit application\n"
+            "\n"
+            "Environment Variables: \n"
+            "    DB_HOST        Database Host\n"
+            "    DB_PORT        Database Port\n"
+            "    DB_USER        Database User\n"
+            "    DB_PASS        Database Password\n";
+            
             return 0;
         }
+        
+        int threadNum = std::thread::hardware_concurrency() + 1;
         
         if (!isArgSet('i')) {
             _logger->error("FATAL: .ultstatelog file must be specified (-i)");
@@ -57,8 +66,19 @@ namespace ultraverse {
             _logger->error("FATAL: gid must be specified (-g)");
             return 1;
         }
+        
+        if (isArgSet('c')) {
+            threadNum = std::stoi(getArg('c'));
+        }
     
         StateChangePlan changePlan;
+        DBHandlePool<mariadb::DBHandle> dbHandlePool(
+            threadNum,
+            getEnv("DB_HOST"),
+            std::stoi(getEnv("DB_PORT")),
+            getEnv("DB_USER"),
+            getEnv("DB_PASS")
+        );
         
         if (isArgSet('s')) {
             changePlan.setDBDumpPath(getArg('s'));
@@ -68,23 +88,21 @@ namespace ultraverse {
         changePlan.setStateLogPath(getArg('i'));
         changePlan.setDBName(getArg('d'));
         changePlan.setRollbackGid(std::stoi(getArg('g')));
+
         
-        StateChanger stateChanger(changePlan);
-        
-        stateChanger.prepare();
-        
-        std::cout << "\n\n==== PLAN EXPLANATION ====\n";
-        stateChanger.explain();
-        
+        StateChanger stateChanger(dbHandlePool, changePlan);
+    
         if (!confirm("Proceed?")) {
             return 2;
         }
+        
+        stateChanger.start();
         
         return 0;
     }
     
     bool DBStateChangeApp::confirm(std::string message) {
-        std::cout << message << " (Y/n)\n> ";
+        std::cout << message << " (Y/n) > ";
         std::string input;
         std::cin >> input;
         

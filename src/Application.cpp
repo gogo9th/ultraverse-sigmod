@@ -36,6 +36,19 @@ namespace ultraverse {
         return _args.at(flag);
     }
     
+    bool Application::isEnvSet(std::string envName) {
+        return getenv(envName.c_str()) == nullptr;
+    }
+    
+    std::string Application::getEnv(std::string envName) {
+        const char *envVar = getenv(envName.c_str());
+        
+        if (envVar == nullptr) {
+            return std::string();
+        }
+        return std::string(envVar);
+    }
+    
     int Application::exec(int argc, char **argv) {
         parseArgs(argc, argv);
         return main();

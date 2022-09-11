@@ -77,8 +77,9 @@ namespace ultraverse::state::v2 {
         _isDryRun = isDryRun;
     }
     
-    StateChanger::StateChanger(const StateChangePlan &plan):
+    StateChanger::StateChanger(DBHandlePool<mariadb::DBHandle> &dbHandlePool, const StateChangePlan &plan):
         _logger(createLogger("StateChanger")),
+        _dbHandlePool(dbHandlePool),
         _plan(plan),
         _intermediateDBName(fmt::format("ult_intermediate_{}", (int) time(nullptr))), // FIXME
         _reader(plan.stateLogPath()),
@@ -88,7 +89,9 @@ namespace ultraverse::state::v2 {
     
     }
     
-    void StateChanger::prepare() {
+    void StateChanger::start() {
+        createIntermediateDB();
+        
         _logger->info("reading state log");
         _reader.open();
         
@@ -110,12 +113,13 @@ namespace ultraverse::state::v2 {
             
             auto node = _stateGraph.addTransaction(_reader.txnBody());
             if (node.second) {
-                _executorThreads.emplace_back(&StateChanger::start, this, node.first);
+                _executorThreads.emplace_back(&StateChanger::processNode, this, node.first);
             }
-            
-            // _stateGraph.dump();
         }
         
+        for (auto &thread: _executorThreads) {
+            thread.join();
+        }
         
     }
     
@@ -200,52 +204,8 @@ namespace ultraverse::state::v2 {
             });
         }
     }
-    
-    void StateChanger::explain() {
-        /*
-        std::stringstream planExplanation;
-        if (_plan.dbDumpPath().empty()) {
-            planExplanation << " - [!] START FROM SCRATCH\n";
-        } else {
-            planExplanation << fmt::format(" - Rollback database using backup file ({})\n", _plan.dbDumpPath());
-        }
-        
-        planExplanation << " - Replay Transactions:\n";
-        
-        auto headList = _stateGraph.getTransactions();
-        for (auto &x : headList) {
-            auto *node = x;
-            
-            int level = 1;
-            while (node != nullptr) {
-                for (int i = 0; i < level * 2; i++) {
-                    planExplanation << ' ';
-                }
-                if (_rollbackTarget->gid() == node->transaction->gid()) {
-                     planExplanation << fmt::format(
-                         fmt::emphasis::bold | fg(fmt::color::red),
-                         "/> GID #{} (ROLLBACK TARGET; has {} queries)\n",
-                         node->transaction->gid(),
-                         node->transaction->queries().size()
-                    );
-                } else {
-                    planExplanation << fmt::format(
-                        "=> GID #{} (has {} queries)\n",
-                        node->transaction->gid(),
-                        node->transaction->queries().size()
-                    );
-                }
-                node = node->next();
-                level++;
-            }
-            planExplanation << "\n";
-        }
-        
-        std::cout << planExplanation.str();
-         */
-    }
-    
-    void StateChanger::start(uint64_t nodeIdx) {
+   
+    void StateChanger::processNode(uint64_t nodeIdx) {
         _logger->trace("[#{}] thread created", nodeIdx);
         auto node = _stateGraph.getTxnNode(nodeIdx);
     
@@ -255,7 +215,7 @@ namespace ultraverse::state::v2 {
         while (node != nullptr) {
             for (auto depIdx: node->dependencies) {
                 if (!_stateGraph.getTxnNode(depIdx)->isProcessed) {
-                    _logger->trace("[#{}->#{}] waiting for dependencies: #{}", nodeIdx, node->nodeIdx, depIdx);
+                    _logger->info("[#{}->#{}] waiting for dependencies: #{}", nodeIdx, node->nodeIdx, depIdx);
                     
                     while (!_stateGraph.getTxnNode(depIdx)->isProcessed) {
                         std::this_thread::sleep_for(100ms);
@@ -263,53 +223,55 @@ namespace ultraverse::state::v2 {
                 }
             }
     
-            if (node->isProcessed) {
+            if (node->isProcessed || !node->processLock.try_lock()) {
+                _logger->trace("[#{}->#{}] this node is already processed by another thread", nodeIdx, node->nodeIdx);
                 break;
             }
+    
+            { // @with(dbHandleLease);
+                _logger->trace("[#{}->#{}] leasing dbHandle", nodeIdx, node->nodeIdx);
+                auto dbHandleLease = _dbHandlePool.take();
+                auto &dbHandle = dbHandleLease.get();
+                _logger->info("[#{}->#{}] replaying transaction", nodeIdx, node->nodeIdx);
+                dbHandle.executeQuery("use " + _intermediateDBName);
+                dbHandle.executeQuery("BEGIN");
             
-            for (auto &query: node->transaction->queries()) {
-                _logger->debug("[#{}->#{}] TODO: execute query: {}", nodeIdx, node->nodeIdx, query->statement());
-            }
+                for (auto &query: node->transaction->queries()) {
+                    if (query->database() != _plan.dbName()) {
+                        continue;
+                    }
+            
+                    auto statement = QUERY_TAG_STATECHANGE + query->statement();
+                    _logger->trace("[#{}->#{}] executing query: {}", nodeIdx, node->nodeIdx, query->statement());
+                    if (dbHandle.executeQuery(statement) != 0) {
+                        _logger->error("[#{}->#{}] query execution failed: {}", nodeIdx, node->nodeIdx, mysql_error(dbHandle));
+                        dbHandle.executeQuery("ROLLBACK");
+                        throw std::runtime_error(mysql_error(dbHandle));
+                    }
+                }
+    
+                _logger->trace("[#{}->#{}] finalizing transaction", nodeIdx, node->nodeIdx);
+                dbHandle.executeQuery("COMMIT");
+                _logger->debug("[#{}->#{}] releasing dbHandle", nodeIdx, node->nodeIdx);
+            } // @release(dbHandleLease);
             
             _stateGraph.removeTransaction(node->nodeIdx);
             node = node->next();
         }
     
         _logger->trace("[#{}] thread end", nodeIdx);
-        
-        /*
-        // TODO: statetable 로직 이식 (안그러면 테이블 이름 변경 등으로 인해 디펜던시 계산 제대로 안됨)
-        // createIntermediateDB();
-    
-        auto headList = _stateGraph.getTransactions();
-        for (auto &head: headList) {
-            auto node = head;
-            while (node != nullptr) {
-                auto &transaction = node->transaction;
-                for (auto &query: transaction->queries()) {
-                    if (query->database() == "") {
-                        continue;
-                    }
-    
-                    auto statement = QUERY_TAG_STATECHANGE + query->statement();
-                    _logger->debug("[#{}] TODO: execute {}", transaction->gid(), query->statement());
-                    if (mysql_real_query(_dbHandle, statement.c_str(), statement.size()) != 0) {
-                        // TODO:
-                    }
-                }
-                node = node->next();
-            }
-        }
-        */
     }
     
     void StateChanger::createIntermediateDB() {
         _logger->info("creating intermediate database: {}", _intermediateDBName);
         
         auto query = QUERY_TAG_STATECHANGE + fmt::format("CREATE DATABASE IF NOT EXISTS {}", _intermediateDBName);
-        if (mysql_real_query(_dbHandle, query.c_str(), query.size()) != 0) {
-            _logger->error("cannot create intermediate database: {}", mysql_error(_dbHandle));
-            throw std::runtime_error(mysql_error(_dbHandle));
+        auto dbHandleLease = _dbHandlePool.take();
+        auto &dbHandle = dbHandleLease.get();
+        if (dbHandle.executeQuery(query) != 0) {
+            _logger->error("cannot create intermediate database: {}", mysql_error(dbHandle));
+            throw std::runtime_error(mysql_error(dbHandle));
         }
+        dbHandle.executeQuery("COMMIT");
     }
 }

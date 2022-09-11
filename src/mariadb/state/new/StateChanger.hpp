@@ -9,6 +9,7 @@
 #include "StateLogReader.hpp"
 #include "StateChangeContext.hpp"
 
+#include "base/DBHandlePool.hpp"
 #include "mariadb/state/StateGraphBoost.h"
 #include "mariadb/DBHandle.hpp"
 #include "utils/log.hpp"
@@ -55,14 +56,13 @@ namespace ultraverse::state::v2 {
     public:
         static const std::string QUERY_TAG_STATECHANGE;
         
-        StateChanger(const StateChangePlan &plan);
+        StateChanger(DBHandlePool<mariadb::DBHandle> &dbHandlePool, const StateChangePlan &plan);
         
-        void prepare();
-        void explain();
-        void start(uint64_t nodeIdx);
+        void start();
         
     private:
         void processDDLTransaction(std::shared_ptr<Transaction> transaction);
+        void processNode(uint64_t nodeIdx);
         
         /**
          * creates intermediate database.
@@ -77,7 +77,8 @@ namespace ultraverse::state::v2 {
         
         
         LoggerPtr _logger;
-        mariadb::DBHandle _dbHandle;
+        
+        DBHandlePool<mariadb::DBHandle> &_dbHandlePool;
         
         const StateChangePlan &_plan;
         std::string _intermediateDBName;

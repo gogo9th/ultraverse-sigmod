@@ -20,6 +20,9 @@ namespace ultraverse {
         
         bool isArgSet(char flag);
         std::string getArg(char flag);
+        
+        bool isEnvSet(std::string envName);
+        std::string getEnv(std::string envName);
     private:
         void parseArgs(int argc, char **argv);
         
