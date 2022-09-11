@@ -66,14 +66,16 @@ namespace ultraverse {
             std::unique_lock lock(_mutex);
             
             if (_handles.empty()) {
-                _condvar.wait(lock);
+                _condvar.wait(lock, [this] { return !_handles.empty(); });
             }
             
-            auto &handle = _handles.front();
+            auto handle = std::move(_handles.front());
+            _handles.pop();
+            lock.unlock();
             
             return DBHandleLease<T>(handle, [this, handle]() {
                 this->_handles.push(handle);
-                this->_condvar.notify_all();
+                this->_condvar.notify_one();
             });
         }
     private:
