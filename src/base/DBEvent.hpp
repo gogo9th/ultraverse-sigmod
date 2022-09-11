@@ -73,6 +73,8 @@ namespace ultraverse::base {
          */
         bool parse();
         
+        bool parseDDL();
+        
         std::vector<int16_t> tokens() const;
         std::vector<size_t> tokenPos() const;
         

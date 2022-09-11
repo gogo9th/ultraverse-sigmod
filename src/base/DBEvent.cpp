@@ -37,6 +37,34 @@ namespace ultraverse::base {
         return result;
     }
     
+    bool QueryEventBase::parseDDL() {
+        std::vector<int16_t> tokens;
+        std::vector<size_t> tokenPos;
+        hsql::SQLParser::tokenize(statement(), &tokens, &tokenPos);
+        
+        int i = 0;
+        for (auto &token: tokens) {
+            if (token == SQL_IDENTIFIER) {
+                std::string value;
+                if (i + 1 == tokens.size()) {
+                    value = statement().substr(tokenPos[i]);
+                } else {
+                    tokenPos[i + 1] - tokenPos[i];
+                    value = statement().substr(tokenPos[i], tokenPos[i + 1] - tokenPos[i]);
+                }
+    
+                value.erase(std::remove_if(
+                    value.begin(), value.end(),
+                    [](auto c) { return c == ' '; }
+                ), value.end());
+                
+                _writeSet.insert(value);
+                std::cout << value << std::endl;
+            }
+            i++;
+        }
+    }
+    
     void QueryEventBase::extractReadWriteSet(const hsql::InsertStatement *insert) {
         std::string tableName(insert->tableName);
         
