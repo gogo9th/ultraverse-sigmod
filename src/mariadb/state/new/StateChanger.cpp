@@ -69,6 +69,14 @@ namespace ultraverse::state::v2 {
         _stateLogPath = stateLogPath;
     }
     
+    bool StateChangePlan::isDryRun() const {
+        return _isDryRun;
+    }
+    
+    void StateChangePlan::setDryRun(bool isDryRun) {
+        _isDryRun = isDryRun;
+    }
+    
     StateChanger::StateChanger(const StateChangePlan &plan):
         _logger(createLogger("StateChanger")),
         _plan(plan),
@@ -84,6 +92,8 @@ namespace ultraverse::state::v2 {
         _logger->info("reading state log");
         _reader.open();
         
+        _isRunning = true;
+        
         while (_reader.next()) {
             auto transactionHeader = _reader.txnHeader();
             auto gid = transactionHeader->gid;
@@ -98,8 +108,14 @@ namespace ultraverse::state::v2 {
                 processDDLTransaction(_reader.txnBody());
             }
             
-            _stateGraph.addTransaction(_reader.txnBody());
+            auto node = _stateGraph.addTransaction(_reader.txnBody());
+            if (node.second) {
+                _executorThreads.emplace_back(&StateChanger::start, this, node.first);
+            }
+            
+            // _stateGraph.dump();
         }
+        
         
     }
     
@@ -186,6 +202,7 @@ namespace ultraverse::state::v2 {
     }
     
     void StateChanger::explain() {
+        /*
         std::stringstream planExplanation;
         if (_plan.dbDumpPath().empty()) {
             planExplanation << " - [!] START FROM SCRATCH\n";
@@ -225,9 +242,42 @@ namespace ultraverse::state::v2 {
         }
         
         std::cout << planExplanation.str();
+         */
     }
     
-    void StateChanger::start() {
+    void StateChanger::start(uint64_t nodeIdx) {
+        _logger->trace("[#{}] thread created", nodeIdx);
+        auto node = _stateGraph.getTxnNode(nodeIdx);
+    
+        using namespace std::chrono_literals;
+        std::this_thread::sleep_for(100ms);
+        
+        while (node != nullptr) {
+            for (auto depIdx: node->dependencies) {
+                if (!_stateGraph.getTxnNode(depIdx)->isProcessed) {
+                    _logger->trace("[#{}->#{}] waiting for dependencies: #{}", nodeIdx, node->nodeIdx, depIdx);
+                    
+                    while (!_stateGraph.getTxnNode(depIdx)->isProcessed) {
+                        std::this_thread::sleep_for(100ms);
+                    }
+                }
+            }
+    
+            if (node->isProcessed) {
+                break;
+            }
+            
+            for (auto &query: node->transaction->queries()) {
+                _logger->debug("[#{}->#{}] TODO: execute query: {}", nodeIdx, node->nodeIdx, query->statement());
+            }
+            
+            _stateGraph.removeTransaction(node->nodeIdx);
+            node = node->next();
+        }
+    
+        _logger->trace("[#{}] thread end", nodeIdx);
+        
+        /*
         // TODO: statetable 로직 이식 (안그러면 테이블 이름 변경 등으로 인해 디펜던시 계산 제대로 안됨)
         // createIntermediateDB();
     
@@ -243,15 +293,14 @@ namespace ultraverse::state::v2 {
     
                     auto statement = QUERY_TAG_STATECHANGE + query->statement();
                     _logger->debug("[#{}] TODO: execute {}", transaction->gid(), query->statement());
-                    /*
                     if (mysql_real_query(_dbHandle, statement.c_str(), statement.size()) != 0) {
                         // TODO:
                     }
-                     */
                 }
                 node = node->next();
             }
         }
+        */
     }
     
     void StateChanger::createIntermediateDB() {

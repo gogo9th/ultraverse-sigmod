@@ -35,6 +35,9 @@ namespace ultraverse::state::v2 {
     
         const std::string &stateLogPath() const;
         void setStateLogPath(const std::string &stateLogPath);
+        
+        bool isDryRun() const;
+        void setDryRun(bool isDryRun);
 
     private:
         std::string _dbName;
@@ -44,6 +47,8 @@ namespace ultraverse::state::v2 {
         std::string _dbdumpPath;
         std::string _binlogPath;
         std::string _stateLogPath;
+        
+        bool _isDryRun;
     };
     
     class StateChanger {
@@ -54,7 +59,7 @@ namespace ultraverse::state::v2 {
         
         void prepare();
         void explain();
-        void start();
+        void start(uint64_t nodeIdx);
         
     private:
         void processDDLTransaction(std::shared_ptr<Transaction> transaction);
@@ -83,6 +88,9 @@ namespace ultraverse::state::v2 {
         std::shared_ptr<Transaction> _rollbackTarget;
         
         std::shared_ptr<StateChangeContext> _context;
+        
+        bool _isRunning;
+        std::vector<std::thread> _executorThreads;
     };
 }
 

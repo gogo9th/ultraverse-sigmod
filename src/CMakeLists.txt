@@ -4,15 +4,22 @@ find_package(PkgConfig REQUIRED)
 find_package(BISON REQUIRED)
 find_package(FLEX REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(Boost REQUIRED)
 
 pkg_check_modules(MARIADB REQUIRED mariadb)
 pkg_check_modules(FMT REQUIRED fmt)
 pkg_check_modules(SPDLOG REQUIRED spdlog)
+pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
+
+add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 
 set(ULTRAVERSE_DEPENDENCIES
+    ${BOOST_LIBRARIES}
     ${MARIADB_LIBRARIES}
     ${FMT_LIBRARIES}
     ${SPDLOG_LIBRARIES}
+    ${Boost_LIBRARIES}
+    ${GRAPHVIZ_LIBRARIES}
     
     sqlparser
     OpenSSL::SSL
@@ -63,15 +70,25 @@ set(ULTRAVERSE_SRCS
     mariadb/state/new/Query.hpp
     mariadb/state/new/Transaction.cpp
     mariadb/state/new/Transaction.hpp
+    
+    mariadb/state/StateGraphBoost.cc
 #    mariadb/state/new/StateLogReader.cpp
 #    mariadb/state/new/StateLogReader.hpp
     mariadb/state/new/StateLogWriter.cpp
-    mariadb/state/new/StateLogWriter.hpp)
+    mariadb/state/new/StateLogWriter.hpp
+    
+    mariadb/state/new/StateLogReader.cpp
+    mariadb/state/new/StateLogReader.hpp
+    
+    base/TaskExecutor.cpp
+    base/TaskExecutor.hpp
+)
 
 include_directories(../dependencies/sql-parser/src)
 include_directories(../dependencies/sql-parser/src/parser)
 include_directories(../dependencies/cereal/include)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../dependencies/sql-parser)
+include_directories(${Boost_INCLUDE_DIRS})
 
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -79,7 +96,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(state_log_viewer ${ULTRAVERSE_SRCS} state_log_viewer.cpp)
 add_executable(state_log_writer ${ULTRAVERSE_SRCS} statelogd.cpp)
-add_executable(db_state_change ${ULTRAVERSE_SRCS} db_state_change.cpp)
+add_executable(db_state_change ${ULTRAVERSE_SRCS} db_state_change.cpp sql/SQLParser.cpp sql/SQLParser.hpp mariadb/state/new/StateChanger.cpp mariadb/state/new/StateChanger.hpp mariadb/state/new/StateChangeContext.hpp)
 
 target_link_libraries(state_log_viewer ${ULTRAVERSE_DEPENDENCIES})
 target_link_libraries(state_log_writer ${ULTRAVERSE_DEPENDENCIES})

@@ -24,7 +24,7 @@ namespace ultraverse {
     }
     
     std::string DBStateChangeApp::optString() {
-        return "s:i:d:g:c:vVh";
+        return "s:i:d:g:c:DvVh";
     }
     
     int DBStateChangeApp::main() {
@@ -40,6 +40,7 @@ namespace ultraverse {
             "    -d database    database name\n"
             "    -g gid         gid to rollback\n"
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
+            "    -D             dry-run\n"
             "    -v             set logger level to DEBUG\n"
             "    -V             set logger level to TRACE\n"
             "    -h             print this help and exit application\n";
@@ -62,7 +63,7 @@ namespace ultraverse {
         if (isArgSet('s')) {
             changePlan.setDBDumpPath(getArg('s'));
         } else {
-            _logger->warn("database dump file is not specified; this will make slow");
+            _logger->warn("database dump file is not specified; this leads unexpected result");
         }
         changePlan.setStateLogPath(getArg('i'));
         changePlan.setDBName(getArg('d'));
@@ -78,8 +79,6 @@ namespace ultraverse {
         if (!confirm("Proceed?")) {
             return 2;
         }
-        
-        stateChanger.start();
         
         return 0;
     }

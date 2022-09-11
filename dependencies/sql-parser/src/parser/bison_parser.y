@@ -1889,6 +1889,7 @@ x_compat_ident:
     |   VALUE  { $$ = new char[6]; strcpy($$, "value"); }
     |   VALUES { $$ = new char[7]; strcpy($$, "values"); }
     |   ID { $$ = new char[3]; strcpy($$, "id"); }
+    |   HISTORY { $$ = new char[8]; strcpy($$, "history"); }
     ;
 
 %%
