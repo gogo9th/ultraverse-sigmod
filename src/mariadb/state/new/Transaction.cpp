@@ -79,9 +79,35 @@ namespace ultraverse::state::v2 {
     
     Transaction &Transaction::operator<<(std::shared_ptr<Query> &query) {
         _queries.push_back(query);
-    
-        _readSet.insert(query->readSet().begin(), query->readSet().end());
-        _writeSet.insert(query->writeSet().begin(), query->writeSet().end());
+        
+        std::transform(
+            query->readSet().begin(), query->readSet().end(),
+            std::inserter(_readSet, _readSet.end()), [](auto &col) {
+                std::string table(col);
+                auto it = table.find('.');
+                
+                if (it != std::string::npos) {
+                    table.erase(it, table.size());
+                }
+                
+                return table;
+            }
+        );
+        
+        // FIXME
+        std::transform(
+            query->writeSet().begin(), query->writeSet().end(),
+            std::inserter(_writeSet, _writeSet.end()), [](auto &col) {
+                std::string table(col);
+                auto it = table.find('.');
+                
+                if (it != std::string::npos) {
+                    table.erase(it, table.size());
+                }
+                
+                return table;
+            }
+        );
         
         return *this;
     }
