@@ -242,7 +242,11 @@ namespace ultraverse::state::v2 {
                     }
             
                     auto statement = QUERY_TAG_STATECHANGE + query->statement();
-                    _logger->trace("[#{}->#{}] executing query: {}", nodeIdx, node->nodeIdx, query->statement());
+                    _logger->trace("[#{}->#{}] executing query: (timestamp={}) {}", nodeIdx, node->nodeIdx, query->timestamp(), query->statement());
+                    if (dbHandle.executeQuery(fmt::format("SET TIMESTAMP={}", query->timestamp())) != 0) {
+                        _logger->warn("[#{}->#{}] failed to set timestamp", nodeIdx, node->nodeIdx);
+                    }
+                    
                     if (dbHandle.executeQuery(statement) != 0) {
                         _logger->error("[#{}->#{}] query execution failed: {}", nodeIdx, node->nodeIdx, mysql_error(dbHandle));
                         dbHandle.executeQuery("ROLLBACK");
