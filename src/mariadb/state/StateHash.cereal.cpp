@@ -24,7 +24,7 @@ namespace ultraverse::state {
         
         assert(_hashList.size() == _moduloList.size());
     
-        int32_t size = BN_num_bytes(_hashList[0].get());
+        int32_t size = BN_num_bytes(_moduloList[0].get());
         int32_t listSize = _hashList.size();
         auto dstPtr = std::make_unique<std::vector<uint8_t>>(
             size * (_hashList.size() * 2)
