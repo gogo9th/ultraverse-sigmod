@@ -62,6 +62,12 @@ public:
   bool operator<(const StateData &c) const;
   bool operator<=(const StateData &c) const;
   StateData &operator=(const StateData &c);
+  
+  template <typename Archive>
+  void save(Archive &archive) const;
+  
+  template <typename Archive>
+  void load(Archive &archive);
 
 private:
   void Clear();
@@ -87,6 +93,9 @@ public:
   {
     StateData begin;
     StateData end;
+    
+    template <typename Archive>
+    void serialize(Archive &archive);
   };
 
   StateRange();
@@ -105,6 +114,9 @@ public:
 
   static StateRange AND(const StateRange &a, const StateRange &b);
   static StateRange OR(const StateRange &a, const StateRange &b);
+
+  template <typename Archive>
+  void serialize(Archive &archive);
 
 private:
   enum EN_VALID
@@ -138,7 +150,9 @@ public:
   // 공집합인 경우 쿼리간 의존관계가 없어지기 때문에 데이터가 모두 유효할때만 신중하게 결정
   // 교집합이면 true, 공집합이면 false
   static bool IsIntersection(const std::vector<StateRange> &a, const std::vector<StateRange> &b);
-
+  
+  template <typename Archive>
+  void serialize(Archive &archive);
 private:
   static bool is_data_ok(const StateItem &item);
   static StateRange MakeRange(const StateItem &item);
@@ -147,9 +161,13 @@ public:
   EN_CONDITION_TYPE condition_type;
   EN_FUNCTION_TYPE function_type;
   std::string name;
+  // lvalue
   std::vector<StateItem> arg_list;
+  // rvalue
   std::vector<StateData> data_list;
   std::vector<StateItem> sub_query_list;
 };
+
+#include "StateItem.cereal.cpp"
 
 #endif /* STATE_ITEM_INCLUDED */
