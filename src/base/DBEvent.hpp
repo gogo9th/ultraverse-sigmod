@@ -13,6 +13,7 @@
 
 #include "SQLParser.h"
 #include "mariadb/state/state_log_hdr.h"
+#include "mariadb/state/StateItem.h"
 
 namespace ultraverse::event_type {
     enum Value {
@@ -83,6 +84,9 @@ namespace ultraverse::base {
     
         std::unordered_set<std::string> &readSet();
         std::unordered_set<std::string> &writeSet();
+    
+        std::vector<StateItem> &itemSet();
+        std::vector<StateItem> &whereSet();
         
     private:
         void extractReadWriteSet(const hsql::InsertStatement *insert);
@@ -90,13 +94,16 @@ namespace ultraverse::base {
         void extractReadWriteSet(const hsql::UpdateStatement *update);
         void extractReadWriteSet(const hsql::SelectStatement *select);
         
-        void walkExpr(const hsql::Expr *expr, std::vector<std::string> &readSet, const std::string &rootTable);
+        void walkExpr(const hsql::Expr *expr, StateItem &parent, std::vector<std::string> &readSet, const std::string &rootTable, bool isRoot);
         
         std::vector<int16_t> _tokens;
         std::vector<size_t> _tokenPos;
     
         std::unordered_set<std::string> _readSet;
         std::unordered_set<std::string> _writeSet;
+    
+        std::vector<StateItem> _itemSet;
+        std::vector<StateItem> _whereSet;
         
         hsql::SQLParserResult _parseResult;
         

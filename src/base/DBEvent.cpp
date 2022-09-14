@@ -81,22 +81,48 @@ namespace ultraverse::base {
     
     void QueryEventBase::extractReadWriteSet(const hsql::DeleteStatement *del) {
         std::string tableName(del->tableName);
+        
         std::vector<std::string> readSet;
-        walkExpr(del->expr, readSet, tableName);
+        StateItem whereExpr;
+        walkExpr(del->expr, whereExpr, readSet, tableName, true);
         
         _readSet.insert(readSet.begin(), readSet.end());
+        _whereSet.push_back(whereExpr);
     }
     
     void QueryEventBase::extractReadWriteSet(const hsql::UpdateStatement *update) {
         std::string tableName(update->table->name);
         
         std::vector<std::string> readSet;
-        walkExpr(update->where, readSet, tableName);
+        StateItem whereExpr;
+        walkExpr(update->where, whereExpr, readSet, tableName, true);
     
         _readSet.insert(readSet.begin(), readSet.end());
+        _whereSet.push_back(whereExpr);
         
         for (auto &clause: *update->updates) {
+            StateItem updateExpr;
+            
             _writeSet.insert(tableName + "." + clause->column);
+            
+            updateExpr.name = clause->column;
+            
+            if (clause->value->isType(hsql::kExprLiteralString)) {
+                StateData value;
+                value.Set(clause->value->name, strlen(clause->value->name));
+                updateExpr.data_list.push_back(value);
+            } else if (clause->value->isType(hsql::kExprLiteralInt)) {
+                StateData value;
+                value.Set(clause->value->ival);
+                updateExpr.data_list.push_back(value);
+            } else if (clause->value->isType(hsql::kExprLiteralFloat)) {
+                StateData value;
+                value.Set(clause->value->fval);
+                updateExpr.data_list.push_back(value);
+            } else if (clause->value->isType(hsql::kExprLiteralNull)) {
+                StateData value;
+                updateExpr.data_list.push_back(value);
+            }
         }
     }
     
@@ -106,20 +132,73 @@ namespace ultraverse::base {
         std::vector<std::string> readSet;
         if (select->selectList != nullptr) {
             for (auto &expr: *select->selectList) {
-                walkExpr(expr, readSet, tableName);
+                StateItem stateItem;
+                walkExpr(expr, stateItem, readSet, tableName, true);
+                // ?
             }
         }
-        walkExpr(select->whereClause, readSet, tableName);
+        {
+            StateItem stateItem;
+            walkExpr(select->whereClause, stateItem, readSet, tableName, true);
+            _whereSet.push_back(stateItem);
+        }
     }
     
-    void QueryEventBase::walkExpr(const hsql::Expr *expr, std::vector<std::string> &readSet, const std::string &rootTable) {
+    void QueryEventBase::walkExpr(const hsql::Expr *expr, StateItem &parent, std::vector<std::string> &readSet, const std::string &rootTable, bool isRoot) {
         if (expr == nullptr) {
             return;
         }
         
         if (expr->isType(hsql::kExprOperator)) {
-            walkExpr(expr->expr, readSet, rootTable);
-            walkExpr(expr->expr2, readSet, rootTable);
+            StateItem stateItem;
+    
+            if (expr->name != nullptr) {
+                stateItem.name = std::string(expr->name);
+            }
+            
+            stateItem.condition_type = EN_CONDITION_NONE;
+            stateItem.function_type = FUNCTION_NONE;
+            
+            switch (expr->opType) {
+                case hsql::OperatorType::kOpAnd:
+                    stateItem.condition_type = EN_CONDITION_AND;
+                    break;
+                case hsql::OperatorType::kOpOr:
+                    stateItem.condition_type = EN_CONDITION_OR;
+                    break;
+                case hsql::OperatorType::kOpEquals:
+                    stateItem.function_type = FUNCTION_EQ;
+                    break;
+                case hsql::OperatorType::kOpNotEquals:
+                    stateItem.function_type = FUNCTION_NE;
+                    break;
+                case hsql::OperatorType::kOpBetween:
+                    stateItem.function_type = FUNCTION_BETWEEN;
+                    break;
+                case hsql::OperatorType::kOpGreaterEq:
+                    stateItem.function_type = FUNCTION_GE;
+                    break;
+                case hsql::OperatorType::kOpGreater:
+                    stateItem.function_type = FUNCTION_GT;
+                    break;
+                case hsql::OperatorType::kOpLessEq:
+                    stateItem.function_type = FUNCTION_LE;
+                    break;
+                case hsql::OperatorType::kOpLess:
+                    stateItem.function_type = FUNCTION_LT;
+                    break;
+                default:
+                    break;
+            }
+            
+            walkExpr(expr->expr, stateItem, readSet, rootTable, false);
+            walkExpr(expr->expr2, stateItem, readSet, rootTable, false);
+            
+            if (isRoot) {
+                parent = stateItem;
+            } else {
+                parent.arg_list.push_back(stateItem);
+            }
             return;
         }
         
@@ -129,7 +208,26 @@ namespace ultraverse::base {
                 std::string(expr->table) + "." + std::string(expr->name);
             
             readSet.push_back(column);
+            parent.name = column;
             return;
+        }
+        
+        if (expr->isType(hsql::kExprLiteralString)) {
+            StateData value;
+            value.Set(expr->name, strlen(expr->name));
+            parent.data_list.push_back(value);
+            return;
+        } else if (expr->isType(hsql::kExprLiteralInt)) {
+            StateData value;
+            value.Set(expr->ival);
+            parent.data_list.push_back(value);
+        } else if (expr->isType(hsql::kExprLiteralFloat)) {
+            StateData value;
+            value.Set(expr->fval);
+            parent.data_list.push_back(value);
+        } else if (expr->isType(hsql::kExprLiteralNull)) {
+            StateData value;
+            parent.data_list.push_back(value);
         }
     }
     
@@ -139,6 +237,14 @@ namespace ultraverse::base {
     
     std::unordered_set<std::string> &QueryEventBase::writeSet() {
         return _writeSet;
+    }
+    
+    std::vector<StateItem> &QueryEventBase::itemSet() {
+        return _itemSet;
+    }
+    
+    std::vector<StateItem> &QueryEventBase::whereSet() {
+        return _whereSet;
     }
     
     std::vector<int16_t> QueryEventBase::tokens() const {
