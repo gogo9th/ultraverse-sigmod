@@ -1,7 +1,11 @@
 #include <iostream>
+#include <sstream>
 
 #include <mysql/mysql.h>
 #include <mysql/mariadb_rpl.h>
+
+#include <bison_parser.h>
+#include <SQLParser.h>
 
 #include "mariadb/state/StateThreadPool.h"
 #include "mariadb/state/StateTable.h"
@@ -24,7 +28,7 @@ namespace ultraverse {
     }
     
     std::string DBStateChangeApp::optString() {
-        return "s:i:d:g:c:DvVh";
+        return "s:i:d:g:e:c:DvVh";
     }
     
     int DBStateChangeApp::main() {
@@ -39,6 +43,7 @@ namespace ultraverse {
             "    -i file        ultraverse state log (.ultstatelog)\n"
             "    -d database    database name\n"
             "    -g gid         gid to rollback\n"
+            "    -e columns     key columns (eg. user.id article.id)"
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -D             dry-run\n"
             "    -v             set logger level to DEBUG\n"
@@ -72,6 +77,16 @@ namespace ultraverse {
         }
     
         StateChangePlan changePlan;
+        
+        // TODO: 키 컬럼 이름만 여기서 설정하고 실질 조건은 target gid에서
+        if (isArgSet('e')) {
+            auto keyColumns = buildKeyColumnList(getArg('e'));
+            changePlan.keyColumns().insert(
+                changePlan.keyColumns().begin(),
+                keyColumns.begin(), keyColumns.end()
+            );
+        }
+    
         DBHandlePool<mariadb::DBHandle> dbHandlePool(
             threadNum,
             getEnv("DB_HOST"),
@@ -95,7 +110,7 @@ namespace ultraverse {
         if (!confirm("Proceed?")) {
             return 2;
         }
-        
+        // stateChanger.findCandidateColumn();
         stateChanger.start();
         
         return 0;
@@ -107,6 +122,20 @@ namespace ultraverse {
         std::cin >> input;
         
         return input == "Y";
+    }
+    
+    std::vector<std::string> DBStateChangeApp::buildKeyColumnList(std::string expression) {
+        std::vector<std::string> keyColumns;
+        
+        std::stringstream sstream(expression);
+        std::string column;
+        
+        while (std::getline(sstream, column, ' ')) {
+            _logger->debug("using {} as key column", column);
+            keyColumns.push_back(column);
+        }
+        
+        return keyColumns;
     }
 }
 

@@ -12,6 +12,7 @@ namespace ultraverse::state::v2 {
     template <typename Archive>
     void Query::serialize(Archive &archive) {
         archive(
+            _type,
             _timestamp,
             
             _database,
@@ -29,6 +30,9 @@ namespace ultraverse::state::v2 {
             _readSet,
             _writeSet,
             _foreignKeySet,
+            
+            _itemSet,
+            _whereSet,
             
             _affectedRows,
             _rowSet,

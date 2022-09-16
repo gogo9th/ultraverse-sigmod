@@ -19,6 +19,8 @@ namespace ultraverse {
         
         bool confirm(std::string message);
         
+        std::vector<std::string> buildKeyColumnList(std::string expression);
+        
     private:
         LoggerPtr _logger;
         

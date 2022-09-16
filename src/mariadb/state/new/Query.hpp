@@ -12,6 +12,7 @@
 #include <cereal/access.hpp>
 
 #include "mariadb/state/StateHash.hpp"
+#include "mariadb/state/StateItem.h"
 
 namespace ultraverse::state::v2 {
     class Query {
@@ -26,6 +27,7 @@ namespace ultraverse::state::v2 {
             RENAME,
             
             SELECT,
+            INSERT,
             UPDATE,
             DELETE
         };
@@ -41,6 +43,9 @@ namespace ultraverse::state::v2 {
     
         Query();
         
+        QueryType type() const;
+        void setType(QueryType type);
+        
         uint64_t timestamp() const;
         void setTimestamp(uint64_t timestamp);
         
@@ -51,9 +56,13 @@ namespace ultraverse::state::v2 {
         void setStatement(std::string statement);
         
         uint32_t affectedRows() const;
+        void setAffectedRows(uint32_t affectedRows);
         
-        void setBeforeHash(std::string tableName, StateHash &hash);
-        void setAfterHash(std::string tableName, StateHash &hash);
+        StateHash &beforeHash(std::string tableName);
+        void setBeforeHash(std::string tableName, StateHash hash);
+        
+        StateHash &afterHash(std::string tableName);
+        void setAfterHash(std::string tableName, StateHash hash);
         
         uint8_t flags();
         void setFlags(uint8_t flags);
@@ -62,11 +71,18 @@ namespace ultraverse::state::v2 {
         std::unordered_set<std::string> &writeSet();
         std::unordered_set<std::string> &foreignKeySet();
         
+        std::vector<StateItem> &itemSet();
+        std::vector<StateItem> &whereSet();
+        
+        std::vector<std::string> &rowSet();
+        std::vector<std::string> &changeSet();
+        
         
         template <typename Archive>
         void serialize(Archive &archive);
         
     private:
+        QueryType _type;
         uint64_t _timestamp;
         
         std::string _database;
@@ -85,6 +101,9 @@ namespace ultraverse::state::v2 {
         std::unordered_set<std::string> _readSet;
         std::unordered_set<std::string> _writeSet;
         std::unordered_set<std::string> _foreignKeySet;
+    
+        std::vector<StateItem> _itemSet;
+        std::vector<StateItem> _whereSet;
         
         uint32_t _affectedRows;
         std::vector<std::string> _rowSet;

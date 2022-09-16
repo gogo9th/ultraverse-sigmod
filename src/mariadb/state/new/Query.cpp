@@ -8,11 +8,20 @@
 
 namespace ultraverse::state::v2 {
     Query::Query():
+        _type(UNKNOWN),
         _timestamp(0),
         _affectedRows(0),
         _referencePos(0)
     {
     
+    }
+    
+    Query::QueryType Query::type() const {
+        return _type;
+    }
+    
+    void Query::setType(Query::QueryType type) {
+        _type = type;
     }
     
     uint64_t Query::timestamp() const {
@@ -43,11 +52,23 @@ namespace ultraverse::state::v2 {
         return _affectedRows;
     }
     
-    void Query::setBeforeHash(std::string tableName, StateHash &hash) {
+    void Query::setAffectedRows(uint32_t affectedRows) {
+        _affectedRows = affectedRows;
+    }
+    
+    StateHash &Query::beforeHash(std::string tableName) {
+        return _beforeHash[tableName];
+    }
+    
+    void Query::setBeforeHash(std::string tableName, StateHash hash) {
         _beforeHash[tableName] = hash;
     }
     
-    void Query::setAfterHash(std::string tableName, StateHash &hash) {
+    StateHash &Query::afterHash(std::string tableName) {
+        return _afterHash[tableName];
+    }
+    
+    void Query::setAfterHash(std::string tableName, StateHash hash) {
         _afterHash[tableName] = hash;
     }
     
@@ -69,5 +90,21 @@ namespace ultraverse::state::v2 {
     
     std::unordered_set<std::string> &Query::foreignKeySet() {
         return _foreignKeySet;
+    }
+    
+    std::vector<StateItem> &Query::itemSet() {
+        return _itemSet;
+    }
+    
+    std::vector<StateItem> &Query::whereSet() {
+        return _whereSet;
+    }
+    
+    std::vector<std::string> &Query::rowSet() {
+        return _rowSet;
+    }
+    
+    std::vector<std::string> &Query::changeSet() {
+        return _changeSet;
     }
 }

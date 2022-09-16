@@ -82,7 +82,7 @@ namespace ultraverse::state::v2 {
         
         std::transform(
             query->readSet().begin(), query->readSet().end(),
-            std::inserter(_readSet, _readSet.end()), [](auto &col) {
+            std::inserter(_readSet, _readSet.end()), [&query](auto &col) {
                 std::string table(col);
                 auto it = table.find('.');
                 
@@ -90,22 +90,22 @@ namespace ultraverse::state::v2 {
                     table.erase(it, table.size());
                 }
                 
-                return table;
+                return query->database() + "." + table;
             }
         );
         
         // FIXME
         std::transform(
             query->writeSet().begin(), query->writeSet().end(),
-            std::inserter(_writeSet, _writeSet.end()), [](auto &col) {
+            std::inserter(_writeSet, _writeSet.end()), [&query](auto &col) {
                 std::string table(col);
                 auto it = table.find('.');
                 
                 if (it != std::string::npos) {
                     table.erase(it, table.size());
                 }
-                
-                return table;
+        
+                return query->database() + "." + table;
             }
         );
         

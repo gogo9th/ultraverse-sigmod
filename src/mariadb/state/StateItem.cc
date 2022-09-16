@@ -23,7 +23,7 @@ StateData::~StateData()
 
 void StateData::Clear()
 {
-  if (type == en_column_data_string)
+  if (type == en_column_data_string && d.str != nullptr)
   {
     free(d.str);
   }
@@ -535,9 +535,13 @@ bool StateRange::operator==(const StateRange &c) const
   return true;
 }
 
-std::string StateRange::MakeWhereQuery()
+std::string StateRange::MakeWhereQuery() {
+    return MakeWhereQuery("FIXME");
+}
+
+std::string StateRange::MakeWhereQuery(std::string columnName)
 {
-  std::string full_name = "FIXME"; // get_key_column_name();
+  std::string full_name = columnName;
   auto pos = full_name.find_last_of('.');
   std::string key_name = full_name.substr(pos + 1);
 
@@ -862,13 +866,7 @@ StateItem::~StateItem()
 
 bool StateItem::is_data_ok(const StateItem &item)
 {
-  if (item.arg_list.size() != 1)
-  {
-    return false;
-  }
-
-  auto field_item = &item.arg_list[0];
-  if (field_item->arg_list.size() > 0)
+  if (item.arg_list.size() > 0)
   {
     //SUB SELECT 는 쿼리에서 값을 뽑아낼 수 없음
     return false;
@@ -877,7 +875,7 @@ bool StateItem::is_data_ok(const StateItem &item)
   switch (item.function_type)
   {
   case FUNCTION_BETWEEN:
-    if (field_item->data_list.size() != 2)
+    if (item.data_list.size() != 2)
       return false;
     else
       return true;
@@ -888,7 +886,7 @@ bool StateItem::is_data_ok(const StateItem &item)
   case FUNCTION_LE:
   case FUNCTION_GT:
   case FUNCTION_GE:
-    if (field_item->data_list.size() != 1)
+    if (item.data_list.size() != 1)
       return false;
     else
       return true;
@@ -1049,31 +1047,31 @@ StateRange StateItem::MakeRange(const StateItem &item)
     switch (item.function_type)
     {
     case FUNCTION_BETWEEN:
-      range.SetBetween(item.arg_list[0].data_list[0], item.arg_list[0].data_list[1]);
+      range.SetBetween(item.data_list[0], item.data_list[1]);
       return range;
 
     case FUNCTION_EQ:
-      range.SetValue(item.arg_list[0].data_list[0], true);
+      range.SetValue(item.data_list[0], true);
       return range;
 
     case FUNCTION_NE:
-      range.SetValue(item.arg_list[0].data_list[0], false);
+      range.SetValue(item.data_list[0], false);
       return range;
 
     case FUNCTION_LT:
-      range.SetEnd(item.arg_list[0].data_list[0], false);
+      range.SetEnd(item.data_list[0], false);
       return range;
 
     case FUNCTION_LE:
-      range.SetEnd(item.arg_list[0].data_list[0], true);
+      range.SetEnd(item.data_list[0], true);
       return range;
 
     case FUNCTION_GT:
-      range.SetBegin(item.arg_list[0].data_list[0], false);
+      range.SetBegin(item.data_list[0], false);
       return range;
 
     case FUNCTION_GE:
-      range.SetBegin(item.arg_list[0].data_list[0], true);
+      range.SetBegin(item.data_list[0], true);
       return range;
 
     default:

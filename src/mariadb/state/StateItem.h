@@ -104,6 +104,7 @@ public:
   bool operator==(const StateRange &c) const;
 
   std::string MakeWhereQuery();
+  std::string MakeWhereQuery(std::string columnName);
 
   void SetBegin(const StateData &_begin, bool _add_equal);
   void SetEnd(const StateData &_end, bool _add_equal);
@@ -144,6 +145,7 @@ public:
 
   StateRange MakeRange();
   StateRange MakeRange(const std::string &column_name, bool &is_valid);
+  static StateRange MakeRange(const StateItem &item);
 
   // 두 범위(또는 값)가 교집합인지 공집합인지 확인
   // 정보가 불완전 할 경우 / 기본값은 교집합으로 함
@@ -155,7 +157,6 @@ public:
   void serialize(Archive &archive);
 private:
   static bool is_data_ok(const StateItem &item);
-  static StateRange MakeRange(const StateItem &item);
 
 public:
   EN_CONDITION_TYPE condition_type;

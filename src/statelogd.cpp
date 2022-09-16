@@ -286,28 +286,59 @@ public:
         }
         
         event->mapToTable(*table);
-        _tableMapMutex.unlock();
     
-        pendingQuery->setTimestamp(event->timestamp());
-        pendingQuery->setBeforeHash(table->table(), hash);
+        for (auto &it: _tableMap) {
+            if (it.second->database() == table->database()) {
+                pendingQuery->setBeforeHash(it.second->table(), _stateHashMap[it.first]);
+            }
+        }
+    
+        switch (event->type()) {
+            case mariadb::RowEvent::INSERT:
+                pendingQuery->setType(state::v2::Query::INSERT);
+                break;
+            case mariadb::RowEvent::DELETE:
+                pendingQuery->setType(state::v2::Query::DELETE);
+                break;
+            case mariadb::RowEvent::UPDATE:
+                pendingQuery->setType(state::v2::Query::UPDATE);
+                break;
+        }
     
         for (int i = 0; i < event->affectedRows(); i++) {
             switch (event->type()) {
                 case mariadb::RowEvent::INSERT:
+                    pendingQuery->rowSet().push_back(event->rowSet(i));
+                
                     hash += event->rowSet(i);
                     break;
                 case mariadb::RowEvent::DELETE:
+                    pendingQuery->rowSet().push_back(event->rowSet(i));
+                
                     hash -= event->rowSet(i);
                     break;
             
                 case mariadb::RowEvent::UPDATE:
+                    pendingQuery->rowSet().push_back(event->rowSet(i));
+                    pendingQuery->changeSet().push_back(event->changeSet(i));
+                
                     hash -= event->rowSet(i);
                     hash += event->changeSet(i);
                     break;
             }
+        
         }
     
-        pendingQuery->setAfterHash(table->table(), hash);
+        for (auto &it: _tableMap) {
+            if (it.second->database() == table->database()) {
+                pendingQuery->setAfterHash(it.second->table(), _stateHashMap[it.first]);
+            }
+        }
+        _tableMapMutex.unlock();
+    
+        pendingQuery->setTimestamp(event->timestamp());
+        pendingQuery->setAffectedRows(event->affectedRows());
+        
         pendingQuery->setDatabase(table->database());
     }
     
@@ -316,11 +347,21 @@ public:
         
         mariadb::QueryEvent dummyEvent(pendingQuery->database(), event->statement(), 0);
         dummyEvent.parse();
+
         pendingQuery->readSet().insert(
             dummyEvent.readSet().begin(), dummyEvent.readSet().end()
         );
         pendingQuery->writeSet().insert(
             dummyEvent.writeSet().begin(), dummyEvent.writeSet().end()
+        );
+        
+        pendingQuery->itemSet().insert(
+            pendingQuery->itemSet().begin(),
+            dummyEvent.itemSet().begin(), dummyEvent.itemSet().end()
+        );
+        pendingQuery->whereSet().insert(
+            pendingQuery->whereSet().begin(),
+            dummyEvent.whereSet().begin(), dummyEvent.whereSet().end()
         );
     }
 

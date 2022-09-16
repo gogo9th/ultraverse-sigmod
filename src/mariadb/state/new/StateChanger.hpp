@@ -5,9 +5,14 @@
 #ifndef ULTRAVERSE_STATECHANGER_HPP
 #define ULTRAVERSE_STATECHANGER_HPP
 
+#include <string>
+
 #include "Transaction.hpp"
 #include "StateLogReader.hpp"
 #include "StateChangeContext.hpp"
+
+#include "cluster/CandidateColumn.hpp"
+#include "cluster/RowCluster.hpp"
 
 #include "base/DBHandlePool.hpp"
 #include "mariadb/state/StateGraphBoost.h"
@@ -39,6 +44,8 @@ namespace ultraverse::state::v2 {
         
         bool isDryRun() const;
         void setDryRun(bool isDryRun);
+        
+        std::vector<std::string> &keyColumns();
 
     private:
         std::string _dbName;
@@ -49,6 +56,7 @@ namespace ultraverse::state::v2 {
         std::string _binlogPath;
         std::string _stateLogPath;
         
+        std::vector<std::string> _keyColumns;
         bool _isDryRun;
     };
     
@@ -58,11 +66,20 @@ namespace ultraverse::state::v2 {
         
         StateChanger(DBHandlePool<mariadb::DBHandle> &dbHandlePool, const StateChangePlan &plan);
         
+        std::string findCandidateColumn();
         void start();
         
     private:
+        void setRollbackTarget(std::shared_ptr<Transaction> transaction);
+        
         void processDDLTransaction(std::shared_ptr<Transaction> transaction);
         void processNode(uint64_t nodeIdx);
+        
+        bool isTransactionRelatedToPlan(std::shared_ptr<Transaction> transaction) const;
+        
+        std::vector<CandidateColumn>
+        buildCandidateColumnList(std::shared_ptr<Transaction> transaction) const;
+        
         
         /**
          * creates intermediate database.
@@ -80,18 +97,28 @@ namespace ultraverse::state::v2 {
         
         DBHandlePool<mariadb::DBHandle> &_dbHandlePool;
         
-        const StateChangePlan &_plan;
+        StateChangePlan _plan;
         std::string _intermediateDBName;
         
         StateLogReader _reader;
         
-        StateGraphBoost _stateGraph;
+        std::unique_ptr<StateGraphBoost> _stateGraph;
         std::shared_ptr<Transaction> _rollbackTarget;
         
         std::shared_ptr<StateChangeContext> _context;
         
         bool _isRunning;
         std::vector<std::thread> _executorThreads;
+    
+    
+        std::mutex _stateHashMutex;
+        std::unordered_map<std::string, state::StateHash> _stateHashMap;
+    
+        std::mutex _clusterMutex;
+        std::condition_variable _clusterCondvar;
+        bool _isClusterReady;
+        
+        RowCluster _rowCluster;
     };
 }
 
