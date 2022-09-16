@@ -29,6 +29,14 @@ namespace ultraverse::event_type {
     };
 }
 
+namespace ultraverse::column_type {
+    enum Value {
+        STRING = 0,
+        INTEGER = 1,
+        FLOAT = 2,
+    };
+}
+
 namespace ultraverse::base {
     class DBEvent {
     public:

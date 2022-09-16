@@ -3,6 +3,7 @@
 //
 
 #include <cstdlib>
+#include <sstream>
 
 #include <cereal/types/vector.hpp>
 #include <cereal/types/unordered_map.hpp>
@@ -75,12 +76,13 @@ namespace ultraverse::mariadb {
         return _database;
     }
     
-    TableMapEvent::TableMapEvent(uint64_t tableId, std::string database, std::string table, std::vector<int> columns, uint64_t timestamp):
+    TableMapEvent::TableMapEvent(uint64_t tableId, std::string database, std::string table, std::vector<std::pair<column_type::Value, int>> columns, std::vector<std::string> columnNames, uint64_t timestamp):
         _timestamp(timestamp),
         _tableId(tableId),
         _database(database),
         _table(table),
-        _columns(columns)
+        _columns(columns),
+        _columnNames(columnNames)
     {
     
     }
@@ -101,8 +103,16 @@ namespace ultraverse::mariadb {
         return _table;
     }
     
+    column_type::Value TableMapEvent::typeOf(int columnIndex) const {
+        return _columns[columnIndex].first;
+    }
+    
     int TableMapEvent::sizeOf(int columnIndex) const {
-        return _columns[columnIndex];
+        return _columns[columnIndex].second;
+    }
+    
+    std::string TableMapEvent::nameOf(int columnIndex) const {
+        return _columnNames[columnIndex];
     }
     
     RowQueryEvent::RowQueryEvent(const std::string &statement, uint64_t timestamp):
@@ -151,16 +161,18 @@ namespace ultraverse::mariadb {
         
         while (pos < _dataSize) {
             {
-                auto rowSize = calculateRowSize(tableMapEvent, pos);
-                auto block = std::string((char *) _rowData.get() + pos, rowSize);
-                _rowSet.push_back(block);
+                auto retval = readRow(tableMapEvent, pos);
+                auto &rowData = retval.first;
+                auto rowSize = retval.second;
+                _rowSet.push_back(rowData);
                 pos += rowSize;
             }
             
             if (_type == UPDATE) {
-                auto rowSize = calculateRowSize(tableMapEvent, pos);
-                auto block = std::string((char *) _rowData.get() + pos, rowSize);
-                _changeSet.push_back(block);
+                auto retval = readRow(tableMapEvent, pos);
+                auto &rowData = retval.first;
+                auto rowSize = retval.second;
+                _changeSet.push_back(rowData);
                 pos += rowSize;
             }
         }
@@ -168,30 +180,74 @@ namespace ultraverse::mariadb {
         _affectedRows = _rowSet.size();
     }
     
-    int RowEvent::calculateRowSize(TableMapEvent &tableMapEvent, int basePos) {
+    std::pair<std::string, int> RowEvent::readRow(TableMapEvent &tableMapEvent, int basePos) {
         uint64_t nullFields = 0;
         int nullFieldsSize = (_columns + 7) / 8;
         
         memcpy(&nullFields, _rowData.get() + basePos, (_columns + 7) / 8);
         
+        std::stringstream sstream;
+        
         int rowSize = 0;
     
         for (int i = 0; i < _columns; i++) {
+            auto columnType = tableMapEvent.typeOf(i);
             int columnSize = tableMapEvent.sizeOf(i);
+            auto columnName = tableMapEvent.nameOf(i);
+            
+            auto offset = basePos + nullFieldsSize + rowSize;
+            
             
             if ((nullFields & (1 << i)) != 0) {
-                continue;
-            }
-        
-            if (columnSize == -1) {
-                int strLength = (_rowData.get()[basePos + nullFieldsSize + rowSize]) + 1;
-                rowSize += strLength;
+                // NULL
+                sstream << columnName << "=";
+            } else if (columnSize == -1) {
+                // length + [string content]
+                int strLength = (_rowData.get()[offset]);
+                
+                std::unique_ptr<uint8_t> rawValue(new uint8_t[strLength]);
+                memcpy(rawValue.get(), _rowData.get() + offset + 1, strLength);
+                
+                std::string strValue((char *) rawValue.get(), strLength);
+                sstream << columnName << "=" << strValue;
+                
+                rowSize += strLength + 1;
             } else {
+                if (columnType == column_type::INTEGER) {
+                    switch (columnSize) {
+                        case 8:
+                            sstream << columnName << "=" << readValue<int64_t>(offset);
+                            break;
+                        case 4:
+                            sstream << columnName << "=" << readValue<int32_t>(offset);
+                            break;
+                        case 2:
+                            sstream << columnName << "=" << readValue<int16_t>(offset);
+                            break;
+                        case 1:
+                            sstream << columnName << "=" << readValue<int8_t>(offset);
+                            break;
+                    }
+                } else if (columnType == column_type::FLOAT) {
+                    switch (columnSize) {
+                        case 8:
+                            sstream << columnName << "=" << readValue<double>(offset);
+                            break;
+                        case 4:
+                            sstream << columnName << "=" << readValue<float>(offset);
+                            break;
+                    }
+                }
+                
                 rowSize += columnSize;
+            }
+    
+            if (i + 1 < _columns) {
+                sstream << ":";
             }
         }
         
-        return nullFieldsSize + rowSize;
+        return std::make_pair(sstream.str(), nullFieldsSize + rowSize);
     }
     
     int RowEvent::affectedRows() const {

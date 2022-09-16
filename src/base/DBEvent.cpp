@@ -105,7 +105,7 @@ namespace ultraverse::base {
             
             _writeSet.insert(tableName + "." + clause->column);
             
-            updateExpr.name = clause->column;
+            updateExpr.name = tableName + "." + clause->column;
             
             if (clause->value->isType(hsql::kExprLiteralString)) {
                 StateData value;
@@ -123,6 +123,8 @@ namespace ultraverse::base {
                 StateData value;
                 updateExpr.data_list.push_back(value);
             }
+            
+            _itemSet.push_back(updateExpr);
         }
     }
     
@@ -195,7 +197,9 @@ namespace ultraverse::base {
             walkExpr(expr->expr2, stateItem, readSet, rootTable, false);
             
             if (isRoot) {
-                parent = stateItem;
+                parent.condition_type = EN_CONDITION_OR;
+                parent.function_type = FUNCTION_NONE;
+                parent.arg_list.push_back(stateItem);
             } else {
                 parent.arg_list.push_back(stateItem);
             }

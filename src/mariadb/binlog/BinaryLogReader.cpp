@@ -202,7 +202,7 @@ namespace ultraverse::mariadb {
         std::string schemaName((char *) schemaNameCStr.get(), schemaNameLength);
         std::string tableName((char *) tableNameCStr.get(), tableNameLength);
         
-        std::vector<int> columnTypeDef2;
+        std::vector<std::pair<column_type::Value, int>> columnTypeDef2;
         columnTypeDef2.reserve(columns);
         
         for (int i = 0; i < columns; i++) {
@@ -221,33 +221,33 @@ namespace ultraverse::mariadb {
                 case MYSQL_TYPE_BIT:
                 case MYSQL_TYPE_DECIMAL:
                 case MYSQL_TYPE_NEWDECIMAL:
-                    columnTypeDef2.push_back(-1);
+                    columnTypeDef2.emplace_back(column_type::STRING, -1);
                     break;
                     
                 case MYSQL_TYPE_LONGLONG:
-                    columnTypeDef2.push_back(8);
+                    columnTypeDef2.emplace_back(column_type::INTEGER, 8);
                     break;
                     
                 case MYSQL_TYPE_LONG:
                 case MYSQL_TYPE_INT24:
-                    columnTypeDef2.push_back(4);
+                    columnTypeDef2.emplace_back(column_type::INTEGER, 4);
                     break;
                     
                 case MYSQL_TYPE_SHORT:
                 case MYSQL_TYPE_YEAR:
-                    columnTypeDef2.push_back(2);
+                    columnTypeDef2.emplace_back(column_type::INTEGER, 2);
                     break;
                     
                 case MYSQL_TYPE_TINY:
-                    columnTypeDef2.push_back(1);
+                    columnTypeDef2.emplace_back(column_type::INTEGER, 1);
                     break;
                     
                 case MYSQL_TYPE_DOUBLE:
-                    columnTypeDef2.push_back(8);
+                    columnTypeDef2.emplace_back(column_type::FLOAT, 8);
                     break;
                     
                 case MYSQL_TYPE_FLOAT:
-                    columnTypeDef2.push_back(4);
+                    columnTypeDef2.emplace_back(column_type::FLOAT, 4);
                     break;
                     
                 // TODO: https://mariadb.com/kb/en/rows_event_v1v2/
@@ -258,7 +258,7 @@ namespace ultraverse::mariadb {
                 case MYSQL_TYPE_DATETIME2:
                 case MYSQL_TYPE_TIME2:
                 case MYSQL_TYPE_TIMESTAMP2:
-                    columnTypeDef2.push_back(-1);
+                    columnTypeDef2.emplace_back(column_type::STRING, -1);
                     break;
                     
                 default:
@@ -268,11 +268,58 @@ namespace ultraverse::mariadb {
             }
         }
         
+        uint8_t metadataLength = 0;
+        _stream.read((char *) &metadataLength, sizeof(uint8_t));
+        
+        uint8_t skipBytes = metadataLength + ((columns + 7) / 8);
+        std::unique_ptr<uint8_t> unused(new uint8_t[skipBytes]);
+        _stream.read((char *) unused.get(), skipBytes);
+        
+        const int pos = _stream.tellg();
+        int optionalMetadataLength = header->event_size - (
+            sizeof(internal::TableMapEventPostHeader) +
+            sizeof(uint8_t) + schemaNameLength +
+            sizeof(uint8_t) + tableNameLength +
+            sizeof(uint8_t) + columns +
+            sizeof(uint8_t) + skipBytes
+        ) - (_hasChecksum ? 4 : 0);
+        
+        std::vector<std::string> columnNames;
+        
+        while (_stream.tellg() < (pos + optionalMetadataLength)) {
+            uint8_t type = 0;
+            _stream.read((char *) &type, sizeof(uint8_t));
+            
+            uint8_t size = 0;
+            _stream.read((char *) &size, sizeof(uint8_t));
+            
+            if (type == internal::COLUMN_NAME) {
+                uint8_t readBytes = 0;
+                while (readBytes < size) {
+                    uint8_t columnNameLength = 0;
+                    _stream.read((char *) &columnNameLength, sizeof(uint8_t));
+                    readBytes += 1;
+    
+                    std::unique_ptr<uint8_t> columnNameCStr(new uint8_t[columnNameLength]);
+                    _stream.read((char *) columnNameCStr.get(), columnNameLength);
+                    readBytes += columnNameLength;
+                    
+                    columnNames.emplace_back((char *) columnNameCStr.get(), columnNameLength);
+                }
+            } else {
+                std::unique_ptr<uint8_t> _unused(new uint8_t[size]);
+                _stream.read((char *) _unused.get(), size);
+            }
+        }
+        
+        
         auto timestamp = header->timestamp;
         
         return std::make_shared<TableMapEvent>(
             tableId,
-            schemaName, tableName, columnTypeDef2,
+            schemaName, tableName,
+            columnTypeDef2,
+            columnNames,
             timestamp
         );
     }

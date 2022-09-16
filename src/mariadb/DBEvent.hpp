@@ -55,7 +55,14 @@ namespace ultraverse::mariadb {
     
     class TableMapEvent: public base::DBEvent {
     public:
-        TableMapEvent(uint64_t tableId, std::string database, std::string table, std::vector<int> columns, uint64_t timestamp);
+        TableMapEvent(
+            uint64_t tableId,
+            std::string database,
+            std::string table,
+            std::vector<std::pair<column_type::Value, int>> columns,
+            std::vector<std::string> columnNames,
+            uint64_t timestamp
+        );
         TableMapEvent() : _timestamp(0), _tableId(0) {};
         
         event_type::Value eventType() override {
@@ -69,7 +76,9 @@ namespace ultraverse::mariadb {
         std::string database() const;
         std::string table() const;
         
+        column_type::Value typeOf(int columnIndex) const;
         int sizeOf(int columnIndex) const;
+        std::string nameOf(int columnIndex) const;
 
         template <typename Archive>
         void serialize(Archive &archive);
@@ -80,7 +89,8 @@ namespace ultraverse::mariadb {
         
         std::string _database;
         std::string _table;
-        std::vector<int> _columns;
+        std::vector<std::pair<column_type::Value, int>> _columns;
+        std::vector<std::string> _columnNames;
     };
     
     class RowEvent: public base::DBEvent {
@@ -106,9 +116,6 @@ namespace ultraverse::mariadb {
         
         uint64_t tableId() const;
         
-        /**
-         * FIXME: 이거 모든 필드 해석할 수 있어야됨 안그러면 롤백 못하지 않나..??
-         */
         void mapToTable(TableMapEvent &tableMapEvent);
         
         /**
@@ -126,7 +133,15 @@ namespace ultraverse::mariadb {
          */
         std::string changeSet(int at);
     private:
-        int calculateRowSize(TableMapEvent &tableMapEvent, int basePos);
+        std::pair<std::string, int> readRow(TableMapEvent &tableMapEvent, int basePos);
+        
+        template <typename T>
+        inline T readValue(int offset) {
+            T value = 0;
+            memcpy(&value, _rowData.get() + offset, sizeof(T));
+            
+            return value;
+        }
         
         Type _type;
         
@@ -141,7 +156,6 @@ namespace ultraverse::mariadb {
         
         std::vector<std::string> _rowSet;
         std::vector<std::string> _changeSet;
-        
     };
     
     class RowQueryEvent: public base::DBEvent {

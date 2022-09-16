@@ -130,6 +130,32 @@ namespace ultraverse::mariadb::internal {
         int2 flags;
     } PACKED_STRUCT;
     
+    enum OptionalMetadataFieldType {
+        SIGNEDNESS = 1,  // UNSIGNED flag of numeric columns
+        DEFAULT_CHARSET, /* Character set of string columns, optimized to
+                        minimize space when many columns have the
+                        same charset. */
+        COLUMN_CHARSET,  /* Character set of string columns, optimized to
+                        minimize space when columns have many
+                        different charsets. */
+        COLUMN_NAME,
+        SET_STR_VALUE,                // String value of SET columns
+        ENUM_STR_VALUE,               // String value of ENUM columns
+        GEOMETRY_TYPE,                // Real type of geometry columns
+        SIMPLE_PRIMARY_KEY,           // Primary key without prefix
+        PRIMARY_KEY_WITH_PREFIX,      // Primary key with prefix
+        ENUM_AND_SET_DEFAULT_CHARSET, /* Character set of enum and set
+                                     columns, optimized to minimize
+                                     space when many columns have the
+                                     same charset. */
+        ENUM_AND_SET_COLUMN_CHARSET,  /* Character set of enum and set
+                                     columns, optimized to minimize
+                                     space when many columns have the
+                                     same charset. */
+        COLUMN_VISIBILITY             /* Flag to indicate column visibility
+                                     attribute. */
+    };
+    
     struct RowEventPostHeader {
         int2 table_id_high;
         int4 table_id_low;
