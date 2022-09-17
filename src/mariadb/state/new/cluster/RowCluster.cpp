@@ -23,6 +23,10 @@ namespace ultraverse::state::v2 {
         return _keyMap.at(columnName);
     }
     
+    const std::unordered_map<std::string, StateRange> &RowCluster::keyMap() const {
+        return _keyMap;
+    }
+    
     bool RowCluster::operator&(const std::shared_ptr<Query> &query) const {
         for (auto expr: query->whereSet()) {
             if (isExprRelated(expr)) {

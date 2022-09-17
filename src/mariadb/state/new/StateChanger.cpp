@@ -107,11 +107,7 @@ namespace ultraverse::state::v2 {
             auto gid = transactionHeader->gid;
             auto flags = transactionHeader->flags;
             _logger->trace("read gid {}; flags {}", gid, flags);
-        
-            if (transactionHeader->gid == _plan.rollbackGid()) {
-                _rollbackTarget = _reader.txnBody();
-            }
-        
+
             auto transaction = _reader.txnBody();
             
             if (!isTransactionRelatedToPlan(transaction)) {
@@ -178,62 +174,41 @@ namespace ultraverse::state::v2 {
     
         // q->is_valid_query = 0;
         for (const auto &query: transaction->queries()) {
-            cols.clear();
+            // cols.clear();
         
             for (auto &i: query->itemSet()) {
-                if (i.condition_type == EN_CONDITION_NONE &&
-                    i.function_type == FUNCTION_NONE) {
-                    const auto vec = StateUserQuery::SplitDBNameAndTableName(i.name);
+                const auto vec = StateUserQuery::SplitDBNameAndTableName(i.name);
+                if (vec.size() != 2) {
+                    continue;
+                }
+                cols.emplace_back(std::make_tuple(i.name, vec[0], vec[1], i));
+            }
+        
+            std::function<void(StateItem &)> walkWhereSet = [this, &walkWhereSet, &resultCols, &cols](StateItem &w) {
+                if (!w.name.empty()) {
+                    const auto &vec = StateUserQuery::SplitDBNameAndTableName(w.name);
                     if (vec.size() != 2) {
-                        continue;
+                        return;
                     }
-                    cols.emplace_back(std::make_tuple(i.name, vec[0], vec[1], i));
-                }
-            }
-        
-            if (cols.size() > 1) {
-                // 컬럼이 있는 경우만 컬럼 분석을 수행
-                // 그 외 쿼리는 필요없음
-                // q->is_valid_query = 1;
-            }
-        
-            // FIXME: 이거 nested 된거에서 망가지지 않아?
-            for (auto &w: query->whereSet()) {
-                if (w.condition_type != EN_CONDITION_NONE &&
-                    w.function_type == FUNCTION_NONE) {
-                    // 실제 where 절 컬럼 목록
-                    for (auto &a: w.arg_list) {
-                        const auto &vec = StateUserQuery::SplitDBNameAndTableName(a.name);
-                        if (vec.size() != 2) {
-                            continue;
+                    for (auto &c: cols) {
+                        // 테이블명은 다르고 column명이 동일할때 후보임
+                        auto x = std::get<1>(c);
+                        if (std::get<1>(c) != vec[0] && std::get<2>(c) == vec[1]) {
+                            _logger->trace("adding column {} as candidate", vec[1]);
+                            resultCols.emplace_back(std::get<0>(c), std::get<3>(c).MakeRange());
                         }
-                        for (auto &c: cols) {
-                            // 테이블명은 다르고 column명이 동일할때 후보임
-                            if (std::get<1>(c) != vec[0] && std::get<2>(c) == vec[1]) {
-                                _logger->trace("adding column {} as candidate", vec[1]);
-                                resultCols.emplace_back(std::get<0>(c), std::get<3>(c).MakeRange());
-                            }
-                        }
-                    }
-                }
-            }
-            
-            
-            /*
-            std::function<void(StateItem &)> visitExpr = [&visitExpr, &resultCols] (StateItem &expr) {
-                if (expr.condition_type != EN_CONDITION_NONE) {
-                    for (auto &subExpr: expr.arg_list) {
-                        visitExpr(subExpr);
                     }
                 } else {
-                    resultCols.emplace_back(expr.name, expr.MakeRange());
+                    for (auto &subItem: w.arg_list) {
+                        walkWhereSet(subItem);
+                    }
                 }
             };
-            
-            for (auto &expr: query->whereSet()) {
-                visitExpr(expr);
+
+            // FIXME: 이거 nested 된거에서 망가지지 않아?
+            for (auto &w: query->whereSet()) {
+                walkWhereSet(w);
             }
-             */
         }
     
         return resultCols;
@@ -266,6 +241,7 @@ namespace ultraverse::state::v2 {
             
             
             if (transactionHeader->gid == _plan.rollbackGid()) {
+                _logger->info("rollback target found");
                 setRollbackTarget(_reader.txnBody());
             }
             
@@ -288,6 +264,21 @@ namespace ultraverse::state::v2 {
         for (auto &thread: _executorThreads) {
             thread.join();
         }
+        
+        _logger->trace("== REPLAY FINISHED ==");
+        _logger->trace("TODO: EXECUTE QUERY:");
+        for (auto it: _rowCluster.keyMap()) {
+            auto where = it.second.MakeWhereQuery(it.first);
+            auto tableName = StateUserQuery::SplitDBNameAndTableName(it.first)[0];
+            
+            std::stringstream queryBuilder;
+            queryBuilder << fmt::format("USE {};\n", _plan.dbName());
+            // queryBuilder << fmt::format("DELETE FROM {} WHERE {};\n", it.first, where);
+            queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};", tableName, _intermediateDBName, tableName, where);
+            
+            _logger->trace("{}", queryBuilder.str());
+        }
+        
     }
     
     void StateChanger::setRollbackTarget(std::shared_ptr<Transaction> transaction) {
@@ -325,8 +316,8 @@ namespace ultraverse::state::v2 {
                     default:
                         break;
                 }
-                
-                _logger->info("adding key range: {}", stateItem.name);
+    
+                _logger->info("rowCluster: expanding range of {} => (WHERE {})", stateItem.name, stateRange.MakeWhereQuery(stateItem.name));
                 _rowCluster.addKeyRange(stateItem.name, stateRange);
             }
             
@@ -350,6 +341,7 @@ namespace ultraverse::state::v2 {
         }
         
         _isClusterReady = true;
+        _clusterCondvar.notify_all();
     }
     
     bool StateChanger::isTransactionRelatedToPlan(std::shared_ptr<Transaction> transaction) const {
@@ -475,6 +467,10 @@ namespace ultraverse::state::v2 {
                 _logger->trace("[#{}->#{}] this node is already processed by another thread", nodeIdx, node->nodeIdx);
                 break;
             }
+            
+            if (node->transaction->gid() == _rollbackTarget->gid()) {
+                goto NEXT_TRANSACTION;
+            }
     
             { // @with(dbHandleLease);
                 _logger->trace("[#{}->#{}] leasing dbHandle", nodeIdx, node->nodeIdx);
@@ -486,9 +482,10 @@ namespace ultraverse::state::v2 {
             
                 for (auto &query: node->transaction->queries()) {
                     if (query->database() != _plan.dbName()) {
-                        continue;
+                        goto NEXT_QUERY;
                     }
                     
+                    /*
                     {
                         std::scoped_lock<std::mutex> _hashLock(_stateHashMutex);
                         auto relatedTable = *query->writeSet().begin();
@@ -511,7 +508,7 @@ namespace ultraverse::state::v2 {
                         // FIXME
                         if (query->type() != Query::UNKNOWN && hash == query->afterHash(relatedTable)) {
                             _logger->trace("[#{}->#{}] skipping query: table hash is equal", nodeIdx, node->nodeIdx);
-                            continue;
+                            goto NEXT_QUERY;
                         }
         
                         for (int i = 0; i < query->affectedRows(); i++) {
@@ -533,28 +530,42 @@ namespace ultraverse::state::v2 {
                         
                         
                         if (hash == query->afterHash(relatedTable)) {
-                            // hash matches
+                            _logger->info("hash matches");
+                            query->afterHash(relatedTable).hexdump();
+                            hash.hexdump();
                         } else {
-                            // not matches
+                            _logger->info("hash not matches");
+                            query->afterHash(relatedTable).hexdump();
+                            hash.hexdump();
+                        }
+                    }
+                     */
+    
+                    if (!(query->flags() & Query::FLAG_IS_DDL) && !(_rowCluster & query)) {
+                        _logger->trace("query skipped: not related with rowCluster");
+                        goto NEXT_QUERY;
+                    }
+                    
+                    {
+                        auto statement = QUERY_TAG_STATECHANGE + query->statement();
+                        _logger->trace("[#{}->#{}] executing query: (timestamp={}) {}", nodeIdx, node->nodeIdx,
+                                       query->timestamp(), query->statement());
+                        if (dbHandle.executeQuery("SET foreign_key_checks=0") != 0) {
+                            _logger->warn("[#{}->#{}] failed to turn off foreign key constraint", nodeIdx, node->nodeIdx);
+                        }
+                        if (dbHandle.executeQuery(fmt::format("SET TIMESTAMP={}", query->timestamp())) != 0) {
+                            _logger->warn("[#{}->#{}] failed to set timestamp", nodeIdx, node->nodeIdx);
+                        }
+        
+                        if (dbHandle.executeQuery(statement) != 0) {
+                            _logger->error("[#{}->#{}] query execution failed: {}", nodeIdx, node->nodeIdx,
+                                           mysql_error(dbHandle));
+                            dbHandle.executeQuery("ROLLBACK");
+                            throw std::runtime_error(mysql_error(dbHandle));
                         }
                     }
                     
-                    if (!(query->flags() & Query::FLAG_IS_DDL) && !(_rowCluster & query)) {
-                        _logger->trace("query is not related with key column(s); skipping");
-                        continue;
-                    }
-            
-                    auto statement = QUERY_TAG_STATECHANGE + query->statement();
-                    _logger->trace("[#{}->#{}] executing query: (timestamp={}) {}", nodeIdx, node->nodeIdx, query->timestamp(), query->statement());
-                    if (dbHandle.executeQuery(fmt::format("SET TIMESTAMP={}", query->timestamp())) != 0) {
-                        _logger->warn("[#{}->#{}] failed to set timestamp", nodeIdx, node->nodeIdx);
-                    }
-                    
-                    if (dbHandle.executeQuery(statement) != 0) {
-                        _logger->error("[#{}->#{}] query execution failed: {}", nodeIdx, node->nodeIdx, mysql_error(dbHandle));
-                        dbHandle.executeQuery("ROLLBACK");
-                        throw std::runtime_error(mysql_error(dbHandle));
-                    }
+                    NEXT_QUERY: ;
                 }
     
                 _logger->trace("[#{}->#{}] finalizing transaction", nodeIdx, node->nodeIdx);
@@ -562,6 +573,7 @@ namespace ultraverse::state::v2 {
                 _logger->debug("[#{}->#{}] releasing dbHandle", nodeIdx, node->nodeIdx);
             } // @release(dbHandleLease);
             
+            NEXT_TRANSACTION:
             _stateGraph->removeTransaction(node->nodeIdx);
             node = node->next();
         }

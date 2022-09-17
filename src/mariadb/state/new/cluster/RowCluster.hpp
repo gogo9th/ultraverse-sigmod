@@ -25,6 +25,8 @@ namespace ultraverse::state::v2 {
          * @throws std::runtime_error when given key was not found
          */
         StateRange &getKeyRange(const std::string &columnName);
+    
+        const std::unordered_map<std::string, StateRange> &keyMap() const;
         
         bool operator&(const std::shared_ptr<Query> &query) const;
         

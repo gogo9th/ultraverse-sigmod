@@ -148,6 +148,8 @@ namespace ultraverse::state {
             _graph[node_idx]->dependencies.push_back(i.first);
             if (_graph[i.first]->next() == nullptr) {
                 _graph[i.first]->setNext(_graph[node_idx]);
+            } else {
+                isEntrypoint = true;
             }
             
         }
