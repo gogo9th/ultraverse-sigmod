@@ -98,7 +98,7 @@ namespace ultraverse {
         if (isArgSet('s')) {
             changePlan.setDBDumpPath(getArg('s'));
         } else {
-            _logger->warn("database dump file is not specified; this leads unexpected result");
+            _logger->warn("database dump file is not specified; may leads to unexpected result");
         }
         changePlan.setStateLogPath(getArg('i'));
         changePlan.setDBName(getArg('d'));

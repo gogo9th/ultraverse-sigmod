@@ -132,6 +132,8 @@ namespace ultraverse::mariadb {
          * @note call mapToTable() first.
          */
         std::string changeSet(int at);
+        
+        const std::vector<StateItem> &candidateSet() const;
     private:
         std::pair<std::string, int> readRow(TableMapEvent &tableMapEvent, int basePos);
         
@@ -156,6 +158,8 @@ namespace ultraverse::mariadb {
         
         std::vector<std::string> _rowSet;
         std::vector<std::string> _changeSet;
+        
+        std::vector<StateItem> _candidateSet;
     };
     
     class RowQueryEvent: public base::DBEvent {

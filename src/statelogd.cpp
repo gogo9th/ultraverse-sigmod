@@ -197,6 +197,7 @@ public:
         event->tokenize();
         
         if (event->isDDL()) {
+            event->parse();
             event->parseDDL();
             
             pendingQuery->setFlags(
@@ -340,6 +341,13 @@ public:
         pendingQuery->setAffectedRows(event->affectedRows());
         
         pendingQuery->setDatabase(table->database());
+        
+        const auto &candidateSet = event->candidateSet();
+        
+        pendingQuery->itemSet().insert(
+            pendingQuery->itemSet().begin(),
+            candidateSet.begin(), candidateSet.end()
+        );
     }
     
     void processRowQueryEvent(std::shared_ptr<mariadb::RowQueryEvent> event, std::shared_ptr<state::v2::Query> pendingQuery) {

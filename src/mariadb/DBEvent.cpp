@@ -10,6 +10,8 @@
 
 #include "DBEvent.hpp"
 
+#include "mariadb/state/StateItem.h"
+
 
 namespace ultraverse::mariadb {
     TransactionIDEvent::TransactionIDEvent(const MARIADB_RPL_EVENT *rplEvent):
@@ -186,6 +188,7 @@ namespace ultraverse::mariadb {
         
         memcpy(&nullFields, _rowData.get() + basePos, (_columns + 7) / 8);
         
+        // FIXME: 이거 제거
         std::stringstream sstream;
         
         int rowSize = 0;
@@ -210,34 +213,63 @@ namespace ultraverse::mariadb {
                 
                 std::string strValue((char *) rawValue.get(), strLength);
                 sstream << columnName << "=" << strValue;
+    
+                {
+                    StateItem candidateItem;
+                    StateData data;
+                    
+                    data.Set(strValue.c_str(), strLength);
+                    candidateItem.data_list.emplace_back(std::move(data));
+                    candidateItem.function_type = FUNCTION_EQ;
+                    candidateItem.name = tableMapEvent.table() + "." + columnName;
+                    
+                    _candidateSet.emplace_back(std::move(candidateItem));
+                }
                 
                 rowSize += strLength + 1;
             } else {
+    
+                StateItem candidateItem;
+                StateData data;
+                
                 if (columnType == column_type::INTEGER) {
+                    int64_t value;
                     switch (columnSize) {
                         case 8:
-                            sstream << columnName << "=" << readValue<int64_t>(offset);
+                            value = readValue<int64_t>(offset);
                             break;
                         case 4:
-                            sstream << columnName << "=" << readValue<int32_t>(offset);
+                            value = readValue<int32_t>(offset);
                             break;
                         case 2:
-                            sstream << columnName << "=" << readValue<int16_t>(offset);
+                            value = readValue<int16_t>(offset);
                             break;
                         case 1:
-                            sstream << columnName << "=" << readValue<int8_t>(offset);
+                            value = readValue<int8_t>(offset);
                             break;
                     }
+    
+                    // sstream << columnName << "=" << value;
+                    data.Set(value);
                 } else if (columnType == column_type::FLOAT) {
+                    double value;
                     switch (columnSize) {
                         case 8:
-                            sstream << columnName << "=" << readValue<double>(offset);
+                            value = readValue<double>(offset);
                             break;
                         case 4:
-                            sstream << columnName << "=" << readValue<float>(offset);
+                            value = readValue<float>(offset);
                             break;
                     }
+    
+                    data.Set(value);
                 }
+                
+                candidateItem.data_list.emplace_back(std::move(data));
+                candidateItem.function_type = FUNCTION_EQ;
+                candidateItem.name = tableMapEvent.table() + "." + columnName;
+                
+                _candidateSet.emplace_back(std::move(candidateItem));
                 
                 rowSize += columnSize;
             }
@@ -260,5 +292,9 @@ namespace ultraverse::mariadb {
     
     std::string RowEvent::changeSet(int at) {
         return _changeSet[at];
+    }
+    
+    const std::vector<StateItem> &RowEvent::candidateSet() const {
+        return _candidateSet;
     }
 }
