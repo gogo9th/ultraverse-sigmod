@@ -98,6 +98,7 @@ int yyerror(YYLTYPE* llocp, SQLParserResult* result, yyscan_t scanner, const cha
 	char* sval;
 	uintmax_t uval;
 	bool bval;
+	char* token_str;
 
 	hsql::SQLStatement* statement;
 	hsql::SelectStatement* 	select_stmt;
@@ -1187,7 +1188,7 @@ column_def_commalist:
 	;
 
 column_def:
-		IDENTIFIER column_type opt_column_nullable {
+		x_compat_ident column_type opt_column_nullable {
 			$$ = new ColumnDefinition($1, $2, $3);
 		}
 	;
@@ -1653,7 +1654,7 @@ literal:
 
 string_literal:
 		STRING { $$ = Expr::makeLiteral($1); }
-	|   IDENTIFIER { $$ = Expr::makeLiteral($1); }
+	|   x_compat_ident { $$ = Expr::makeLiteral($1); }
 	;
 
 bool_literal:
@@ -1741,12 +1742,12 @@ table_ref_name_no_alias:
 
 
 table_name:
-		IDENTIFIER {
+		x_compat_ident {
 			$$.pos = yylloc.total_column;
 			$$.schema = nullptr;
 			$$.name = $1;
 		}
-	|	IDENTIFIER '.' IDENTIFIER {
+	|	x_compat_ident '.' x_compat_ident {
 			$$.pos = yylloc.total_column;
 			$$.schema = $1;
 			$$.name = $3;
@@ -1756,7 +1757,7 @@ table_name:
 
 table_alias:
 		alias
-	|	AS IDENTIFIER '(' ident_commalist ')' { $$ = new Alias($2, $4); }
+	|	AS x_compat_ident '(' ident_commalist ')' { $$ = new Alias($2, $4); }
 	;
 
 
@@ -1766,8 +1767,8 @@ opt_table_alias:
 
 
 alias:
-		AS IDENTIFIER { $$ = new Alias($2); }
-	|	IDENTIFIER { $$ = new Alias($1); }
+		AS x_compat_ident { $$ = new Alias($2); }
+	|	x_compat_ident { $$ = new Alias($1); }
 	;
 
 
@@ -1886,10 +1887,7 @@ ident_commalist:
 
 x_compat_ident:
         IDENTIFIER
-    |   VALUE  { $$ = new char[6]; strcpy($$, "value"); }
-    |   VALUES { $$ = new char[7]; strcpy($$, "values"); }
-    |   ID { $$ = new char[3]; strcpy($$, "id"); }
-    |   HISTORY { $$ = new char[8]; strcpy($$, "history"); }
+    |  error { if (yylval.token_str != nullptr) { yyclearin; $$ = strdup(yylval.token_str); } }
     ;
 
 %%

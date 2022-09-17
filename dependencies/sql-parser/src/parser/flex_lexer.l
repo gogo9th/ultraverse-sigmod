@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <sstream>
 
-#define TOKEN(name) { return SQL_##name; }
+#define TOKEN(name) { yylval->token_str = strdup(yytext); return SQL_##name; }
 
 static thread_local std::stringstream strbuf;
 
