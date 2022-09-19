@@ -33,6 +33,7 @@ namespace ultraverse::state::v2 {
         const std::string &userQueryPath() const;
         void setUserQueryPath(const std::string &userQueryPath);
     
+        bool isDBDumpAvailable() const;
         const std::string &dbDumpPath() const;
         void setDBDumpPath(const std::string &dbdumpPath);
     
@@ -91,6 +92,12 @@ namespace ultraverse::state::v2 {
          * called when task has failed?
          */
         void dropIntermediateDB();
+        
+        /**
+         * updates foreign keys
+         */
+        void updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp);
+        
         
         
         LoggerPtr _logger;

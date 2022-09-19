@@ -46,6 +46,10 @@ namespace ultraverse::state::v2 {
         _userQueryPath = userQueryPath;
     }
     
+    bool StateChangePlan::isDBDumpAvailable() const {
+        return !_dbdumpPath.empty();
+    }
+    
     const std::string &StateChangePlan::dbDumpPath() const {
         return _dbdumpPath;
     }
@@ -205,7 +209,6 @@ namespace ultraverse::state::v2 {
                 }
             };
 
-            // FIXME: 이거 nested 된거에서 망가지지 않아?
             for (auto &w: query->whereSet()) {
                 walkWhereSet(w);
             }
@@ -242,7 +245,7 @@ namespace ultraverse::state::v2 {
             
             if (transactionHeader->gid == _plan.rollbackGid()) {
                 _logger->info("rollback target found");
-                setRollbackTarget(_reader.txnBody());
+                // setRollbackTarget(_reader.txnBody());
             }
             
             auto transaction = _reader.txnBody();
@@ -285,40 +288,45 @@ namespace ultraverse::state::v2 {
         _rollbackTarget = std::move(transaction);
         
         std::function<void(StateItem &)> walkStateItem = [this, &walkStateItem](StateItem &stateItem) {
-            auto &keyColumns = _plan.keyColumns();
-            if (std::find(keyColumns.begin(), keyColumns.end(), stateItem.name) != keyColumns.end()) {
-                assert(stateItem.condition_type == EN_CONDITION_NONE);
-                assert(stateItem.function_type != FUNCTION_NONE);
-                StateRange stateRange;
-                
-                switch (stateItem.function_type) {
-                    case FUNCTION_EQ:
-                        stateRange.SetValue(stateItem.data_list[0], true);
-                        break;
-                    case FUNCTION_NE:
-                        stateRange.SetValue(stateItem.data_list[0], false);
-                        break;
-                    case FUNCTION_GT:
-                        stateRange.SetBegin(stateItem.data_list[0], false);
-                        break;
-                    case FUNCTION_GE:
-                        stateRange.SetBegin(stateItem.data_list[0], true);
-                        break;
-                    case FUNCTION_LT:
-                        stateRange.SetEnd(stateItem.data_list[0], false);
-                        break;
-                    case FUNCTION_LE:
-                        stateRange.SetEnd(stateItem.data_list[0], true);
-                        break;
-                    case FUNCTION_BETWEEN:
-                        stateRange.SetBetween(stateItem.data_list[0], stateItem.data_list[1]);
-                        break;
-                    default:
-                        break;
+            if (!stateItem.name.empty()) {
+                auto resolvedName = RowCluster::resolveForeignKey(stateItem.name, _context->foreignKeys);
+                auto &keyColumns = _plan.keyColumns();
+                if (std::find(keyColumns.begin(), keyColumns.end(), resolvedName) != keyColumns.end()) {
+                    assert(stateItem.condition_type == EN_CONDITION_NONE);
+                    assert(stateItem.function_type != FUNCTION_NONE);
+                    StateRange stateRange;
+        
+                    switch (stateItem.function_type) {
+                        case FUNCTION_EQ:
+                            stateRange.SetValue(stateItem.data_list[0], true);
+                            break;
+                        case FUNCTION_NE:
+                            stateRange.SetValue(stateItem.data_list[0], false);
+                            break;
+                        case FUNCTION_GT:
+                            stateRange.SetBegin(stateItem.data_list[0], false);
+                            break;
+                        case FUNCTION_GE:
+                            stateRange.SetBegin(stateItem.data_list[0], true);
+                            break;
+                        case FUNCTION_LT:
+                            stateRange.SetEnd(stateItem.data_list[0], false);
+                            break;
+                        case FUNCTION_LE:
+                            stateRange.SetEnd(stateItem.data_list[0], true);
+                            break;
+                        case FUNCTION_BETWEEN:
+                            stateRange.SetBetween(stateItem.data_list[0], stateItem.data_list[1]);
+                            break;
+                        default:
+                            break;
+                    }
+        
+                    _logger->info("rowCluster: expanding range of {} => (WHERE {})", resolvedName,
+                                  stateRange.MakeWhereQuery(resolvedName));
+                    _rowCluster.addKeyRange(resolvedName, stateRange);
+                    _rowCluster.addKeyRange(stateItem.name, stateRange);
                 }
-    
-                _logger->info("rowCluster: expanding range of {} => (WHERE {})", stateItem.name, stateRange.MakeWhereQuery(stateItem.name));
-                _rowCluster.addKeyRange(stateItem.name, stateRange);
             }
             
             for (auto &subStateItem: stateItem.arg_list) {
@@ -362,8 +370,11 @@ namespace ultraverse::state::v2 {
                 continue;
             }
             
+            auto when = query->timestamp();
+            
             std::vector<int16_t> tokens;
             std::vector<size_t> tokenPos;
+            
             if (!hsql::SQLParser::tokenize(query->statement(), &tokens, &tokenPos)) {
                 _logger->warn("processDDLTransaction(): invalid sql statement: {}", query->statement());
                 continue;
@@ -415,24 +426,16 @@ namespace ultraverse::state::v2 {
             _logger->trace("[processDDLTransaction] [{}] {} -> {}", query->timestamp(), prevTableName, newTableName);
             
             bool isFound = false;
-            for (auto &i: _context->renameHistoryMap) {
-                if (i.second.back().name == prevTableName) {
-                    i.second.emplace_back(RenameHistory { query->timestamp(), newTableName });
-                    isFound = true;
-                    break;
-                }
+            
+            auto namingHistory = _context->findTable(prevTableName, when);
+            if (namingHistory != nullptr) {
+                namingHistory->addRenameHistory(newTableName, when);
+            } else {
+                auto history = std::make_shared<NamingHistory>(prevTableName);
+                history->addRenameHistory(newTableName, when);
+                
+                _context->tables.emplace_back(history);
             }
-            if (!isFound) {
-                _context->renameHistoryMap.emplace(prevTableName, std::list<RenameHistory>());
-                _context->renameHistoryMap[prevTableName].emplace_back(RenameHistory { query->timestamp(), newTableName });
-            }
-          
-        }
-    
-        for (auto &i: _context->renameHistoryMap) {
-            i.second.sort([](const auto &a, const auto &b) {
-                return a.time < b.time;
-            });
         }
     }
     
@@ -443,16 +446,18 @@ namespace ultraverse::state::v2 {
         using namespace std::chrono_literals;
         std::this_thread::sleep_for(100ms);
         
-        std::unique_lock clusterLock(_clusterMutex);
-        
-        if (!_isClusterReady) {
-            _clusterCondvar.wait(clusterLock, [this]() { return _isClusterReady; });
-        }
-        
-        clusterLock.unlock();
-        
-        
         while (node != nullptr) {
+            {
+                std::unique_lock clusterLock(_clusterMutex);
+        
+                if (node->transaction->gid() > _plan.rollbackGid() && !_isClusterReady) {
+                    _clusterCondvar.wait(clusterLock, [this]() { return _isClusterReady; });
+                }
+        
+                clusterLock.unlock();
+            }
+    
+    
             for (auto depIdx: node->dependencies) {
                 if (!_stateGraph->getTxnNode(depIdx)->isProcessed) {
                     _logger->info("[#{}->#{}] waiting for dependencies: #{}", nodeIdx, node->nodeIdx, depIdx);
@@ -468,7 +473,8 @@ namespace ultraverse::state::v2 {
                 break;
             }
             
-            if (node->transaction->gid() == _rollbackTarget->gid()) {
+            if (node->transaction->gid() == _plan.rollbackGid()) {
+                setRollbackTarget(node->transaction);
                 goto NEXT_TRANSACTION;
             }
     
@@ -541,7 +547,7 @@ namespace ultraverse::state::v2 {
                     }
                      */
     
-                    if (!(query->flags() & Query::FLAG_IS_DDL) && !(_rowCluster & query)) {
+                    if (!(query->flags() & Query::FLAG_IS_DDL) && !_rowCluster.isQueryRelated(query, _context->foreignKeys)) {
                         _logger->trace("query skipped: not related with rowCluster");
                         goto NEXT_QUERY;
                     }
@@ -563,6 +569,11 @@ namespace ultraverse::state::v2 {
                             dbHandle.executeQuery("ROLLBACK");
                             throw std::runtime_error(mysql_error(dbHandle));
                         }
+                    }
+    
+                    if (query->flags() & Query::FLAG_IS_DDL) {
+                        _logger->info("[#{}->#{}] updating foreign key..", nodeIdx, node->nodeIdx);
+                        updateForeignKeys(dbHandle, query->timestamp());
                     }
                     
                     NEXT_QUERY: ;
@@ -592,5 +603,44 @@ namespace ultraverse::state::v2 {
             throw std::runtime_error(mysql_error(dbHandle));
         }
         dbHandle.executeQuery("COMMIT");
+    }
+    
+    void StateChanger::updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp) {
+        std::scoped_lock _lock(_context->contextLock);
+    
+        // TODO: LOCK
+        std::vector<ForeignKey> foreignKeys;
+        
+        const auto query =
+            QUERY_TAG_STATECHANGE +
+            fmt::format("SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = '{}' AND REFERENCED_TABLE_NAME IS NOT NULL", _intermediateDBName);
+        
+        
+        if (dbHandle.executeQuery(query) != 0) {
+            _logger->error("cannot fetch foreign key information: {}", mysql_error(dbHandle));
+            throw std::runtime_error(mysql_error(dbHandle));
+        }
+        
+        MYSQL_RES *result = mysql_store_result(dbHandle);
+        MYSQL_ROW row;
+        while ((row = mysql_fetch_row(result)) != nullptr) {
+            std::string fromTable(row[0]);
+            std::string fromColumn(row[1]);
+            
+            std::string toTable(row[2]);
+            std::string toColumn(row[3]);
+            
+            _logger->trace("updateForeignKeys(): adding foreign key: {}.{} -> {}.{}", fromTable, fromColumn, toTable, toColumn);
+            
+            ForeignKey foreignKey {
+                _context->findTable(fromTable, timestamp), fromColumn,
+                _context->findTable(toTable, timestamp), toColumn
+            };
+            
+            foreignKeys.push_back(foreignKey);
+        }
+        mysql_free_result(result);
+        
+        _context->foreignKeys = foreignKeys;
     }
 }

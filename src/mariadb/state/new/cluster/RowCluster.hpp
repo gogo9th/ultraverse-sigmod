@@ -10,11 +10,16 @@
 
 #include "mariadb/state/StateItem.h"
 #include "mariadb/state/new/Query.hpp"
+#include "mariadb/state/new/StateChangeContext.hpp"
+
+#include "utils/log.hpp"
 
 namespace ultraverse::state::v2 {
     class RowCluster {
     public:
-        RowCluster() = default;
+        static std::string resolveForeignKey(std::string exprName, const std::vector<ForeignKey> &foreignKeys);
+        
+        RowCluster();
         
         bool hasKey(const std::string &columnName) const;
         void addKey(const std::string &columnName) const;
@@ -28,13 +33,19 @@ namespace ultraverse::state::v2 {
     
         const std::unordered_map<std::string, StateRange> &keyMap() const;
         
-        bool operator&(const std::shared_ptr<Query> &query) const;
+        bool isQueryRelated(const std::shared_ptr<Query> &query, const std::vector<ForeignKey> foreignKeys) const;
         
         RowCluster operator&(const RowCluster &other) const;
         RowCluster operator|(const RowCluster &other) const;
     private:
-        bool isExprRelated(const StateItem &expr) const;
+        LoggerPtr _logger;
         
+        bool isExprRelated(const StateItem &expr, const std::vector<ForeignKey> &foreignKeys) const;
+        
+        /**
+         * FIXME: 이거 std::string에서 std::pair<NamingHistory, std::string> 같은걸로 바꿔야 할듯
+         *        안그러면 이거 테이블 리네임되면 맛감
+         */
         std::unordered_map<std::string, StateRange> _keyMap;
     };
 }

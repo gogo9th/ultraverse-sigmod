@@ -1,8 +1,14 @@
 #include <fmt/format.h>
 
 #include "RowCluster.hpp"
+#include "mariadb/state/StateUserQuery.h"
 
 namespace ultraverse::state::v2 {
+    RowCluster::RowCluster():
+        _logger(createLogger("RowCluster"))
+    {
+    
+    }
     
     bool RowCluster::hasKey(const std::string &columnName) const {
         return _keyMap.find(columnName) != _keyMap.end();
@@ -27,15 +33,15 @@ namespace ultraverse::state::v2 {
         return _keyMap;
     }
     
-    bool RowCluster::operator&(const std::shared_ptr<Query> &query) const {
+    bool RowCluster::isQueryRelated(const std::shared_ptr<Query> &query, const std::vector<ForeignKey> foreignKeys) const {
         for (auto expr: query->whereSet()) {
-            if (isExprRelated(expr)) {
+            if (isExprRelated(expr, foreignKeys)) {
                 return true;
             }
         }
         
         for (auto expr: query->itemSet()) {
-            if (isExprRelated(expr)) {
+            if (isExprRelated(expr, foreignKeys)) {
                 return true;
             }
         }
@@ -43,22 +49,45 @@ namespace ultraverse::state::v2 {
         return false;
     }
     
-    bool RowCluster::isExprRelated(const StateItem &expr) const {
-        if (_keyMap.find(expr.name) != _keyMap.end()) {
-            auto range = StateItem::MakeRange(expr);
-            auto &keyRange = _keyMap.at(expr.name);
-            if (!StateRange::AND(range, keyRange).GetRange()->empty()) {
-                return true;
+    bool RowCluster::isExprRelated(const StateItem &expr, const std::vector<ForeignKey> &foreignKeys) const {
+        if (!expr.name.empty()) {
+            auto name = resolveForeignKey(expr.name, foreignKeys);
+            
+            if (_keyMap.find(name) != _keyMap.end()) {
+                auto range = StateItem::MakeRange(expr);
+                auto &keyRange = _keyMap.at(name);
+                if (!StateRange::AND(range, keyRange).GetRange()->empty()) {
+                    return true;
+                }
             }
         }
         
         for (auto &subExpr: expr.arg_list) {
-            if (isExprRelated(subExpr)) {
+            if (isExprRelated(subExpr, foreignKeys)) {
                 return true;
             }
         }
         
         return false;
+    }
+    
+    std::string RowCluster::resolveForeignKey(std::string exprName, const std::vector<ForeignKey> &foreignKeys) {
+        auto vec = StateUserQuery::SplitDBNameAndTableName(exprName);
+        auto tableName = vec[0];
+        auto columnName = vec[1];
+        
+        auto it = std::find_if(foreignKeys.cbegin(), foreignKeys.cend(), [&tableName, &columnName](auto &foreignKey) {
+            if (foreignKey.fromTable->getCurrentName() == tableName && columnName == foreignKey.fromColumn) {
+                return true;
+            }
+            return false;
+        });
+        
+        if (it == foreignKeys.end()) {
+            return exprName;
+        } else {
+            return it->toTable->getCurrentName() + "." + it->toColumn;
+        }
     }
     
     RowCluster RowCluster::operator&(const RowCluster &other) const {
