@@ -15,6 +15,8 @@
 #include "mariadb/state/state_log_hdr.h"
 #include "mariadb/state/StateItem.h"
 
+#include "utils/log.hpp"
+
 namespace ultraverse::event_type {
     enum Value {
         UNKNOWN = 0,
@@ -67,6 +69,8 @@ namespace ultraverse::base {
             return event_type::QUERY;
         }
         
+        QueryEventBase();
+        
         virtual const int64_t error() = 0;
         
         virtual const std::string &statement() = 0;
@@ -96,6 +100,9 @@ namespace ultraverse::base {
         std::vector<StateItem> &itemSet();
         std::vector<StateItem> &whereSet();
         
+    protected:
+        LoggerPtr _logger;
+        
     private:
         void extractReadWriteSet(const hsql::InsertStatement *insert);
         void extractReadWriteSet(const hsql::DeleteStatement *del);
@@ -114,8 +121,6 @@ namespace ultraverse::base {
         std::vector<StateItem> _whereSet;
         
         hsql::SQLParserResult _parseResult;
-        
-        
     };
 }
 

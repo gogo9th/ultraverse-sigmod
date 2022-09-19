@@ -12,6 +12,13 @@
 #include "util/sqlhelper.h"
 
 namespace ultraverse::base {
+    
+    QueryEventBase::QueryEventBase():
+        _logger(createLogger("QueryEventBase"))
+    {
+    
+    }
+    
     bool QueryEventBase::tokenize() {
         return hsql::SQLParser::tokenize(statement(), &_tokens, &_tokenPos);
     }
@@ -20,6 +27,7 @@ namespace ultraverse::base {
         auto result = hsql::SQLParser::parse(statement(), &_parseResult);
     
         if (!(_parseResult.isValid() && _parseResult.size() > 0)) {
+            _logger->warn("could not parse SQL statement: {} at line {}, col {}", _parseResult.errorMsg(), _parseResult.errorLine(), _parseResult.errorColumn());
             return false;
         }
       
@@ -68,11 +76,7 @@ namespace ultraverse::base {
     void QueryEventBase::extractReadWriteSet(const hsql::InsertStatement *insert) {
         std::string tableName(insert->tableName);
         
-        if (insert->columns) {
-            for (auto column: *insert->columns) {
-                _writeSet.insert(tableName + "." + std::string(column));
-            }
-        }
+        _writeSet.insert(tableName + ".*");
         
         if (insert->type == hsql::InsertType::kInsertSelect) {
             extractReadWriteSet(insert->select);
@@ -81,6 +85,8 @@ namespace ultraverse::base {
     
     void QueryEventBase::extractReadWriteSet(const hsql::DeleteStatement *del) {
         std::string tableName(del->tableName);
+    
+        _writeSet.insert(tableName + ".*");
         
         std::vector<std::string> readSet;
         StateItem whereExpr;
