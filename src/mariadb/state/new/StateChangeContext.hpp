@@ -11,15 +11,42 @@
 #include <list>
 #include <map>
 
+#include <mutex>
+
+#include "cluster/NamingHistory.hpp"
+
 namespace ultraverse::state::v2 {
-    struct RenameHistory {
-        uint64_t time;
-        std::string name;
+    struct ForeignKey {
+        std::shared_ptr<NamingHistory> fromTable;
+        std::string fromColumn;
+        
+        std::shared_ptr<NamingHistory> toTable;
+        std::string toColumn;
     };
     
     class StateChangeContext {
     public:
-        std::map<std::string, std::list<RenameHistory>> renameHistoryMap;
+        std::shared_ptr<NamingHistory> findTable(std::string tableName, uint64_t when) {
+            auto it = std::find_if(tables.begin(), tables.end(), [tableName, when](auto &history) {
+                return history->match(tableName, when);
+            });
+            
+            if (it != tables.end()) {
+                return *it;
+            } else {
+                // FIXME: 이거 parseDDL에서 해야 함
+                auto table = std::make_shared<NamingHistory>(tableName);
+                tables.push_back(table);
+                
+                return table;
+            }
+        }
+        
+        std::vector<std::shared_ptr<NamingHistory>> tables;
+        std::vector<ForeignKey> foreignKeys;
+        
+        // fixme;
+        std::mutex contextLock;
     };
 }
 
