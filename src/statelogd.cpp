@@ -52,7 +52,7 @@ public:
 
             return 0;
         }
-    
+
         if (isArgSet('v')) {
             spdlog::set_level(spdlog::level::debug);
         } else if (isArgSet('V')) {
@@ -89,14 +89,13 @@ public:
     void writerMain() {
         _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(_binlogIndexPath);
         _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(_stateLogPath);
-        
-        _stateLogWriter->open();
-        
+
         _pendingTxn = std::make_shared<state::v2::Transaction>();
         _pendingQuery = std::make_shared<state::v2::Query>();
-        
+
 
         if (!_checkpointPath.empty()) {
+            _stateLogWriter->open(std::ios::out | std::ios::binary | std::ios::app);
             _logger->info("ultraverse state loaded: {}", _checkpointPath);
             int pos;
             std::ifstream is(_checkpointPath, std::ios::binary);
@@ -120,9 +119,12 @@ public:
             }
             _binlogReader->seek(_gid, pos);
         }
-        
+        else {
+            _stateLogWriter->open(std::ios::out | std::ios::binary);
+        }
+
         std::shared_ptr<mariadb::RowQueryEvent> pendingRowQueryEvent;
-    
+
         while (_binlogReader->next()) {
             auto event = _binlogReader->currentEvent();
 
@@ -152,7 +154,7 @@ public:
                             auto pendingQuery = std::make_shared<state::v2::Query>();
                             processRowEvent(std::dynamic_pointer_cast<mariadb::RowEvent>(event), pendingQuery);
                             processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
-            
+
                             return pendingQuery;
                         })
                     );
@@ -189,43 +191,43 @@ public:
     
     std::shared_ptr<state::v2::Query> processQueryEvent(std::shared_ptr<mariadb::QueryEvent> event) {
         auto pendingQuery = std::make_shared<state::v2::Query>();
-    
+
         pendingQuery->setTimestamp(event->timestamp());
         pendingQuery->setDatabase(event->database());
         pendingQuery->setStatement(event->statement());
-        
+
         event->tokenize();
         
         if (event->isDDL()) {
             event->parse();
             event->parseDDL();
-            
+
             pendingQuery->setFlags(
                 pendingQuery->flags() |
                 state::v2::Query::FLAG_IS_DDL
             );
-    
+
             pendingQuery->readSet().insert(
                 event->readSet().begin(), event->readSet().end()
             );
             pendingQuery->writeSet().insert(
                 event->writeSet().begin(), event->writeSet().end()
             );
-    
+
             auto transaction = std::make_shared<state::v2::Transaction>();
             transaction->setFlags(
                 transaction->flags() |
                 state::v2::Transaction::FLAG_CONTAINS_DDL
             );
-    
+
             *transaction << pendingQuery;
             transaction->setGid(_gid++);
             transaction->setXid(0);
-            
-            
-    
+
+
+
             *_stateLogWriter << *transaction;
-            
+
             return nullptr;
         } else if (event->isDML()) {
             // rowset, changeset이 없으므로 해시 계산 불가능
@@ -236,7 +238,7 @@ public:
             pendingQuery->writeSet().insert(
                 event->writeSet().begin(), event->writeSet().end()
             );
-            
+
             /*
             pendingTxn->setFlags(
                 _pendingTxn->flags() |
@@ -252,18 +254,18 @@ public:
         while (!_pendingQueries.empty()) {
             auto promise = std::move(_pendingQueries.front());
             _pendingQueries.pop();
-            
+
             auto future = promise->get_future();
             future.wait();
             auto pendingQuery = future.get();
-            
+
             if (pendingQuery == nullptr) {
                 continue;
             }
-            
+
             *_pendingTxn << pendingQuery;
         }
-    
+
         _logger->info("Transaction ID #{} processed.", event->transactionId());
         _pendingTxn->setXid(event->transactionId());
         finalizeTransaction();
@@ -281,11 +283,11 @@ public:
         _tableMapMutex.lock();
         auto table = _tableMap[event->tableId()];
         auto &hash = _stateHashMap[event->tableId()];
-        
+
         if (!hash.isInitialized()) {
             hash.init();
         }
-        
+
         event->mapToTable(*table);
     
         for (auto &it: _tableMap) {
@@ -293,7 +295,7 @@ public:
                 pendingQuery->setBeforeHash(it.second->table(), _stateHashMap[it.first]);
             }
         }
-    
+
         switch (event->type()) {
             case mariadb::RowEvent::INSERT:
                 pendingQuery->setType(state::v2::Query::INSERT);
@@ -310,24 +312,24 @@ public:
             switch (event->type()) {
                 case mariadb::RowEvent::INSERT:
                     pendingQuery->rowSet().push_back(event->rowSet(i));
-                
+
                     hash += event->rowSet(i);
                     break;
                 case mariadb::RowEvent::DELETE:
                     pendingQuery->rowSet().push_back(event->rowSet(i));
-                
+
                     hash -= event->rowSet(i);
                     break;
             
                 case mariadb::RowEvent::UPDATE:
                     pendingQuery->rowSet().push_back(event->rowSet(i));
                     pendingQuery->changeSet().push_back(event->changeSet(i));
-                
+
                     hash -= event->rowSet(i);
                     hash += event->changeSet(i);
                     break;
             }
-        
+
         }
     
         for (auto &it: _tableMap) {
@@ -336,14 +338,14 @@ public:
             }
         }
         _tableMapMutex.unlock();
-    
+
         pendingQuery->setTimestamp(event->timestamp());
         pendingQuery->setAffectedRows(event->affectedRows());
-        
+
         pendingQuery->setDatabase(table->database());
-        
+
         const auto &candidateSet = event->candidateSet();
-        
+
         pendingQuery->itemSet().insert(
             pendingQuery->itemSet().begin(),
             candidateSet.begin(), candidateSet.end()
@@ -352,7 +354,7 @@ public:
     
     void processRowQueryEvent(std::shared_ptr<mariadb::RowQueryEvent> event, std::shared_ptr<state::v2::Query> pendingQuery) {
         pendingQuery->setStatement(event->statement());
-        
+
         mariadb::QueryEvent dummyEvent(pendingQuery->database(), event->statement(), 0);
         dummyEvent.parse();
 
@@ -362,7 +364,7 @@ public:
         pendingQuery->writeSet().insert(
             dummyEvent.writeSet().begin(), dummyEvent.writeSet().end()
         );
-        
+
         pendingQuery->itemSet().insert(
             pendingQuery->itemSet().begin(),
             dummyEvent.itemSet().begin(), dummyEvent.itemSet().end()
@@ -394,7 +396,7 @@ public:
 private:
     LoggerPtr _logger;
     TaskExecutor _taskExecutor;
-    
+
     std::string _binlogIndexPath;
     std::string _stateLogPath;
     
@@ -413,8 +415,8 @@ private:
     
     std::shared_ptr<state::v2::Transaction> _pendingTxn;
     std::shared_ptr<state::v2::Query> _pendingQuery;
-    
-    
+
+
     std::queue<std::shared_ptr<std::promise<std::shared_ptr<state::v2::Query>>>> _pendingQueries;
     std::mutex _tableMapMutex;
 

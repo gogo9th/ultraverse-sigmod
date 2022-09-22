@@ -16,8 +16,8 @@ namespace ultraverse::state::v2 {
     
     }
     
-    void StateLogWriter::open() {
-        _stream = std::ofstream(_logPath, std::ios::out | std::ios::binary);
+    void StateLogWriter::open(std::ios_base::openmode openMode) {
+        _stream = std::ofstream(_logPath, openMode);
     }
     
     void StateLogWriter::close() {
@@ -37,12 +37,16 @@ namespace ultraverse::state::v2 {
     StateLogWriter &StateLogWriter::operator<<(Transaction &transaction) {
         std::scoped_lock<std::mutex> _scopedLock(_mutex);
         auto header = transaction.header();
-        
-        _stream.write((char *) &header, sizeof(TransactionHeader));
-        
-        cereal::BinaryOutputArchive archive(_stream);
+        std::stringstream tmpStream;
+        cereal::BinaryOutputArchive archive(tmpStream);
         archive(transaction);
-        
+        std::string transactionString = tmpStream.str();
+
+        auto nextPos = sizeof(TransactionHeader) + transactionString.size() + _stream.tellp();
+        header.nextPos = nextPos;
+
+        _stream.write((char *)&header, sizeof(TransactionHeader));
+        _stream.write(transactionString.c_str(), transactionString.size());
         _stream.flush();
         
     }
