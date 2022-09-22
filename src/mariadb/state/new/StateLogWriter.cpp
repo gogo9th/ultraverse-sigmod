@@ -41,12 +41,9 @@ namespace ultraverse::state::v2 {
         archive(transaction);
         std::string transactionString = tmpStream.str();
 
-        std::cout << "pos: " << pos() << '\n';
-
         auto nextPos = sizeof(TransactionHeader) + transactionString.size() + _stream.tellp();
         header.nextPos = nextPos;
 
-        std::cout << "nextPos: " << nextPos << '\n';
         _stream.write((char *)&header, sizeof(TransactionHeader));
         _stream.write(transactionString.c_str(), transactionString.size());
         _stream.flush();
