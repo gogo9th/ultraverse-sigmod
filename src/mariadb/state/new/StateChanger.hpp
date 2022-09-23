@@ -76,6 +76,33 @@ namespace ultraverse::state::v2 {
         void processDDLTransaction(std::shared_ptr<Transaction> transaction);
         void processNode(uint64_t nodeIdx);
         
+        void __node__processTransaction(
+            uint64_t rootNodeId,
+            uint64_t nodeId,
+            std::shared_ptr<Transaction> transaction,
+            mariadb::DBHandle &dbHandle
+        );
+        void __node__processRollbackTransaction(
+            uint64_t rootNodeId,
+            uint64_t nodeId,
+            std::shared_ptr<Transaction> transaction,
+            mariadb::DBHandle &dbHandle
+        );
+        
+        inline void __node__replayQuery(
+            uint64_t rootNodeId,
+            uint64_t nodeId,
+            std::shared_ptr<Query> query,
+            mariadb::DBHandle &dbHandle
+        );
+        
+        inline void __node__invertQuery(
+            uint64_t rootNodeId,
+            uint64_t nodeId,
+            std::shared_ptr<Query> query,
+            mariadb::DBHandle &dbHandle
+        );
+        
         bool isTransactionRelatedToPlan(std::shared_ptr<Transaction> transaction) const;
         
         std::vector<CandidateColumn>
@@ -94,9 +121,18 @@ namespace ultraverse::state::v2 {
         void dropIntermediateDB();
         
         /**
+         * updates primary keys
+         */
+        void updatePrimaryKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp);
+        
+        /**
          * updates foreign keys
          */
         void updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp);
+        
+        int64_t getAutoIncrement(mariadb::DBHandle &dbHandle, std::string table);
+        void setAutoIncrement(mariadb::DBHandle &dbHandle, std::string table, int64_t value);
+        
         
         
         
@@ -126,6 +162,7 @@ namespace ultraverse::state::v2 {
         bool _isClusterReady;
         
         RowCluster _rowCluster;
+        RowCluster _invertedRowCluster;
     };
 }
 

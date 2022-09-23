@@ -43,6 +43,7 @@ namespace ultraverse::state::v2 {
         }
         
         std::vector<std::shared_ptr<NamingHistory>> tables;
+        std::unordered_set<std::string> primaryKeys;
         std::vector<ForeignKey> foreignKeys;
         
         // fixme;

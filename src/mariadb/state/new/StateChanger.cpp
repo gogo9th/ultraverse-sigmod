@@ -269,27 +269,44 @@ namespace ultraverse::state::v2 {
         }
         
         _logger->trace("== REPLAY FINISHED ==");
-        _logger->trace("TODO: EXECUTE QUERY:");
+        
+        std::stringstream queryBuilder;
+        queryBuilder << fmt::format("USE {};\n", _plan.dbName());
+        queryBuilder << fmt::format("SET AUTOCOMMIT = FALSE;\n");
+        
+        queryBuilder << "BEGIN;\n";
+        
         for (auto it: _rowCluster.keyMap()) {
             auto where = it.second.MakeWhereQuery(it.first);
             auto tableName = StateUserQuery::SplitDBNameAndTableName(it.first)[0];
             
-            std::stringstream queryBuilder;
-            queryBuilder << fmt::format("USE {};\n", _plan.dbName());
-            // queryBuilder << fmt::format("DELETE FROM {} WHERE {};\n", it.first, where);
-            queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};", tableName, _intermediateDBName, tableName, where);
-            
-            _logger->trace("{}", queryBuilder.str());
+            queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, _intermediateDBName, tableName, where);
         }
+        
+        for (auto it: _invertedRowCluster.keyMap()) {
+            auto where = it.second.MakeWhereQuery(it.first);
+            auto tableName = StateUserQuery::SplitDBNameAndTableName(it.first)[0];
+            
+            queryBuilder << fmt::format("DELETE FROM {} WHERE {};\n", tableName, where);
+        }
+    
+        queryBuilder << "COMMIT;\n";
+        
+        queryBuilder << fmt::format("SET FOREIGN_KEY_CHECKS = TRUE;\n\n");
+    
+        _logger->trace("TODO: EXECUTE QUERY:\n{}", queryBuilder.str());
         
     }
     
     void StateChanger::setRollbackTarget(std::shared_ptr<Transaction> transaction) {
         _rollbackTarget = std::move(transaction);
         
-        std::function<void(StateItem &)> walkStateItem = [this, &walkStateItem](StateItem &stateItem) {
+        std::function<void(StateItem &, bool)> walkStateItem = [this, &walkStateItem](StateItem &stateItem, bool isInverted) {
+            
             if (!stateItem.name.empty()) {
                 auto resolvedName = RowCluster::resolveForeignKey(stateItem.name, _context->foreignKeys);
+                bool isFKResolved = resolvedName != stateItem.name;
+                
                 auto &keyColumns = _plan.keyColumns();
                 if (std::find(keyColumns.begin(), keyColumns.end(), resolvedName) != keyColumns.end()) {
                     assert(stateItem.condition_type == EN_CONDITION_NONE);
@@ -321,27 +338,48 @@ namespace ultraverse::state::v2 {
                         default:
                             break;
                     }
-        
-                    _logger->info("rowCluster: expanding range of {} => (WHERE {})", resolvedName,
-                                  stateRange.MakeWhereQuery(resolvedName));
-                    _rowCluster.addKeyRange(resolvedName, stateRange);
-                    _rowCluster.addKeyRange(stateItem.name, stateRange);
+    
+                    if (isInverted && !isFKResolved) {
+                        // invert 대상이지만 FK가 아닌 경우에만
+                         _logger->info(
+                            "InvertedRowCluster: expanding range of {} => (WHERE {})",
+                            resolvedName,
+                            stateRange.MakeWhereQuery(resolvedName)
+                        );
+                        _invertedRowCluster.addKeyRange(resolvedName, stateRange);
+                    } else {
+                        // FIXME: 코드 정리
+                        if (_invertedRowCluster.hasKey(resolvedName) &&
+                            !StateRange::AND(_invertedRowCluster.getKeyRange(resolvedName), stateRange).GetRange()->empty()) {
+                            _invertedRowCluster.addKeyRange(stateItem.name, stateRange);
+                        } else {
+                            _logger->info(
+                                "RowCluster: expanding range of {} => (WHERE {})",
+                                resolvedName,
+                                stateRange.MakeWhereQuery(resolvedName)
+                            );
+                            _rowCluster.addKeyRange(resolvedName, stateRange);
+                            _rowCluster.addKeyRange(stateItem.name, stateRange);
+                        }
+                    }
                 }
             }
             
             for (auto &subStateItem: stateItem.arg_list) {
-                walkStateItem(subStateItem);
+                walkStateItem(subStateItem, isInverted);
             }
         };
         
         if (!_plan.keyColumns().empty()) {
             for (auto &query: _rollbackTarget->queries()) {
+                const bool isInverted = query->type() == Query::INSERT;
+                
                 for (auto &stateItem: query->whereSet()) {
-                    walkStateItem(stateItem);
+                    walkStateItem(stateItem, isInverted);
                 }
                 
                 for (auto &stateItem: query->itemSet()) {
-                    walkStateItem(stateItem);
+                    walkStateItem(stateItem, isInverted);
                 }
             }
         } else {
@@ -475,113 +513,30 @@ namespace ultraverse::state::v2 {
             
             if (node->transaction->gid() == _plan.rollbackGid()) {
                 setRollbackTarget(node->transaction);
-                goto NEXT_TRANSACTION;
+                
+                // TODO: 이게 아니라 실행을 반대로 해야지!
+                //       INSERT는 카운터 올리고, DELETE는?
+                // goto NEXT_TRANSACTION;
             }
     
             { // @with(dbHandleLease);
                 _logger->trace("[#{}->#{}] leasing dbHandle", nodeIdx, node->nodeIdx);
                 auto dbHandleLease = _dbHandlePool.take();
                 auto &dbHandle = dbHandleLease.get();
-                _logger->info("[#{}->#{}] replaying transaction", nodeIdx, node->nodeIdx);
-                dbHandle.executeQuery("use " + _intermediateDBName);
-                dbHandle.executeQuery("BEGIN");
-            
-                for (auto &query: node->transaction->queries()) {
-                    if (query->database() != _plan.dbName()) {
-                        goto NEXT_QUERY;
-                    }
-                    
-                    /*
-                    {
-                        std::scoped_lock<std::mutex> _hashLock(_stateHashMutex);
-                        auto relatedTable = *query->writeSet().begin();
-                        auto it = relatedTable.find('.');
     
-                        if (it != std::string::npos) {
-                            relatedTable.erase(it, relatedTable.size());
-                        }
-                        
-        
-                        if (!_stateHashMap[relatedTable].isInitialized()) {
-                            _stateHashMap[relatedTable] = StateHash(query->beforeHash(relatedTable));
-                            _logger->trace("[#{}->#{}] hash init: {}", nodeIdx, node->nodeIdx, relatedTable);
-                            _stateHashMap[relatedTable].hexdump();
-                        }
-    
-                        auto &hash = _stateHashMap[relatedTable];
-                        auto beforeHash = hash;
-                        
-                        // FIXME
-                        if (query->type() != Query::UNKNOWN && hash == query->afterHash(relatedTable)) {
-                            _logger->trace("[#{}->#{}] skipping query: table hash is equal", nodeIdx, node->nodeIdx);
-                            goto NEXT_QUERY;
-                        }
-        
-                        for (int i = 0; i < query->affectedRows(); i++) {
-                            switch (query->type()) {
-                                case Query::INSERT:
-                                    hash += query->rowSet()[i];
-                                    break;
-                                case Query::DELETE:
-                                    hash -= query->rowSet()[i];
-                                    break;
-                                case Query::UPDATE:
-                                    hash -= query->rowSet()[i];
-                                    hash += query->changeSet()[i];
-                                    break;
-                                default:
-                                    break;
-                            }
-                        }
-                        
-                        
-                        if (hash == query->afterHash(relatedTable)) {
-                            _logger->info("hash matches");
-                            query->afterHash(relatedTable).hexdump();
-                            hash.hexdump();
-                        } else {
-                            _logger->info("hash not matches");
-                            query->afterHash(relatedTable).hexdump();
-                            hash.hexdump();
-                        }
-                    }
-                     */
-    
-                    if (!(query->flags() & Query::FLAG_IS_DDL) && !_rowCluster.isQueryRelated(query, _context->foreignKeys)) {
-                        _logger->trace("query skipped: not related with rowCluster");
-                        goto NEXT_QUERY;
-                    }
-                    
-                    {
-                        auto statement = QUERY_TAG_STATECHANGE + query->statement();
-                        _logger->trace("[#{}->#{}] executing query: (timestamp={}) {}", nodeIdx, node->nodeIdx,
-                                       query->timestamp(), query->statement());
-                        if (dbHandle.executeQuery("SET foreign_key_checks=0") != 0) {
-                            _logger->warn("[#{}->#{}] failed to turn off foreign key constraint", nodeIdx, node->nodeIdx);
-                        }
-                        if (dbHandle.executeQuery(fmt::format("SET TIMESTAMP={}", query->timestamp())) != 0) {
-                            _logger->warn("[#{}->#{}] failed to set timestamp", nodeIdx, node->nodeIdx);
-                        }
-        
-                        if (dbHandle.executeQuery(statement) != 0) {
-                            _logger->error("[#{}->#{}] query execution failed: {}", nodeIdx, node->nodeIdx,
-                                           mysql_error(dbHandle));
-                            dbHandle.executeQuery("ROLLBACK");
-                            throw std::runtime_error(mysql_error(dbHandle));
-                        }
-                    }
-    
-                    if (query->flags() & Query::FLAG_IS_DDL) {
-                        _logger->info("[#{}->#{}] updating foreign key..", nodeIdx, node->nodeIdx);
-                        updateForeignKeys(dbHandle, query->timestamp());
-                    }
-                    
-                    NEXT_QUERY: ;
+                if (node->transaction->gid() == _plan.rollbackGid()) {
+                    __node__processRollbackTransaction(
+                        nodeIdx, node->nodeIdx,
+                        node->transaction,
+                        dbHandle
+                    );
+                } else {
+                    __node__processTransaction(
+                        nodeIdx, node->nodeIdx,
+                        node->transaction,
+                        dbHandle
+                    );
                 }
-    
-                _logger->trace("[#{}->#{}] finalizing transaction", nodeIdx, node->nodeIdx);
-                dbHandle.executeQuery("COMMIT");
-                _logger->debug("[#{}->#{}] releasing dbHandle", nodeIdx, node->nodeIdx);
             } // @release(dbHandleLease);
             
             NEXT_TRANSACTION:
@@ -590,6 +545,203 @@ namespace ultraverse::state::v2 {
         }
     
         _logger->trace("[#{}] thread end", nodeIdx);
+    }
+    
+    void StateChanger::__node__processTransaction(
+        uint64_t rootNodeId,
+        uint64_t nodeId,
+        std::shared_ptr<Transaction> transaction,
+        mariadb::DBHandle &dbHandle
+    ) {
+        _logger->info("[#{}->#{}] replaying transaction", rootNodeId, nodeId);
+        dbHandle.executeQuery("use " + _intermediateDBName);
+        dbHandle.executeQuery("BEGIN");
+    
+        for (auto &query: transaction->queries()) {
+            if (query->database() != _plan.dbName()) {
+                goto NEXT_QUERY;
+            }
+        
+            /*
+            {
+                std::scoped_lock<std::mutex> _hashLock(_stateHashMutex);
+                auto relatedTable = *query->writeSet().begin();
+                auto it = relatedTable.find('.');
+
+                if (it != std::string::npos) {
+                    relatedTable.erase(it, relatedTable.size());
+                }
+                
+
+                if (!_stateHashMap[relatedTable].isInitialized()) {
+                    _stateHashMap[relatedTable] = StateHash(query->beforeHash(relatedTable));
+                    _logger->trace("[#{}->#{}] hash init: {}", rootNodeId, nodeId, relatedTable);
+                    _stateHashMap[relatedTable].hexdump();
+                }
+
+                auto &hash = _stateHashMap[relatedTable];
+                auto beforeHash = hash;
+                
+                // FIXME
+                if (query->type() != Query::UNKNOWN && hash == query->afterHash(relatedTable)) {
+                    _logger->trace("[#{}->#{}] skipping query: table hash is equal", rootNodeId, nodeId);
+                    goto NEXT_QUERY;
+                }
+
+                for (int i = 0; i < query->affectedRows(); i++) {
+                    switch (query->type()) {
+                        case Query::INSERT:
+                            hash += query->rowSet()[i];
+                            break;
+                        case Query::DELETE:
+                            hash -= query->rowSet()[i];
+                            break;
+                        case Query::UPDATE:
+                            hash -= query->rowSet()[i];
+                            hash += query->changeSet()[i];
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                
+                
+                if (hash == query->afterHash(relatedTable)) {
+                    _logger->info("hash matches");
+                    query->afterHash(relatedTable).hexdump();
+                    hash.hexdump();
+                } else {
+                    _logger->info("hash not matches");
+                    query->afterHash(relatedTable).hexdump();
+                    hash.hexdump();
+                }
+            }
+             */
+        
+            {
+                const bool isDDL = query->flags() & Query::FLAG_IS_DDL;
+                const bool isRelated = _rowCluster.isQueryRelated(query, _context->foreignKeys);
+                const bool needsInvertion = _invertedRowCluster.isQueryRelated(query, _context->foreignKeys);
+                const bool needsForceExecution =
+                    !_plan.isDBDumpAvailable() && transaction->gid() < _plan.rollbackGid();
+            
+                const bool skipQuery = !(needsForceExecution || isDDL || isRelated);
+            
+                if (skipQuery) {
+                    if (!isRelated) {
+                        _logger->trace("query skipped: not related with cluster");
+                    }
+                
+                    goto NEXT_QUERY;
+                }
+                
+                if (!needsInvertion) {
+                    __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
+                } else {
+                    __node__invertQuery(rootNodeId, nodeId, query, dbHandle);
+                }
+            }
+        
+            NEXT_QUERY: ;
+        }
+    
+        _logger->trace("[#{}->#{}] finalizing transaction", rootNodeId, nodeId);
+        dbHandle.executeQuery("COMMIT");
+        _logger->debug("[#{}->#{}] releasing dbHandle", rootNodeId, nodeId);
+    }
+    
+    void StateChanger::__node__processRollbackTransaction(
+        uint64_t rootNodeId,
+        uint64_t nodeId,
+        std::shared_ptr<Transaction> transaction,
+        mariadb::DBHandle &dbHandle
+    ) {
+        _logger->info("[#{}->#{}] replaying inverted transaction", rootNodeId, nodeId);
+        dbHandle.executeQuery("use " + _intermediateDBName);
+        dbHandle.executeQuery("BEGIN");
+    
+        for (auto &query: transaction->queries()) {
+            if (query->database() != _plan.dbName()) {
+                goto NEXT_QUERY;
+            }
+    
+            __node__invertQuery(rootNodeId, nodeId, query, dbHandle);
+            
+            NEXT_QUERY: ;
+        }
+    
+        _logger->trace("[#{}->#{}] finalizing transaction", rootNodeId, nodeId);
+        dbHandle.executeQuery("COMMIT");
+        _logger->debug("[#{}->#{}] releasing dbHandle", rootNodeId, nodeId);
+    }
+    
+    void StateChanger::__node__replayQuery(
+        uint64_t rootNodeId,
+        uint64_t nodeId,
+        std::shared_ptr<Query> query,
+        mariadb::DBHandle &dbHandle
+    ) {
+        auto statement = QUERY_TAG_STATECHANGE + query->statement();
+        _logger->trace("[#{}->#{}] executing query: (timestamp={}) {}", rootNodeId, nodeId, query->timestamp(), query->statement());
+        if (dbHandle.executeQuery("SET foreign_key_checks=0") != 0) {
+            _logger->warn("[#{}->#{}] failed to turn off foreign key constraint", rootNodeId, nodeId);
+        }
+        if (dbHandle.executeQuery(fmt::format("SET TIMESTAMP={}", query->timestamp())) != 0) {
+            _logger->warn("[#{}->#{}] failed to set timestamp", rootNodeId, nodeId);
+        }
+    
+        if (dbHandle.executeQuery(statement) != 0) {
+            _logger->error("[#{}->#{}] query execution failed: {}", rootNodeId, nodeId,
+                           mysql_error(dbHandle));
+            dbHandle.executeQuery("ROLLBACK");
+            throw std::runtime_error(mysql_error(dbHandle));
+        }
+    
+        if (query->flags() & Query::FLAG_IS_DDL) {
+            _logger->info("[#{}->#{}] updating foreign key..", rootNodeId, nodeId);
+            updatePrimaryKeys(dbHandle, query->timestamp());
+            updateForeignKeys(dbHandle, query->timestamp());
+        }
+    }
+    
+    void StateChanger::__node__invertQuery(
+        uint64_t rootNodeId,
+        uint64_t nodeId,
+        std::shared_ptr<Query> query,
+        mariadb::DBHandle &dbHandle
+    ) {
+        if (query->type() == Query::INSERT) {
+            _logger->trace("[#{}->#{}] inverting INSERT query: (timestamp={}) {}", rootNodeId, nodeId, query->timestamp(), query->statement());
+            auto tableName = StateUserQuery::SplitDBNameAndTableName(*query->writeSet().begin())[0];
+    
+            _logger->trace("[#{}->#{}] increasing auto-increment value of table {}", rootNodeId, nodeId, tableName);
+            int64_t autoIncrement = getAutoIncrement(dbHandle, tableName);
+    
+            if (autoIncrement != -1) {
+                setAutoIncrement(dbHandle, tableName, autoIncrement + 1);
+            } else {
+                _logger->trace("[#{}->#{}] auto-increment is not available for table {}", rootNodeId, nodeId,
+                               tableName);
+            }
+            
+            // FIXME: 이거 적절히 수정좀 해줘요...
+            //        근데 이거 key column에 해당하는 쿼리만 DELETE 해야 해? 아니면 트랜잭션 이후 영향받는거 전부 다?
+            if (!(_invertedRowCluster.isQueryRelated(query, _context->foreignKeys))) {
+                auto it = std::find_if(query->itemSet().begin(), query->itemSet().end(), [this](auto &item) {
+                    return this->_context->primaryKeys.find(item.name) != this->_context->primaryKeys.end();
+                });
+                
+                if (it != query->itemSet().end()) {
+                    StateRange stateRange;
+                    stateRange.SetValue(it->data_list[0], true);
+    
+                    _logger->info("[#{}->#{}] InvertedRowCluster: expanding range of {} => (WHERE {})", rootNodeId, nodeId, it->name, stateRange.MakeWhereQuery(it->name));
+                    _invertedRowCluster.addKeyRange(it->name, stateRange);
+                }
+            }
+        } else {
+            // TODO: if (!_rowCluster & query) then REPLACE INTO ...
+        }
     }
     
     void StateChanger::createIntermediateDB() {
@@ -603,6 +755,37 @@ namespace ultraverse::state::v2 {
             throw std::runtime_error(mysql_error(dbHandle));
         }
         dbHandle.executeQuery("COMMIT");
+    }
+    
+    void StateChanger::updatePrimaryKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp) {
+        std::scoped_lock _lock(_context->contextLock);
+    
+        // TODO: LOCK
+        std::unordered_set<std::string> primaryKeys;
+    
+        const auto query =
+            QUERY_TAG_STATECHANGE +
+            fmt::format("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = '{}' AND CONSTRAINT_NAME = 'PRIMARY'", _intermediateDBName);
+    
+    
+        if (dbHandle.executeQuery(query) != 0) {
+            _logger->error("cannot fetch foreign key information: {}", mysql_error(dbHandle));
+            throw std::runtime_error(mysql_error(dbHandle));
+        }
+    
+        MYSQL_RES *result = mysql_store_result(dbHandle);
+        MYSQL_ROW row;
+        while ((row = mysql_fetch_row(result)) != nullptr) {
+            std::string table(row[0]);
+            std::string column(row[1]);
+       
+            _logger->trace("updatePrimaryKeys(): adding primary key: {}.{}", table, column);
+        
+            primaryKeys.insert(table + "." + column);
+        }
+        mysql_free_result(result);
+    
+        _context->primaryKeys = primaryKeys;
     }
     
     void StateChanger::updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp) {
@@ -642,5 +825,40 @@ namespace ultraverse::state::v2 {
         mysql_free_result(result);
         
         _context->foreignKeys = foreignKeys;
+    }
+    
+    int64_t StateChanger::getAutoIncrement(mariadb::DBHandle &dbHandle, std::string table) {
+        const auto query =
+            QUERY_TAG_STATECHANGE +
+            fmt::format("SELECT AUTO_INCREMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME = '{}'",
+                        _intermediateDBName, table);
+        
+        if (dbHandle.executeQuery(query) != 0) {
+            _logger->error("cannot fetch auto increment: {}", mysql_error(dbHandle));
+            throw std::runtime_error(mysql_error(dbHandle));
+        }
+        
+        MYSQL_RES *result = mysql_store_result(dbHandle);
+        bool isAvailable = mysql_num_rows(result) != 0;
+        
+        if (!isAvailable) {
+            return -1;
+        }
+        
+        MYSQL_ROW row = mysql_fetch_row(result);
+        
+        // TODO: support for 64-bit integer
+        return std::atoi(row[0]);
+    }
+    
+    void StateChanger::setAutoIncrement(mariadb::DBHandle &dbHandle, std::string table, int64_t value) {
+        const auto query =
+            QUERY_TAG_STATECHANGE +
+            fmt::format("ALTER TABLE {} AUTO_INCREMENT = {}", table, value);
+        
+        if (dbHandle.executeQuery(query) != 0) {
+            _logger->error("cannot set auto increment: {}", mysql_error(dbHandle));
+            throw std::runtime_error(mysql_error(dbHandle));
+        }
     }
 }
