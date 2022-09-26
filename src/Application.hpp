@@ -23,10 +23,17 @@ namespace ultraverse {
         
         bool isEnvSet(std::string envName);
         std::string getEnv(std::string envName);
+        
+    protected:
+        int argc() const;
+        char **argv() const;
+        
     private:
         void parseArgs(int argc, char **argv);
         
         std::unordered_map<char, std::string> _args;
+        int _argc;
+        char **_argv;
     };
 }
 

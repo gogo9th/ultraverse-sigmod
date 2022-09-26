@@ -68,10 +68,11 @@ namespace ultraverse::state::v2 {
         StateChanger(DBHandlePool<mariadb::DBHandle> &dbHandlePool, const StateChangePlan &plan);
         
         std::string findCandidateColumn();
+        void makeClusterMap();
         void start();
         
     private:
-        void setRollbackTarget(std::shared_ptr<Transaction> transaction);
+        void expandClusterMap(std::shared_ptr<Transaction> transaction);
         
         void processDDLTransaction(std::shared_ptr<Transaction> transaction);
         void processNode(uint64_t nodeIdx);

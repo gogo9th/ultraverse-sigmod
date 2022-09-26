@@ -31,7 +31,7 @@ namespace ultraverse::state::v2 {
          */
         StateRange &getKeyRange(const std::string &columnName);
     
-        const std::unordered_map<std::string, StateRange> &keyMap() const;
+        std::unordered_map<std::string, std::vector<StateRange>> &keyMap();
         
         bool isQueryRelated(const std::shared_ptr<Query> &query, const std::vector<ForeignKey> foreignKeys) const;
         
@@ -40,13 +40,15 @@ namespace ultraverse::state::v2 {
     private:
         LoggerPtr _logger;
         
+        void mergeCluster(const std::string &columnName);
+        
         bool isExprRelated(const StateItem &expr, const std::vector<ForeignKey> &foreignKeys) const;
         
         /**
          * FIXME: 이거 std::string에서 std::pair<NamingHistory, std::string> 같은걸로 바꿔야 할듯
          *        안그러면 이거 테이블 리네임되면 맛감
          */
-        std::unordered_map<std::string, StateRange> _keyMap;
+        std::unordered_map<std::string, std::vector<StateRange>> _clusterMap;
     };
 }
 

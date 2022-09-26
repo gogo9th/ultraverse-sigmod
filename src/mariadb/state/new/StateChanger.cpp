@@ -217,17 +217,54 @@ namespace ultraverse::state::v2 {
         return resultCols;
     }
     
-    /**
-     * TODO:
-     *  - turn off foreign key check? (필요 없을듯)
-     *  - lock table
-     *  - swap table
-     *  - unlock table
-     *  - DB 이름을 바꾸거나, 특정 테이블을 옮기거나 해야 하는데 테이블 스왑의 경우 FK나 트리거 등을 드랍했다가 다시 설정해야 함
-     *  - hash check
-     *
-     *  - Transaction에서 dbname.table 같은 식으로 R/W set 저장하게 해야 함
-     */
+    
+    void StateChanger::makeClusterMap() {
+        createIntermediateDB();
+        
+        _reader.open();
+        
+        while (_reader.next()) {
+            auto transactionHeader = _reader.txnHeader();
+            auto transaction = _reader.txnBody();
+            auto gid = transactionHeader->gid;
+            auto flags = transactionHeader->flags;
+            _logger->trace("read gid {}; flags {}", gid, flags);
+            
+            if (transactionHeader->gid == _plan.rollbackGid()) {
+                _logger->info("rollback target found");
+                // setRollbackTarget(_reader.txnBody());
+            }
+            
+            if (flags & Transaction::FLAG_CONTAINS_DDL) {
+                processDDLTransaction(transaction);
+    
+                auto dbHandleLease = _dbHandlePool.take();
+                auto &dbHandle = dbHandleLease.get();
+    
+                dbHandle.executeQuery("use " + _intermediateDBName);
+                dbHandle.executeQuery("BEGIN");
+                for (auto &query: transaction->queries()) {
+                    if (query->database() == _plan.dbName()) {
+                        dbHandle.executeQuery(query->statement());
+                    }
+    
+                    updatePrimaryKeys(dbHandle, query->timestamp());
+                    updateForeignKeys(dbHandle, query->timestamp());
+                }
+                dbHandle.executeQuery("COMMIT");
+    
+            }
+    
+            expandClusterMap(transaction);
+        }
+        
+        for (auto &pair: _rowCluster.keyMap()) {
+            for (auto &cluster: pair.second) {
+                _logger->info("{}: WHERE {}", pair.first, cluster.MakeWhereQuery(pair.first));
+            }
+        }
+    }
+
     void StateChanger::start() {
         createIntermediateDB();
         
@@ -277,17 +314,21 @@ namespace ultraverse::state::v2 {
         queryBuilder << "BEGIN;\n";
         
         for (auto it: _rowCluster.keyMap()) {
+            /*
             auto where = it.second.MakeWhereQuery(it.first);
             auto tableName = StateUserQuery::SplitDBNameAndTableName(it.first)[0];
             
             queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, _intermediateDBName, tableName, where);
+             */
         }
         
         for (auto it: _invertedRowCluster.keyMap()) {
+            /*
             auto where = it.second.MakeWhereQuery(it.first);
             auto tableName = StateUserQuery::SplitDBNameAndTableName(it.first)[0];
             
             queryBuilder << fmt::format("DELETE FROM {} WHERE {};\n", tableName, where);
+             */
         }
     
         queryBuilder << "COMMIT;\n";
@@ -298,14 +339,12 @@ namespace ultraverse::state::v2 {
         
     }
     
-    void StateChanger::setRollbackTarget(std::shared_ptr<Transaction> transaction) {
-        _rollbackTarget = std::move(transaction);
+    void StateChanger::expandClusterMap(std::shared_ptr<Transaction> transaction) {
+        std::unordered_map<std::string, StateRange> clusterMap;
         
-        std::function<void(StateItem &, bool)> walkStateItem = [this, &walkStateItem](StateItem &stateItem, bool isInverted) {
-            
+        std::function<void(StateItem &, bool)> walkStateItem = [this, &walkStateItem, &clusterMap](StateItem &stateItem, bool isInverted) {
             if (!stateItem.name.empty()) {
                 auto resolvedName = RowCluster::resolveForeignKey(stateItem.name, _context->foreignKeys);
-                bool isFKResolved = resolvedName != stateItem.name;
                 
                 auto &keyColumns = _plan.keyColumns();
                 if (std::find(keyColumns.begin(), keyColumns.end(), resolvedName) != keyColumns.end()) {
@@ -339,29 +378,15 @@ namespace ultraverse::state::v2 {
                             break;
                     }
     
-                    if (isInverted && !isFKResolved) {
-                        // invert 대상이지만 FK가 아닌 경우에만
-                         _logger->info(
-                            "InvertedRowCluster: expanding range of {} => (WHERE {})",
-                            resolvedName,
-                            stateRange.MakeWhereQuery(resolvedName)
-                        );
-                        _invertedRowCluster.addKeyRange(resolvedName, stateRange);
-                    } else {
-                        // FIXME: 코드 정리
-                        if (_invertedRowCluster.hasKey(resolvedName) &&
-                            !StateRange::AND(_invertedRowCluster.getKeyRange(resolvedName), stateRange).GetRange()->empty()) {
-                            _invertedRowCluster.addKeyRange(stateItem.name, stateRange);
-                        } else {
-                            _logger->info(
-                                "RowCluster: expanding range of {} => (WHERE {})",
-                                resolvedName,
-                                stateRange.MakeWhereQuery(resolvedName)
-                            );
-                            _rowCluster.addKeyRange(resolvedName, stateRange);
-                            _rowCluster.addKeyRange(stateItem.name, stateRange);
-                        }
-                    }
+
+                    _logger->info(
+                        "RowCluster: expanding range of {} => (WHERE {})",
+                        resolvedName,
+                        stateRange.MakeWhereQuery(resolvedName)
+                    );
+                    clusterMap[resolvedName] = StateRange::OR(clusterMap[resolvedName], stateRange);
+                    // FK
+                    // _rowCluster.addKeyRange(stateItem.name, stateRange);
                 }
             }
             
@@ -371,7 +396,7 @@ namespace ultraverse::state::v2 {
         };
         
         if (!_plan.keyColumns().empty()) {
-            for (auto &query: _rollbackTarget->queries()) {
+            for (auto &query: transaction->queries()) {
                 const bool isInverted = query->type() == Query::INSERT;
                 
                 for (auto &stateItem: query->whereSet()) {
@@ -386,8 +411,9 @@ namespace ultraverse::state::v2 {
             // FIXME
         }
         
-        _isClusterReady = true;
-        _clusterCondvar.notify_all();
+        for (auto &pair: clusterMap) {
+            _rowCluster.addKeyRange(pair.first, pair.second);
+        }
     }
     
     bool StateChanger::isTransactionRelatedToPlan(std::shared_ptr<Transaction> transaction) const {
@@ -512,7 +538,7 @@ namespace ultraverse::state::v2 {
             }
             
             if (node->transaction->gid() == _plan.rollbackGid()) {
-                setRollbackTarget(node->transaction);
+                expandClusterMap(node->transaction);
                 
                 // TODO: 이게 아니라 실행을 반대로 해야지!
                 //       INSERT는 카운터 올리고, DELETE는?

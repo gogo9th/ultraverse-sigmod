@@ -11,26 +11,49 @@ namespace ultraverse::state::v2 {
     }
     
     bool RowCluster::hasKey(const std::string &columnName) const {
-        return _keyMap.find(columnName) != _keyMap.end();
+        return _clusterMap.find(columnName) != _clusterMap.end();
     }
     
     void RowCluster::addKeyRange(const std::string &columnName, StateRange &range) {
-        _keyMap[columnName] = StateRange::OR(_keyMap[columnName], range);
+        _clusterMap[columnName].push_back(range);
+        mergeCluster(columnName);
+    }
+    
+    void RowCluster::mergeCluster(const std::string &columnName) {
+        auto &cluster = _clusterMap[columnName];
+        
+        MERGE_LOOP:
+        for (auto it = cluster.begin(); it != cluster.end(); it++) {
+            for (auto it2 = cluster.begin(); it2 != cluster.end(); it2++) {
+                if (it == it2) {
+                    continue;
+                }
+                
+                auto result = StateRange::AND(*it, *it2);
+                if (!result.GetRange()->empty()) {
+                    _logger->trace("merging cluster: {} + {}", it->MakeWhereQuery(columnName), it2->MakeWhereQuery(columnName));
+                    *it = StateRange::OR(*it, *it2);
+                    cluster.erase(it2);
+                    _logger->trace("cluster merged: {}", it->MakeWhereQuery(columnName));
+                    goto MERGE_LOOP;
+                }
+            }
+        }
     }
     
     StateRange &RowCluster::getKeyRange(const std::string &columnName) {
-        if (!hasKey(columnName)) {
+        // if (!hasKey(columnName)) {
             throw std::runtime_error(fmt::format(
                 "{} is not in keyMap",
                 columnName
             ));
-        }
+        // }
         
-        return _keyMap.at(columnName);
+        // return _clusterMap.at(columnName);
     }
     
-    const std::unordered_map<std::string, StateRange> &RowCluster::keyMap() const {
-        return _keyMap;
+    std::unordered_map<std::string, std::vector<StateRange>> &RowCluster::keyMap() {
+        return _clusterMap;
     }
     
     bool RowCluster::isQueryRelated(const std::shared_ptr<Query> &query, const std::vector<ForeignKey> foreignKeys) const {
@@ -53,12 +76,12 @@ namespace ultraverse::state::v2 {
         if (!expr.name.empty()) {
             auto name = resolveForeignKey(expr.name, foreignKeys);
             
-            if (_keyMap.find(name) != _keyMap.end()) {
+            if (_clusterMap.find(name) != _clusterMap.end()) {
                 auto range = StateItem::MakeRange(expr);
-                auto &keyRange = _keyMap.at(name);
-                if (!StateRange::AND(range, keyRange).GetRange()->empty()) {
+                auto &keyRange = _clusterMap.at(name);
+                // if (!StateRange::AND(range, keyRange).GetRange()->empty()) {
                     return true;
-                }
+                // }
             }
         }
         
@@ -94,11 +117,11 @@ namespace ultraverse::state::v2 {
         RowCluster dst = *this;
         
         std::unordered_set<std::string> keys;
-        for (auto &it: this->_keyMap) {
+        for (auto &it: this->_clusterMap) {
             keys.insert(it.first);
         }
         
-        for (auto &it: other._keyMap) {
+        for (auto &it: other._clusterMap) {
             keys.insert(it.first);
         }
         
@@ -106,26 +129,26 @@ namespace ultraverse::state::v2 {
             if (!other.hasKey(key) || !this->hasKey(key)) {
                 continue;
             }
-            dst._keyMap[key] = StateRange::AND(this->_keyMap.at(key), other._keyMap.at(key));
+            // dst._clusterMap[key] = StateRange::AND(this->_clusterMap.at(key), other._clusterMap.at(key));
         }
     }
     
     RowCluster RowCluster::operator|(const RowCluster &other) const {
         RowCluster dst = *this;
         
-        for (auto &it: this->_keyMap) {
+        for (auto &it: this->_clusterMap) {
             if (!other.hasKey(it.first)) {
-                dst._keyMap[it.first] = it.second;
+                dst._clusterMap[it.first] = it.second;
             } else {
-                dst._keyMap[it.first] = StateRange::OR(this->_keyMap.at(it.first), other._keyMap.at(it.first));
+                // dst._clusterMap[it.first] = StateRange::OR(this->_clusterMap.at(it.first), other._clusterMap.at(it.first));
             }
         }
         
-        for (auto &it: other._keyMap) {
+        for (auto &it: other._clusterMap) {
             if (dst.hasKey(it.first)) {
                 continue;
             } else if (!this->hasKey(it.first)) {
-                dst._keyMap[it.first] = it.second;
+                dst._clusterMap[it.first] = it.second;
             }
         }
     }

@@ -50,8 +50,19 @@ namespace ultraverse {
     }
     
     int Application::exec(int argc, char **argv) {
+        _argc = argc;
+        _argv = argv;
+        
         parseArgs(argc, argv);
         return main();
     }
-
+    
+    int Application::argc() const {
+        return _argc;
+    }
+    
+    char **Application::argv() const {
+        return _argv;
+    }
+    
 }

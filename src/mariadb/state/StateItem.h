@@ -94,6 +94,10 @@ public:
     StateData begin;
     StateData end;
     
+    bool operator== (const ST_RANGE &other) const {
+        return this->begin == other.begin && this->end == other.end;
+    }
+    
     template <typename Archive>
     void serialize(Archive &archive);
   };

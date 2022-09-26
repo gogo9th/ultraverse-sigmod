@@ -102,18 +102,23 @@ namespace ultraverse {
             _logger->warn("- this may leads to unexpected result");
             _logger->warn("- all queries will be executed until gid reaches rollback target");
         }
+        
         changePlan.setStateLogPath(getArg('i'));
         changePlan.setDBName(getArg('d'));
         changePlan.setRollbackGid(std::stoi(getArg('g')));
-
-        
-        StateChanger stateChanger(dbHandlePool, changePlan);
     
-        if (!confirm("Proceed?")) {
-            return 2;
+        StateChanger stateChanger(dbHandlePool, changePlan);
+        std::string action(argv()[argc() - 1]);
+        
+        if (action == "make_clustermap") {
+            stateChanger.makeClusterMap();
+        } else {
+            if (!confirm("Proceed?")) {
+                return 2;
+            }
+            stateChanger.start();
+            // stateChanger.findCandidateColumn();
         }
-        // stateChanger.findCandidateColumn();
-        stateChanger.start();
         
         return 0;
     }

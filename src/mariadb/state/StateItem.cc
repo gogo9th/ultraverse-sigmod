@@ -702,7 +702,10 @@ StateRange StateRange::OR(const StateRange &a, const StateRange &b)
   if (ret == EN_VALID_RANGE)
   {
     range.range.insert(range.range.end(), a.range.begin(), a.range.end());
-    range.range.insert(range.range.end(), b.range.begin(), b.range.end());
+    range.range.insert(range.range.end(), std::find_if(b.range.begin(), b.range.end(), [&range](auto &r) {
+        return std::find(range.range.begin(), range.range.end(), r) == range.range.end();
+    }), b.range.end());
+    // range.range.insert(range.range.end(), b.range.begin(), b.range.end());
     range.range = OR_ARRANGE(range.range);
     return range;
   }

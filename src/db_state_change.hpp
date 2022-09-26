@@ -23,7 +23,6 @@ namespace ultraverse {
         
     private:
         LoggerPtr _logger;
-        
     };
 }
 
