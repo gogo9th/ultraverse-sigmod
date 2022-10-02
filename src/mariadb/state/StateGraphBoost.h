@@ -78,7 +78,6 @@ namespace ultraverse::state {
             std::vector<uint64_t> dependencies;
             std::mutex processLock;
         private:
-            
             std::shared_ptr<StateReference> _ref;
             std::shared_ptr<TxnNode> _next = nullptr;
             std::vector<std::shared_ptr<StateReference>> _refList;

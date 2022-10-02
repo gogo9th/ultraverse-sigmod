@@ -709,14 +709,18 @@ namespace ultraverse::state::v2 {
     ) {
         auto statement = QUERY_TAG_STATECHANGE + query->statement();
         _logger->trace("[#{}->#{}] executing query: (timestamp={}) {}", rootNodeId, nodeId, query->timestamp(), query->statement());
+        // TODO: 제거하기로 함
+        /*
         if (dbHandle.executeQuery("SET foreign_key_checks=0") != 0) {
             _logger->warn("[#{}->#{}] failed to turn off foreign key constraint", rootNodeId, nodeId);
         }
+         */
         if (dbHandle.executeQuery(fmt::format("SET TIMESTAMP={}", query->timestamp())) != 0) {
             _logger->warn("[#{}->#{}] failed to set timestamp", rootNodeId, nodeId);
         }
-    
+        
         if (dbHandle.executeQuery(statement) != 0) {
+            // TODO: 계속 실행해 나가야함
             _logger->error("[#{}->#{}] query execution failed: {}", rootNodeId, nodeId,
                            mysql_error(dbHandle));
             dbHandle.executeQuery("ROLLBACK");
