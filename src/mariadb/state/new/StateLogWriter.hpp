@@ -10,6 +10,7 @@
 
 #include "Transaction.hpp"
 #include "ColumnDependencyGraph.hpp"
+#include "cluster/RowCluster.hpp"
 
 namespace ultraverse::state::v2 {
     class StateLogWriter {
@@ -22,9 +23,12 @@ namespace ultraverse::state::v2 {
         bool seek(int64_t position);
         int64_t pos();
         
-        StateLogWriter &operator<<(Transaction &transaction);
-        StateLogWriter &operator<<(ColumnDependencyGraph &graph);
+        void operator<<(Transaction &transaction);
+        
+        void operator<<(RowCluster &rowCluster);
+        void operator<<(ColumnDependencyGraph &graph);
     
+        void writeRowCluster(RowCluster &rowCluster);
         void writeColumnDependencyGraph(ColumnDependencyGraph &graph);
         void writeCheckpoint();
     private:

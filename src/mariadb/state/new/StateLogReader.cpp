@@ -52,4 +52,32 @@ namespace ultraverse::state::v2 {
     std::shared_ptr<Transaction> StateLogReader::txnBody() {
         return _currentBody;
     }
+    
+    void StateLogReader::operator>>(RowCluster &rowCluster) {
+        loadRowCluster(rowCluster);
+    }
+    
+    void StateLogReader::operator>>(ColumnDependencyGraph &graph) {
+        loadColumnDependencyGraph(graph);
+    }
+    
+    void StateLogReader::loadRowCluster(RowCluster &rowCluster) {
+        std::string fileName = _logPath + "/" + _logName + ".ultcluster";
+        std::ifstream stream(fileName, std::ios::binary);
+    
+        cereal::BinaryInputArchive archive(stream);
+        archive(rowCluster);
+    
+        stream.close();
+    }
+    
+    void StateLogReader::loadColumnDependencyGraph(ColumnDependencyGraph &graph) {
+        std::string fileName = _logPath + "/" + _logName + ".ultcolumns";
+        std::ifstream stream(fileName, std::ios::binary);
+    
+        cereal::BinaryInputArchive archive(stream);
+        archive(graph);
+    
+        stream.close();
+    }
 }

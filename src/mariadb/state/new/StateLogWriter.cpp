@@ -36,7 +36,7 @@ namespace ultraverse::state::v2 {
         return _stream.tellp();
     }
     
-    StateLogWriter &StateLogWriter::operator<<(Transaction &transaction) {
+    void StateLogWriter::operator<<(Transaction &transaction) {
         std::scoped_lock<std::mutex> _scopedLock(_mutex);
         auto header = transaction.header();
         std::stringstream tmpStream;
@@ -52,8 +52,23 @@ namespace ultraverse::state::v2 {
         _stream.flush();
     }
     
-    StateLogWriter &StateLogWriter::operator<<(ColumnDependencyGraph &graph) {
+    void StateLogWriter::operator<<(RowCluster &rowCluster) {
+        writeRowCluster(rowCluster);
+    }
+    
+    void StateLogWriter::operator<<(ColumnDependencyGraph &graph) {
         writeColumnDependencyGraph(graph);
+    }
+    
+    void StateLogWriter::writeRowCluster(RowCluster &rowCluster) {
+        std::string fileName = _logPath + "/" + _logName + ".ultcluster";
+        std::ofstream stream(fileName, std::ios::binary);
+        
+        cereal::BinaryOutputArchive archive(stream);
+        archive(rowCluster);
+        
+        stream.flush();
+        stream.close();
     }
     
     void StateLogWriter::writeColumnDependencyGraph(ColumnDependencyGraph &graph) {

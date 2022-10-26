@@ -10,6 +10,9 @@
 
 #include "Transaction.hpp"
 
+#include "ColumnDependencyGraph.hpp"
+#include "cluster/RowCluster.hpp"
+
 namespace ultraverse::state::v2 {
     class StateLogReader {
     public:
@@ -20,10 +23,15 @@ namespace ultraverse::state::v2 {
         void close();
         
         bool next();
-    
+        
         std::shared_ptr<TransactionHeader> txnHeader();
         std::shared_ptr<Transaction> txnBody();
+    
+        void operator>>(RowCluster &rowCluster);
+        void operator>>(ColumnDependencyGraph &graph);
         
+        void loadRowCluster(RowCluster &rowCluster);
+        void loadColumnDependencyGraph(ColumnDependencyGraph &graph);
     private:
         std::string _logPath;
         std::string _logName;

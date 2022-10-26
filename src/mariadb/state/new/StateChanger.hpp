@@ -69,6 +69,9 @@ namespace ultraverse::state::v2 {
             mariadb::DBHandle &dbHandle
         );
         
+        /**
+         * @deprecated use `query.database() == _plan.database()` instead.
+         */
         bool isTransactionRelatedToPlan(std::shared_ptr<Transaction> transaction) const;
         
         std::vector<CandidateColumn>

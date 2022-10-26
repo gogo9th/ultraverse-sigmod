@@ -37,6 +37,9 @@ namespace ultraverse::state::v2 {
         
         RowCluster operator&(const RowCluster &other) const;
         RowCluster operator|(const RowCluster &other) const;
+    
+        template <typename Archive>
+        void serialize(Archive &archive);
     private:
         LoggerPtr _logger;
         
@@ -51,5 +54,7 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, std::vector<StateRange>> _clusterMap;
     };
 }
+
+#include "RowCluster.cereal.cpp"
 
 #endif //ULTRAVERSE_ROWCLUSTER_HPP
