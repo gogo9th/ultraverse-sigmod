@@ -10,6 +10,7 @@
 
 #include "mariadb/state/StateItem.h"
 #include "mariadb/state/new/Query.hpp"
+#include "mariadb/state/new/Transaction.hpp"
 #include "mariadb/state/new/StateChangeContext.hpp"
 
 #include "utils/log.hpp"
@@ -32,20 +33,24 @@ namespace ultraverse::state::v2 {
         StateRange &getKeyRange(const std::string &columnName);
     
         std::unordered_map<std::string, std::vector<StateRange>> &keyMap();
+    
+        static bool isQueryRelated(std::vector<StateRange> &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys);
+        static bool isQueryRelated(StateRange &keyRange, Query &query, const std::vector<ForeignKey> &foreignKeys);
         
-        bool isQueryRelated(const std::shared_ptr<Query> &query, const std::vector<ForeignKey> foreignKeys) const;
+        std::vector<StateRange> getKeyRangeOf(Transaction &transaction, const std::vector<std::string> &keyColumns, const std::vector<ForeignKey> &foreignKeys);
         
         RowCluster operator&(const RowCluster &other) const;
         RowCluster operator|(const RowCluster &other) const;
+    
+        void mergeCluster(const std::string &columnName, bool force);
     
         template <typename Archive>
         void serialize(Archive &archive);
     private:
         LoggerPtr _logger;
         
-        void mergeCluster(const std::string &columnName);
         
-        bool isExprRelated(const StateItem &expr, const std::vector<ForeignKey> &foreignKeys) const;
+        static bool isExprRelated(StateRange &keyRange, const StateItem &expr, const std::vector<ForeignKey> &foreignKeys);
         
         /**
          * FIXME: 이거 std::string에서 std::pair<NamingHistory, std::string> 같은걸로 바꿔야 할듯

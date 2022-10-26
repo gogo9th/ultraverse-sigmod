@@ -27,6 +27,8 @@ namespace ultraverse::state::v2 {
         _intermediateDBName(fmt::format("ult_intermediate_{}", (int) time(nullptr))), // FIXME
         _reader(plan.stateLogPath(), plan.stateLogName()),
         _columnGraph(std::make_unique<ColumnDependencyGraph>()),
+        _keyRanges(std::make_shared<std::vector<StateRange>>()),
+        _columnSetHashes(std::make_shared<std::vector<size_t>>()),
         _context(new StateChangeContext)
     {
         _stateGraph = std::make_unique<StateGraphBoost>(_context);
@@ -165,13 +167,12 @@ namespace ultraverse::state::v2 {
             auto gid = transactionHeader->gid;
             auto flags = transactionHeader->flags;
             _logger->trace("read gid {}; flags {}", gid, flags);
-            
-            if (transactionHeader->gid == _plan.rollbackGid()) {
-                _logger->info("rollback target found");
-                // setRollbackTarget(_reader.txnBody());
-                _rollbackTarget = transaction;
+    
+            if (!isTransactionRelatedToPlan(transaction)) {
+                _logger->trace("skipping transaction #{}", gid);
+                continue;
             }
-            
+    
             if (flags & Transaction::FLAG_CONTAINS_DDL) {
                 processDDLTransaction(transaction);
     
@@ -202,7 +203,7 @@ namespace ultraverse::state::v2 {
                 }
             }
     
-            expandClusterMap(transaction);
+            expandClusterMap(_rowCluster, *transaction, false, false);
         }
         
         for (auto &pair: _rowCluster.keyMap()) {
@@ -210,12 +211,20 @@ namespace ultraverse::state::v2 {
                 _logger->info("{}: WHERE {}", pair.first, cluster.MakeWhereQuery(pair.first));
             }
         }
+        
+        stateLogWriter << _rowCluster;
     }
 
     void StateChanger::start() {
+        _logger->info("loading column dependency graph");
+        _reader >> *_columnGraph;
+    
+        _logger->info("loading row cluster");
+        _reader >> _rowCluster;
+        
         createIntermediateDB();
         
-        _logger->info("reading state log");
+        _logger->info("opening state log");
         _reader.open();
         
         _isRunning = true;
@@ -229,7 +238,14 @@ namespace ultraverse::state::v2 {
             
             if (transactionHeader->gid == _plan.rollbackGid()) {
                 _logger->info("rollback target found");
-                // setRollbackTarget(_reader.txnBody());
+                _rollbackTarget = _reader.txnBody();
+                *_keyRanges = _rowCluster.getKeyRangeOf(*_rollbackTarget, _plan.keyColumns(), _context->foreignKeys);
+                for (auto &query: _rollbackTarget->queries()) {
+                    _columnSetHashes->push_back(std::hash<ColumnSet>{}(query->writeSet()));
+                }
+                
+                _isClusterReady = true;
+                _clusterCondvar.notify_all();
             }
             
             auto transaction = _reader.txnBody();
@@ -260,23 +276,27 @@ namespace ultraverse::state::v2 {
         
         queryBuilder << "BEGIN;\n";
         
-        for (auto it: _rowCluster.keyMap()) {
-            /*
-            auto where = it.second.MakeWhereQuery(it.first);
-            auto tableName = StateUserQuery::SplitDBNameAndTableName(it.first)[0];
+        for (auto it: _rowCluster2.keyMap()) {
+            for (auto &cluster: it.second) {
+                auto where = cluster.MakeWhereQuery(it.first);
+                auto vec = StateUserQuery::SplitDBNameAndTableName(it.first);
+                auto tableName = vec[0];
+                auto columnName = vec[1];
+                auto *range = cluster.GetRange();
             
-            queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, _intermediateDBName, tableName, where);
-             */
+                queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, _intermediateDBName, tableName, where);
+                
+                for (auto &x: *_keyRanges->at(0).GetRange()) {
+                    if (std::find(range->begin(), range->end(), x) == range->end()) {
+                        int64_t intval = 0;
+                        x.begin.Get(intval);
+                        
+                        queryBuilder << fmt::format("DELETE FROM {} WHERE {} = {};\n", tableName, columnName, intval);
+                    }
+                }
+            }
         }
-        
-        for (auto it: _invertedRowCluster.keyMap()) {
-            /*
-            auto where = it.second.MakeWhereQuery(it.first);
-            auto tableName = StateUserQuery::SplitDBNameAndTableName(it.first)[0];
-            
-            queryBuilder << fmt::format("DELETE FROM {} WHERE {};\n", tableName, where);
-             */
-        }
+
     
         queryBuilder << "COMMIT;\n";
         
@@ -286,10 +306,10 @@ namespace ultraverse::state::v2 {
         
     }
     
-    void StateChanger::expandClusterMap(std::shared_ptr<Transaction> transaction) {
+    void StateChanger::expandClusterMap(RowCluster &rowCluster, Transaction &transaction, bool includeFK, bool merge) {
         std::unordered_map<std::string, StateRange> clusterMap;
         
-        std::function<void(StateItem &, bool)> walkStateItem = [this, &walkStateItem, &clusterMap](StateItem &stateItem, bool isInverted) {
+        std::function<void(StateItem &)> walkStateItem = [this, includeFK, &walkStateItem, &clusterMap](StateItem &stateItem) {
             if (!stateItem.name.empty()) {
                 auto resolvedName = RowCluster::resolveForeignKey(stateItem.name, _context->foreignKeys);
                 
@@ -333,25 +353,26 @@ namespace ultraverse::state::v2 {
                     );
                     clusterMap[resolvedName] = StateRange::OR(clusterMap[resolvedName], stateRange);
                     // FK
-                    // _rowCluster.addKeyRange(stateItem.name, stateRange);
+                    
+                    if (includeFK) {
+                        clusterMap[stateItem.name] = StateRange::OR(clusterMap[stateItem.name], stateRange);
+                    }
                 }
             }
             
             for (auto &subStateItem: stateItem.arg_list) {
-                walkStateItem(subStateItem, isInverted);
+                walkStateItem(subStateItem);
             }
         };
         
         if (!_plan.keyColumns().empty()) {
-            for (auto &query: transaction->queries()) {
-                const bool isInverted = query->type() == Query::INSERT;
-                
+            for (auto &query: transaction.queries()) {
                 for (auto &stateItem: query->whereSet()) {
-                    walkStateItem(stateItem, isInverted);
+                    walkStateItem(stateItem);
                 }
                 
                 for (auto &stateItem: query->itemSet()) {
-                    walkStateItem(stateItem, isInverted);
+                    walkStateItem(stateItem);
                 }
             }
         } else {
@@ -359,7 +380,10 @@ namespace ultraverse::state::v2 {
         }
         
         for (auto &pair: clusterMap) {
-            _rowCluster.addKeyRange(pair.first, pair.second);
+            rowCluster.addKeyRange(pair.first, pair.second);
+            if (merge) {
+                rowCluster.mergeCluster(pair.first, true);
+            }
         }
     }
     
@@ -483,33 +507,17 @@ namespace ultraverse::state::v2 {
                 _logger->trace("[#{}->#{}] this node is already processed by another thread", nodeIdx, node->nodeIdx);
                 break;
             }
-            
-            if (node->transaction->gid() == _plan.rollbackGid()) {
-                expandClusterMap(node->transaction);
-                
-                // TODO: 이게 아니라 실행을 반대로 해야지!
-                //       INSERT는 카운터 올리고, DELETE는?
-                // goto NEXT_TRANSACTION;
-            }
     
             { // @with(dbHandleLease);
                 _logger->trace("[#{}->#{}] leasing dbHandle", nodeIdx, node->nodeIdx);
                 auto dbHandleLease = _dbHandlePool.take();
                 auto &dbHandle = dbHandleLease.get();
     
-                if (node->transaction->gid() == _plan.rollbackGid()) {
-                    __node__processRollbackTransaction(
-                        nodeIdx, node->nodeIdx,
-                        node->transaction,
-                        dbHandle
-                    );
-                } else {
-                    __node__processTransaction(
-                        nodeIdx, node->nodeIdx,
-                        node->transaction,
-                        dbHandle
-                    );
-                }
+                __node__processTransaction(
+                    nodeIdx, node->nodeIdx,
+                    node->transaction,
+                    dbHandle
+                );
             } // @release(dbHandleLease);
             
             NEXT_TRANSACTION:
@@ -526,6 +534,8 @@ namespace ultraverse::state::v2 {
         std::shared_ptr<Transaction> transaction,
         mariadb::DBHandle &dbHandle
     ) {
+        const bool isTargetTransaction = transaction->gid() == _plan.rollbackGid();
+        
         _logger->info("[#{}->#{}] replaying transaction", rootNodeId, nodeId);
         dbHandle.executeQuery("use " + _intermediateDBName);
         dbHandle.executeQuery("BEGIN");
@@ -592,60 +602,48 @@ namespace ultraverse::state::v2 {
              */
         
             {
+                const auto readSetHash = std::hash<ColumnSet>{}(query->readSet());
+                const auto writeSetHash = std::hash<ColumnSet>{}(query->writeSet());
+                
                 const bool isDDL = query->flags() & Query::FLAG_IS_DDL;
-                const bool isRelated = _rowCluster.isQueryRelated(query, _context->foreignKeys);
-                const bool needsInvertion = _invertedRowCluster.isQueryRelated(query, _context->foreignKeys);
+                const bool isRelatedWithCluster = RowCluster::isQueryRelated(*_keyRanges, *query, _context->foreignKeys);
+                const bool isRelatedWithColumnGraph = std::any_of(_columnSetHashes->begin(), _columnSetHashes->end(), [this, &readSetHash, &writeSetHash](size_t hashA) {
+                    return _columnGraph->isRelated(hashA, readSetHash) || _columnGraph->isRelated(hashA, writeSetHash);
+                });
                 const bool needsForceExecution =
                     !_plan.isDBDumpAvailable() && transaction->gid() < _plan.rollbackGid();
             
-                const bool skipQuery = !(needsForceExecution || isDDL || isRelated);
-            
+                const bool skipQuery = isTargetTransaction || !(needsForceExecution || isDDL || (isRelatedWithCluster && isRelatedWithColumnGraph));
+                
                 if (skipQuery) {
-                    if (!isRelated) {
+                    if (isRelatedWithColumnGraph && query->type() == Query::INSERT) {
+                        auto tableName = StateUserQuery::SplitDBNameAndTableName(*query->writeSet().begin())[0];
+                        auto autoIncrement = getAutoIncrement(dbHandle, tableName);
+                        
+                        _logger->info("{}: increasing AUTO_INCREMENT ({})", tableName, autoIncrement, autoIncrement + 1);
+                        setAutoIncrement(dbHandle, tableName, autoIncrement + 1);
+                    }
+                    
+                    if (!isRelatedWithCluster) {
                         _logger->trace("query skipped: not related with cluster");
                     }
                 
                     goto NEXT_QUERY;
                 }
                 
-                if (!needsInvertion) {
-                    __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
-                } else {
-                    __node__invertQuery(rootNodeId, nodeId, query, dbHandle);
-                }
+                __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
             }
         
             NEXT_QUERY: ;
         }
-    
+        
         _logger->trace("[#{}->#{}] finalizing transaction", rootNodeId, nodeId);
         dbHandle.executeQuery("COMMIT");
         _logger->debug("[#{}->#{}] releasing dbHandle", rootNodeId, nodeId);
-    }
     
-    void StateChanger::__node__processRollbackTransaction(
-        uint64_t rootNodeId,
-        uint64_t nodeId,
-        std::shared_ptr<Transaction> transaction,
-        mariadb::DBHandle &dbHandle
-    ) {
-        _logger->info("[#{}->#{}] replaying inverted transaction", rootNodeId, nodeId);
-        dbHandle.executeQuery("use " + _intermediateDBName);
-        dbHandle.executeQuery("BEGIN");
-    
-        for (auto &query: transaction->queries()) {
-            if (query->database() != _plan.dbName()) {
-                goto NEXT_QUERY;
-            }
-    
-            __node__invertQuery(rootNodeId, nodeId, query, dbHandle);
-            
-            NEXT_QUERY: ;
+        if (!isTargetTransaction) {
+            expandClusterMap(_rowCluster2, *transaction, true, true);
         }
-    
-        _logger->trace("[#{}->#{}] finalizing transaction", rootNodeId, nodeId);
-        dbHandle.executeQuery("COMMIT");
-        _logger->debug("[#{}->#{}] releasing dbHandle", rootNodeId, nodeId);
     }
     
     void StateChanger::__node__replayQuery(
@@ -670,7 +668,7 @@ namespace ultraverse::state::v2 {
             // TODO: 계속 실행해 나가야함
             _logger->error("[#{}->#{}] query execution failed: {}", rootNodeId, nodeId,
                            mysql_error(dbHandle));
-            dbHandle.executeQuery("ROLLBACK");
+            // dbHandle.executeQuery("ROLLBACK");
             throw std::runtime_error(mysql_error(dbHandle));
         }
     
@@ -681,6 +679,7 @@ namespace ultraverse::state::v2 {
         }
     }
     
+    /*
     void StateChanger::__node__invertQuery(
         uint64_t rootNodeId,
         uint64_t nodeId,
@@ -720,6 +719,7 @@ namespace ultraverse::state::v2 {
             // TODO: if (!_rowCluster & query) then REPLACE INTO ...
         }
     }
+     */
     
     void StateChanger::createIntermediateDB() {
         _logger->info("creating intermediate database: {}", _intermediateDBName);

@@ -16,10 +16,10 @@ namespace ultraverse::state::v2 {
     
     void RowCluster::addKeyRange(const std::string &columnName, StateRange &range) {
         _clusterMap[columnName].push_back(range);
-        mergeCluster(columnName);
+        mergeCluster(columnName, false);
     }
     
-    void RowCluster::mergeCluster(const std::string &columnName) {
+    void RowCluster::mergeCluster(const std::string &columnName, bool force) {
         auto &cluster = _clusterMap[columnName];
         
         MERGE_LOOP:
@@ -30,7 +30,7 @@ namespace ultraverse::state::v2 {
                 }
                 
                 auto result = StateRange::AND(*it, *it2);
-                if (!result.GetRange()->empty()) {
+                if (force || !result.GetRange()->empty()) {
                     _logger->trace("merging cluster: {} + {}", it->MakeWhereQuery(columnName), it2->MakeWhereQuery(columnName));
                     *it = StateRange::OR(*it, *it2);
                     cluster.erase(it2);
@@ -52,19 +52,47 @@ namespace ultraverse::state::v2 {
         // return _clusterMap.at(columnName);
     }
     
+    
     std::unordered_map<std::string, std::vector<StateRange>> &RowCluster::keyMap() {
         return _clusterMap;
     }
     
-    bool RowCluster::isQueryRelated(const std::shared_ptr<Query> &query, const std::vector<ForeignKey> foreignKeys) const {
-        for (auto expr: query->whereSet()) {
-            if (isExprRelated(expr, foreignKeys)) {
+    std::vector<StateRange> RowCluster::getKeyRangeOf(Transaction &transaction, const std::vector<std::string> &keyColumns, const std::vector<ForeignKey> &foreignKeys) {
+        std::vector<StateRange> keyRanges;
+        
+        for (auto &query: transaction.queries()) {
+            for (auto &keyColumn: keyColumns) {
+                for (auto &range: _clusterMap.at(keyColumn)) {
+                    if (isQueryRelated(range, *query, foreignKeys)) {
+                        keyRanges.push_back(range);
+                    }
+                }
+            }
+        }
+        
+        return keyRanges;
+    }
+    
+    bool RowCluster::isQueryRelated(std::vector<StateRange> &keyRanges, Query &query,
+                                    const std::vector<ForeignKey> &foreignKeys) {
+        for (auto &keyRange: keyRanges) {
+            if (!isQueryRelated(keyRange, query, foreignKeys)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+    
+    bool RowCluster::isQueryRelated(StateRange &range, Query &query, const std::vector<ForeignKey> &foreignKeys) {
+        for (auto expr: query.whereSet()) {
+            if (isExprRelated(range, expr, foreignKeys)) {
                 return true;
             }
         }
         
-        for (auto expr: query->itemSet()) {
-            if (isExprRelated(expr, foreignKeys)) {
+        for (auto expr: query.itemSet()) {
+            if (isExprRelated(range, expr, foreignKeys)) {
                 return true;
             }
         }
@@ -72,21 +100,18 @@ namespace ultraverse::state::v2 {
         return false;
     }
     
-    bool RowCluster::isExprRelated(const StateItem &expr, const std::vector<ForeignKey> &foreignKeys) const {
+    bool RowCluster::isExprRelated(StateRange &keyRange, const StateItem &expr, const std::vector<ForeignKey> &foreignKeys) {
         if (!expr.name.empty()) {
             auto name = resolveForeignKey(expr.name, foreignKeys);
             
-            if (_clusterMap.find(name) != _clusterMap.end()) {
-                auto range = StateItem::MakeRange(expr);
-                auto &keyRange = _clusterMap.at(name);
-                // if (!StateRange::AND(range, keyRange).GetRange()->empty()) {
-                    return true;
-                // }
+            auto range = StateItem::MakeRange(expr);
+            if (!StateRange::AND(range, keyRange).GetRange()->empty()) {
+                return true;
             }
         }
         
         for (auto &subExpr: expr.arg_list) {
-            if (isExprRelated(subExpr, foreignKeys)) {
+            if (isExprRelated(keyRange, subExpr, foreignKeys)) {
                 return true;
             }
         }

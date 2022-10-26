@@ -34,18 +34,12 @@ namespace ultraverse::state::v2 {
         void start();
         
     private:
-        void expandClusterMap(std::shared_ptr<Transaction> transaction);
+        void expandClusterMap(RowCluster &rowCluster, Transaction &transaction, bool includeFK, bool merge);
         
         void processDDLTransaction(std::shared_ptr<Transaction> transaction);
         void processNode(uint64_t nodeIdx);
         
         void __node__processTransaction(
-            uint64_t rootNodeId,
-            uint64_t nodeId,
-            std::shared_ptr<Transaction> transaction,
-            mariadb::DBHandle &dbHandle
-        );
-        void __node__processRollbackTransaction(
             uint64_t rootNodeId,
             uint64_t nodeId,
             std::shared_ptr<Transaction> transaction,
@@ -59,19 +53,6 @@ namespace ultraverse::state::v2 {
             mariadb::DBHandle &dbHandle
         );
         
-        /**
-         * @deprecated
-         */
-        inline void __node__invertQuery(
-            uint64_t rootNodeId,
-            uint64_t nodeId,
-            std::shared_ptr<Query> query,
-            mariadb::DBHandle &dbHandle
-        );
-        
-        /**
-         * @deprecated use `query.database() == _plan.database()` instead.
-         */
         bool isTransactionRelatedToPlan(std::shared_ptr<Transaction> transaction) const;
         
         std::vector<CandidateColumn>
@@ -113,6 +94,9 @@ namespace ultraverse::state::v2 {
         
         std::unique_ptr<StateGraphBoost> _stateGraph;
         std::shared_ptr<Transaction> _rollbackTarget;
+        // FIXME: keyRanges는 map<keyColumn, StateRange>로 바뀌어야 하는게 맞음
+        std::shared_ptr<std::vector<StateRange>> _keyRanges;
+        std::shared_ptr<std::vector<size_t>> _columnSetHashes;
         
         std::shared_ptr<StateChangeContext> _context;
         
@@ -128,9 +112,8 @@ namespace ultraverse::state::v2 {
         bool _isClusterReady;
         
         RowCluster _rowCluster;
-        
-        /** @deprecated */
-        RowCluster _invertedRowCluster;
+        // FIXME: 네이밍
+        RowCluster _rowCluster2;
         
         std::unique_ptr<ColumnDependencyGraph> _columnGraph;
     };
