@@ -2,9 +2,10 @@
 // Created by cheesekun on 8/19/22.
 //
 
-#include "Query.hpp"
-
+#include <functional>
 #include <utility>
+
+#include "Query.hpp"
 
 namespace ultraverse::state::v2 {
     Query::Query():
@@ -80,11 +81,11 @@ namespace ultraverse::state::v2 {
         _flags = flags;
     }
     
-    std::unordered_set<std::string> &Query::readSet() {
+    ColumnSet &Query::readSet() {
         return _readSet;
     }
     
-    std::unordered_set<std::string> &Query::writeSet() {
+    ColumnSet &Query::writeSet() {
         return _writeSet;
     }
     

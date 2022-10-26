@@ -15,6 +15,8 @@
 #include "mariadb/state/StateItem.h"
 
 namespace ultraverse::state::v2 {
+    using ColumnSet = std::set<std::string>;
+    
     class Query {
     public:
         enum QueryType: uint8_t {
@@ -67,8 +69,8 @@ namespace ultraverse::state::v2 {
         uint8_t flags();
         void setFlags(uint8_t flags);
         
-        std::unordered_set<std::string> &readSet();
-        std::unordered_set<std::string> &writeSet();
+        ColumnSet &readSet();
+        ColumnSet &writeSet();
         std::unordered_set<std::string> &foreignKeySet();
         
         std::vector<StateItem> &itemSet();
@@ -98,8 +100,8 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, StateHash> _afterHash;
     
         std::unordered_set<std::string> _affectedTables;
-        std::unordered_set<std::string> _readSet;
-        std::unordered_set<std::string> _writeSet;
+        ColumnSet _readSet;
+        ColumnSet _writeSet;
         std::unordered_set<std::string> _foreignKeySet;
     
         std::vector<StateItem> _itemSet;
@@ -113,5 +115,6 @@ namespace ultraverse::state::v2 {
 
 
 #include "Query.cereal.cpp"
+#include "ColumnSet.template.cpp"
 
 #endif //ULTRAVERSE_STATE_QUERY_HPP

@@ -84,7 +84,8 @@ set(ULTRAVERSE_SRCS
     base/TaskExecutor.hpp
     mariadb/state/new/cluster/CandidateColumn.hpp
     
-    mariadb/state/new/cluster/RowCluster.hpp mariadb/state/new/cluster/RowCluster.cpp mariadb/state/new/cluster/NamingHistory.cpp mariadb/state/new/cluster/NamingHistory.hpp)
+    mariadb/state/new/cluster/RowCluster.hpp mariadb/state/new/cluster/RowCluster.cpp mariadb/state/new/cluster/NamingHistory.cpp mariadb/state/new/cluster/NamingHistory.hpp mariadb/state/new/ColumnDependencyGraph.cpp mariadb/state/new/ColumnDependencyGraph.hpp
+)
 
 include_directories(../dependencies/sql-parser/src)
 include_directories(../dependencies/sql-parser/src/parser)
