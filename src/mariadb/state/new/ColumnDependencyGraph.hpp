@@ -63,6 +63,8 @@ namespace ultraverse::state::v2 {
         template <typename Archive>
         void load(Archive &archive);
     private:
+        std::string dumpColumnSet(const ColumnSet &columnSet) const;
+        
         LoggerPtr _logger;
         
         Graph _graph;

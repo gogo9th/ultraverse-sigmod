@@ -3,6 +3,8 @@
 //
 
 #include <cereal/types/memory.hpp>
+#include <cereal/types/utility.hpp>
+#include <cereal/types/map.hpp>
 
 #include "ColumnDependencyGraph.hpp"
 

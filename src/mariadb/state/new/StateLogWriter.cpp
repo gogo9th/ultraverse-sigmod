@@ -7,8 +7,9 @@
 #include "StateLogWriter.hpp"
 
 namespace ultraverse::state::v2 {
-    StateLogWriter::StateLogWriter(const std::string &logPath):
-        _logPath(logPath)
+    StateLogWriter::StateLogWriter(const std::string &logPath, const std::string &logName):
+        _logPath(logPath),
+        _logName(logName)
     {
     }
     
@@ -17,7 +18,8 @@ namespace ultraverse::state::v2 {
     }
     
     void StateLogWriter::open(std::ios_base::openmode openMode) {
-        _stream = std::ofstream(_logPath, openMode);
+        std::string fileName = _logPath + "/" + _logName + ".ultstatelog";
+        _stream = std::ofstream(fileName, openMode);
     }
     
     void StateLogWriter::close() {
@@ -48,6 +50,20 @@ namespace ultraverse::state::v2 {
         _stream.write((char *)&header, sizeof(TransactionHeader));
         _stream.write(transactionString.c_str(), transactionString.size());
         _stream.flush();
+    }
+    
+    StateLogWriter &StateLogWriter::operator<<(ColumnDependencyGraph &graph) {
+        writeColumnDependencyGraph(graph);
+    }
+    
+    void StateLogWriter::writeColumnDependencyGraph(ColumnDependencyGraph &graph) {
+        std::string fileName = _logPath + "/" + _logName + ".ultcolumns";
+        std::ofstream stream(fileName, std::ios::binary);
         
+        cereal::BinaryOutputArchive archive(stream);
+        archive(graph);
+        
+        stream.flush();
+        stream.close();
     }
 }

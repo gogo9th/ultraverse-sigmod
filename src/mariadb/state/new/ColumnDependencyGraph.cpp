@@ -14,6 +14,16 @@ namespace ultraverse::state::v2 {
     
     }
     
+    std::string ColumnDependencyGraph::dumpColumnSet(const ColumnSet &columnSet) const {
+        std::stringstream sstream;
+        
+        for (const auto &column: columnSet) {
+            sstream << column << ",";
+        }
+        
+        return sstream.str();
+    }
+    
     bool ColumnDependencyGraph::add(const ColumnSet &columnSet, ColumnAccessType accessType) {
         auto hash = std::hash<ColumnSet>{}(columnSet);
         if (_nodeMap.find(hash) != _nodeMap.end()) {
@@ -26,7 +36,8 @@ namespace ultraverse::state::v2 {
             }),
             _graph
         );
-        
+    
+        _logger->trace("adding columnset: {}", dumpColumnSet(columnSet));
         _nodeMap.insert({ hash, nodeIdx });
         
         boost::graph_traits<Graph>::vertex_iterator vi, viEnd, next;
@@ -54,7 +65,7 @@ namespace ultraverse::state::v2 {
                 });
                 
                 if (it != columnSet.end()) {
-                    _logger->trace("creating relationship: (%s) <=> (%s)");
+                    _logger->trace("creating relationship: ({}) <=> ({})", dumpColumnSet(node->columnSet), dumpColumnSet(columnSet));
                     add_edge(*vi, nodeIdx, _graph);
                     continue;
                 }

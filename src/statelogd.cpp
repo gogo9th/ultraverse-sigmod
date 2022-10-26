@@ -8,8 +8,10 @@
 #include <signal.h>
 
 #include "mariadb/state/new/Transaction.hpp"
+#include "mariadb/state/new/ColumnDependencyGraph.hpp"
 #include "mariadb/state/new/StateLogWriter.hpp"
 #include "mariadb/state/StateHash.hpp"
+
 #include "mariadb/DBHandle.hpp"
 #include "mariadb/BinaryLog.hpp"
 
@@ -26,7 +28,7 @@ public:
     StateLogWriterApp():
         Application(),
         
-        _logger(createLogger("StateLogWriterApp")),
+        _logger(createLogger("statelogd")),
         _taskExecutor(8)
     {
     }
@@ -42,7 +44,7 @@ public:
             "\n"
             "Options: \n"
             "    -b file        specify MySQL-variant binlog.index file\n"
-            "    -o file        specify log output (.ultstatelog)\n"
+            "    -o file        specify log output name\n"
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -r file        restore state and resume from given .ultchkpoint file\n"
             "    -d             force discard previous log and start over\n"
@@ -70,7 +72,7 @@ public:
             _logger->error("FATAL: output.ultstatelog file must be specified (-o)");
             return 1;
         } else {
-            _stateLogPath = getArg('o');
+            _stateLogName = getArg('o');
         }
         
         _threadNum = isArgSet('c') ?
@@ -88,11 +90,11 @@ public:
     [[noreturn]]
     void writerMain() {
         _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(_binlogIndexPath);
-        _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(_stateLogPath);
+        _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(".", _stateLogName);
+        _columnGraph = std::make_unique<state::v2::ColumnDependencyGraph>();
 
         _pendingTxn = std::make_shared<state::v2::Transaction>();
         _pendingQuery = std::make_shared<state::v2::Query>();
-
 
         if (!_checkpointPath.empty()) {
             _stateLogWriter->open(std::ios::out | std::ios::binary | std::ios::app);
@@ -232,6 +234,7 @@ public:
         } else if (event->isDML()) {
             // rowset, changeset이 없으므로 해시 계산 불가능
             event->parse();
+            
             pendingQuery->readSet().insert(
                 event->readSet().begin(), event->readSet().end()
             );
@@ -264,6 +267,14 @@ public:
             }
 
             *_pendingTxn << pendingQuery;
+            
+            bool isColumnGraphChanged =
+                _columnGraph->add(pendingQuery->readSet(),  state::v2::READ) ||
+                _columnGraph->add(pendingQuery->writeSet(), state::v2::WRITE);
+            
+            if (isColumnGraphChanged) {
+                *_stateLogWriter << *_columnGraph;
+            }
         }
 
         _logger->info("Transaction ID #{} processed.", event->transactionId());
@@ -381,7 +392,7 @@ public:
     }
 
     void terminateProcess() {
-        std::string checkpointPath = _stateLogPath.substr(0, _stateLogPath.find_last_of('.')) + ".ultchkpoint";
+        std::string checkpointPath = _stateLogName.substr(0, _stateLogName.find_last_of('.')) + ".ultchkpoint";
         int pos = _binlogReader->pos();
         _logger->info("ultraverse state saved: {}", checkpointPath);
         std::ofstream os(checkpointPath, std::ios::binary);
@@ -398,7 +409,7 @@ private:
     TaskExecutor _taskExecutor;
 
     std::string _binlogIndexPath;
-    std::string _stateLogPath;
+    std::string _stateLogName;
     
     std::string _checkpointPath;
     bool _discardCheckpoint = false;
@@ -415,6 +426,8 @@ private:
     
     std::shared_ptr<state::v2::Transaction> _pendingTxn;
     std::shared_ptr<state::v2::Query> _pendingQuery;
+    
+    std::shared_ptr<state::v2::ColumnDependencyGraph> _columnGraph;
 
 
     std::queue<std::shared_ptr<std::promise<std::shared_ptr<state::v2::Query>>>> _pendingQueries;
