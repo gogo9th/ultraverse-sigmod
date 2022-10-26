@@ -5,6 +5,7 @@
 #include "ColumnDependencyGraph.hpp"
 
 #include "../StateUserQuery.h"
+#include "cluster/RowCluster.hpp"
 
 
 namespace ultraverse::state::v2 {
@@ -24,7 +25,7 @@ namespace ultraverse::state::v2 {
         return sstream.str();
     }
     
-    bool ColumnDependencyGraph::add(const ColumnSet &columnSet, ColumnAccessType accessType) {
+    bool ColumnDependencyGraph::add(const ColumnSet &columnSet, ColumnAccessType accessType, const std::vector<ForeignKey> &foreignKeys) {
         auto hash = std::hash<ColumnSet>{}(columnSet);
         if (_nodeMap.find(hash) != _nodeMap.end()) {
             return false;
@@ -53,14 +54,38 @@ namespace ultraverse::state::v2 {
             }
             
             for (const auto &column: node->columnSet) {
-                auto vec1 = StateUserQuery::SplitDBNameAndTableName(column);
+                auto vec1 = StateUserQuery::SplitDBNameAndTableName(
+                    RowCluster::resolveForeignKey(column, foreignKeys)
+                );
+                auto &table1 = vec1[0];
+                auto &column1 = vec1[1];
                 
-                auto it = std::find_if(columnSet.begin(), columnSet.end(), [&vec1](const auto &targetColumn) {
-                    auto vec2 = StateUserQuery::SplitDBNameAndTableName(targetColumn);
+                auto it = std::find_if(columnSet.begin(), columnSet.end(), [&foreignKeys, &table1, &column1](const auto &targetColumn) {
+                    auto vec2 = StateUserQuery::SplitDBNameAndTableName(
+                        RowCluster::resolveForeignKey(targetColumn, foreignKeys)
+                    );
+                    auto &table2 = vec2[0];
+                    auto &column2 = vec2[1];
+                    
+                    if (column1 == "*" || column2 == "*") {
+                        auto it = std::find_if(foreignKeys.begin(), foreignKeys.end(), [&table1, &table2, &column1, column2](const ForeignKey &fk) {
+                            return (
+                                (fk.fromTable->getCurrentName() == table1 && fk.toTable->getCurrentName() == table2) ||
+                                (fk.fromTable->getCurrentName() == table2 && fk.toTable->getCurrentName() == table1)
+                            ) && (
+                                (fk.fromColumn == column1) || (fk.fromColumn == column2) ||
+                                (fk.toColumn == column1)   || (fk.toColumn == column2)
+                            );
+                        });
+                        
+                        if (it != foreignKeys.end()) {
+                            return true;
+                        }
+                    }
                     
                     return (
-                        (vec1[0] == vec2[0]) &&
-                        (vec1[1] == vec2[1] || vec1[1] == "*" || vec2[1] == "*")
+                        (table1 == table2) &&
+                        (column1 == column2 || column1 == "*" || column2 == "*")
                     );
                 });
                 

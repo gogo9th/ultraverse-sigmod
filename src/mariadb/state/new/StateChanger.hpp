@@ -10,6 +10,8 @@
 #include "Transaction.hpp"
 #include "StateLogReader.hpp"
 #include "StateChangeContext.hpp"
+#include "StateChangePlan.hpp"
+#include "ColumnDependencyGraph.hpp"
 
 #include "cluster/CandidateColumn.hpp"
 #include "cluster/RowCluster.hpp"
@@ -20,47 +22,6 @@
 #include "utils/log.hpp"
 
 namespace ultraverse::state::v2 {
-    class StateChangePlan {
-    public:
-        explicit StateChangePlan();
-    
-        const std::string &dbName() const;
-        void setDBName(const std::string &dbName);
-    
-        gid_t rollbackGid() const;
-        void setRollbackGid(gid_t rollbackGid);
-    
-        const std::string &userQueryPath() const;
-        void setUserQueryPath(const std::string &userQueryPath);
-    
-        bool isDBDumpAvailable() const;
-        const std::string &dbDumpPath() const;
-        void setDBDumpPath(const std::string &dbdumpPath);
-    
-        const std::string &binlogPath() const;
-        void setBinlogPath(const std::string &binlogPath);
-    
-        const std::string &stateLogPath() const;
-        void setStateLogPath(const std::string &stateLogPath);
-        
-        bool isDryRun() const;
-        void setDryRun(bool isDryRun);
-        
-        std::vector<std::string> &keyColumns();
-
-    private:
-        std::string _dbName;
-        gid_t _rollbackGid;
-        std::string _userQueryPath;
-        
-        std::string _dbdumpPath;
-        std::string _binlogPath;
-        std::string _stateLogPath;
-        
-        std::vector<std::string> _keyColumns;
-        bool _isDryRun;
-    };
-    
     class StateChanger {
     public:
         static const std::string QUERY_TAG_STATECHANGE;
@@ -68,7 +29,8 @@ namespace ultraverse::state::v2 {
         StateChanger(DBHandlePool<mariadb::DBHandle> &dbHandlePool, const StateChangePlan &plan);
         
         std::string findCandidateColumn();
-        void makeClusterMap();
+        
+        void prepare();
         void start();
         
     private:
@@ -97,6 +59,9 @@ namespace ultraverse::state::v2 {
             mariadb::DBHandle &dbHandle
         );
         
+        /**
+         * @deprecated
+         */
         inline void __node__invertQuery(
             uint64_t rootNodeId,
             uint64_t nodeId,
@@ -134,9 +99,6 @@ namespace ultraverse::state::v2 {
         int64_t getAutoIncrement(mariadb::DBHandle &dbHandle, std::string table);
         void setAutoIncrement(mariadb::DBHandle &dbHandle, std::string table, int64_t value);
         
-        
-        
-        
         LoggerPtr _logger;
         
         DBHandlePool<mariadb::DBHandle> &_dbHandlePool;
@@ -163,7 +125,11 @@ namespace ultraverse::state::v2 {
         bool _isClusterReady;
         
         RowCluster _rowCluster;
+        
+        /** @deprecated */
         RowCluster _invertedRowCluster;
+        
+        std::unique_ptr<ColumnDependencyGraph> _columnGraph;
     };
 }
 

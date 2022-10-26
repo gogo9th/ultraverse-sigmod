@@ -66,7 +66,7 @@ namespace ultraverse::base {
                     [](auto c) { return c == ' '; }
                 ), value.end());
                 
-                _writeSet.insert(value);
+                _writeSet.insert(value + ".*");
                 std::cout << value << std::endl;
             }
             i++;

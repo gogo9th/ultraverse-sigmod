@@ -13,7 +13,7 @@
 namespace ultraverse::state::v2 {
     class StateLogReader {
     public:
-        StateLogReader(const std::string &logPath);
+        StateLogReader(const std::string &logPath, const std::string &logName);
         ~StateLogReader();
         
         void open();
@@ -26,6 +26,8 @@ namespace ultraverse::state::v2 {
         
     private:
         std::string _logPath;
+        std::string _logName;
+        
         std::ifstream _stream;
         
         std::shared_ptr<TransactionHeader> _currentHeader;

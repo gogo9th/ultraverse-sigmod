@@ -91,7 +91,6 @@ public:
     void writerMain() {
         _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(_binlogIndexPath);
         _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(".", _stateLogName);
-        _columnGraph = std::make_unique<state::v2::ColumnDependencyGraph>();
 
         _pendingTxn = std::make_shared<state::v2::Transaction>();
         _pendingQuery = std::make_shared<state::v2::Query>();
@@ -267,14 +266,6 @@ public:
             }
 
             *_pendingTxn << pendingQuery;
-            
-            bool isColumnGraphChanged =
-                _columnGraph->add(pendingQuery->readSet(),  state::v2::READ) ||
-                _columnGraph->add(pendingQuery->writeSet(), state::v2::WRITE);
-            
-            if (isColumnGraphChanged) {
-                *_stateLogWriter << *_columnGraph;
-            }
         }
 
         _logger->info("Transaction ID #{} processed.", event->transactionId());
@@ -426,9 +417,6 @@ private:
     
     std::shared_ptr<state::v2::Transaction> _pendingTxn;
     std::shared_ptr<state::v2::Query> _pendingQuery;
-    
-    std::shared_ptr<state::v2::ColumnDependencyGraph> _columnGraph;
-
 
     std::queue<std::shared_ptr<std::promise<std::shared_ptr<state::v2::Query>>>> _pendingQueries;
     std::mutex _tableMapMutex;

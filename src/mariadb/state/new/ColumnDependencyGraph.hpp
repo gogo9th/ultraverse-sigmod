@@ -8,6 +8,7 @@
 #include <boost/graph/adjacency_list.hpp>
 
 #include "Query.hpp"
+#include "StateChangeContext.hpp"
 
 #include "utils/log.hpp"
 
@@ -49,7 +50,7 @@ namespace ultraverse::state::v2 {
         /**
          * @return 그래프 자체에 변화가 있을 시 true를 반환한다.
          */
-        bool add(const ColumnSet &columnSet, ColumnAccessType accessType);
+        bool add(const ColumnSet &columnSet, ColumnAccessType accessType, const std::vector<ForeignKey> &foreignKeys);
         void clear();
         
         [[nodiscard]]

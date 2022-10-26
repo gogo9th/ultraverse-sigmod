@@ -85,7 +85,7 @@ set(ULTRAVERSE_SRCS
     mariadb/state/new/cluster/CandidateColumn.hpp
     
     mariadb/state/new/cluster/RowCluster.hpp mariadb/state/new/cluster/RowCluster.cpp mariadb/state/new/cluster/NamingHistory.cpp mariadb/state/new/cluster/NamingHistory.hpp mariadb/state/new/ColumnDependencyGraph.cpp mariadb/state/new/ColumnDependencyGraph.hpp
-)
+    mariadb/state/new/StateChangePlan.cpp mariadb/state/new/StateChangePlan.hpp)
 
 include_directories(../dependencies/sql-parser/src)
 include_directories(../dependencies/sql-parser/src/parser)
@@ -98,9 +98,9 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 
 add_executable(state_log_viewer ${ULTRAVERSE_SRCS} state_log_viewer.cpp)
-add_executable(state_log_writer ${ULTRAVERSE_SRCS} statelogd.cpp)
+add_executable(statelogd ${ULTRAVERSE_SRCS} statelogd.cpp)
 add_executable(db_state_change ${ULTRAVERSE_SRCS} db_state_change.cpp mariadb/state/new/StateChanger.cpp mariadb/state/new/StateChanger.hpp mariadb/state/new/StateChangeContext.hpp)
 
 target_link_libraries(state_log_viewer ${ULTRAVERSE_DEPENDENCIES})
-target_link_libraries(state_log_writer ${ULTRAVERSE_DEPENDENCIES})
+target_link_libraries(statelogd ${ULTRAVERSE_DEPENDENCIES})
 target_link_libraries(db_state_change ${ULTRAVERSE_DEPENDENCIES})

@@ -11,87 +11,22 @@
 #include <SQLParser.h>
 #include <SQLParserResult.h>
 
-#include "StateChanger.hpp"
+#include "StateLogWriter.hpp"
 #include "cluster/RowCluster.hpp"
+
+#include "StateChanger.hpp"
 
 namespace ultraverse::state::v2 {
     
     const std::string StateChanger::QUERY_TAG_STATECHANGE = "/* STATECHANGE_QUERY */ ";
-    
-    StateChangePlan::StateChangePlan() {
-    
-    }
-    
-    const std::string &StateChangePlan::dbName() const {
-        return _dbName;
-    }
-    
-    void StateChangePlan::setDBName(const std::string &dbName) {
-        _dbName = dbName;
-    }
-    
-    gid_t StateChangePlan::rollbackGid() const {
-        return _rollbackGid;
-    }
-    
-    void StateChangePlan::setRollbackGid(gid_t rollbackGid) {
-        _rollbackGid = rollbackGid;
-    }
-    
-    const std::string &StateChangePlan::userQueryPath() const {
-        return _userQueryPath;
-    }
-    
-    void StateChangePlan::setUserQueryPath(const std::string &userQueryPath) {
-        _userQueryPath = userQueryPath;
-    }
-    
-    bool StateChangePlan::isDBDumpAvailable() const {
-        return !_dbdumpPath.empty();
-    }
-    
-    const std::string &StateChangePlan::dbDumpPath() const {
-        return _dbdumpPath;
-    }
-    
-    void StateChangePlan::setDBDumpPath(const std::string &dbdumpPath) {
-        _dbdumpPath = dbdumpPath;
-    }
-    
-    const std::string &StateChangePlan::binlogPath() const {
-        return _binlogPath;
-    }
-    
-    void StateChangePlan::setBinlogPath(const std::string &binlogPath) {
-        _binlogPath = binlogPath;
-    }
-    
-    const std::string &StateChangePlan::stateLogPath() const {
-        return _stateLogPath;
-    }
-    
-    void StateChangePlan::setStateLogPath(const std::string &stateLogPath) {
-        _stateLogPath = stateLogPath;
-    }
-    
-    bool StateChangePlan::isDryRun() const {
-        return _isDryRun;
-    }
-    
-    void StateChangePlan::setDryRun(bool isDryRun) {
-        _isDryRun = isDryRun;
-    }
-    
-    std::vector<std::string> &StateChangePlan::keyColumns() {
-        return _keyColumns;
-    }
     
     StateChanger::StateChanger(DBHandlePool<mariadb::DBHandle> &dbHandlePool, const StateChangePlan &plan):
         _logger(createLogger("StateChanger")),
         _dbHandlePool(dbHandlePool),
         _plan(plan),
         _intermediateDBName(fmt::format("ult_intermediate_{}", (int) time(nullptr))), // FIXME
-        _reader(plan.stateLogPath()),
+        _reader(plan.stateLogPath(), plan.stateLogName()),
+        _columnGraph(std::make_unique<ColumnDependencyGraph>()),
         _context(new StateChangeContext)
     {
         _stateGraph = std::make_unique<StateGraphBoost>(_context);
@@ -218,7 +153,8 @@ namespace ultraverse::state::v2 {
     }
     
     
-    void StateChanger::makeClusterMap() {
+    void StateChanger::prepare() {
+        StateLogWriter stateLogWriter(_plan.stateLogPath(), _plan.stateLogName());
         createIntermediateDB();
         
         _reader.open();
@@ -233,6 +169,7 @@ namespace ultraverse::state::v2 {
             if (transactionHeader->gid == _plan.rollbackGid()) {
                 _logger->info("rollback target found");
                 // setRollbackTarget(_reader.txnBody());
+                _rollbackTarget = transaction;
             }
             
             if (flags & Transaction::FLAG_CONTAINS_DDL) {
@@ -252,7 +189,17 @@ namespace ultraverse::state::v2 {
                     updateForeignKeys(dbHandle, query->timestamp());
                 }
                 dbHandle.executeQuery("COMMIT");
-    
+            } else {
+                for (auto &query: transaction->queries()) {
+                    bool isColumnGraphChanged =
+                        _columnGraph->add(query->readSet(), READ, _context->foreignKeys) ||
+                        _columnGraph->add(query->writeSet(), WRITE, _context->foreignKeys);
+        
+                    if (isColumnGraphChanged) {
+                        _logger->info("updating column dependency graph");
+                        stateLogWriter << *_columnGraph;
+                    }
+                }
             }
     
             expandClusterMap(transaction);

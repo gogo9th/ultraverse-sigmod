@@ -7,8 +7,9 @@
 #include "StateLogReader.hpp"
 
 namespace ultraverse::state::v2 {
-    StateLogReader::StateLogReader(const std::string &logPath):
-        _logPath(logPath)
+    StateLogReader::StateLogReader(const std::string &logPath, const std::string &logName):
+        _logPath(logPath),
+        _logName(logName)
     {
     
     }
@@ -18,7 +19,8 @@ namespace ultraverse::state::v2 {
     }
     
     void StateLogReader::open() {
-        _stream = std::ifstream(_logPath, std::ios::in | std::ios::binary);
+        std::string path = _logPath + "/" + _logName + ".ultstatelog";
+        _stream = std::ifstream(path, std::ios::in | std::ios::binary);
     }
     
     void StateLogReader::close() {
