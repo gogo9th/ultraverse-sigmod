@@ -222,6 +222,10 @@ namespace ultraverse::state::v2 {
         _logger->info("loading row cluster");
         _reader >> _rowCluster;
         
+        // FIXME: startGid 빼야 함
+        _hashWatcher = std::make_unique<HashWatcher>("/var/lib/mysql/" + _plan.stateLogName() + ".index", _intermediateDBName);
+        _hashWatcher->setStartGid(_plan.rollbackGid());
+        
         createIntermediateDB();
         
         _logger->info("opening state log");
@@ -268,6 +272,10 @@ namespace ultraverse::state::v2 {
             thread.join();
         }
         
+        if (_hashWatcher != nullptr) {
+            _hashWatcher->stop();
+        }
+        
         _logger->trace("== REPLAY FINISHED ==");
         
         std::stringstream queryBuilder;
@@ -277,11 +285,16 @@ namespace ultraverse::state::v2 {
         queryBuilder << "BEGIN;\n";
         
         for (auto it: _rowCluster2.keyMap()) {
+            auto vec = StateUserQuery::SplitDBNameAndTableName(it.first);
+            auto tableName = vec[0];
+            auto columnName = vec[1];
+            
+            if (_hashWatcher != nullptr && _hashWatcher->isHashMatched(tableName)) {
+                continue;
+            }
+            
             for (auto &cluster: it.second) {
                 auto where = cluster.MakeWhereQuery(it.first);
-                auto vec = StateUserQuery::SplitDBNameAndTableName(it.first);
-                auto tableName = vec[0];
-                auto columnName = vec[1];
                 auto *range = cluster.GetRange();
             
                 queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, _intermediateDBName, tableName, where);
@@ -346,7 +359,7 @@ namespace ultraverse::state::v2 {
                     }
     
 
-                    _logger->info(
+                    _logger->trace(
                         "RowCluster: expanding range of {} => (WHERE {})",
                         resolvedName,
                         stateRange.MakeWhereQuery(resolvedName)
@@ -536,6 +549,13 @@ namespace ultraverse::state::v2 {
     ) {
         const bool isTargetTransaction = transaction->gid() == _plan.rollbackGid();
         
+        if (_hashWatcher != nullptr && isTargetTransaction) {
+            dbHandle.executeQuery("use " + _intermediateDBName);
+            dbHandle.executeQuery(fmt::format("/* ULTRAVERSE_HASHWATCHER_START_{} */ CREATE TABLE __ULTRAVERSE_HASHWATCHER_START__( dummy INTEGER )", _intermediateDBName));
+            _logger->info("starting hashwatcher");
+            _hashWatcher->start();
+        }
+        
         _logger->info("[#{}->#{}] replaying transaction", rootNodeId, nodeId);
         dbHandle.executeQuery("use " + _intermediateDBName);
         dbHandle.executeQuery("BEGIN");
@@ -544,63 +564,7 @@ namespace ultraverse::state::v2 {
             if (query->database() != _plan.dbName()) {
                 goto NEXT_QUERY;
             }
-        
-            /*
-            {
-                std::scoped_lock<std::mutex> _hashLock(_stateHashMutex);
-                auto relatedTable = *query->writeSet().begin();
-                auto it = relatedTable.find('.');
-
-                if (it != std::string::npos) {
-                    relatedTable.erase(it, relatedTable.size());
-                }
-                
-
-                if (!_stateHashMap[relatedTable].isInitialized()) {
-                    _stateHashMap[relatedTable] = StateHash(query->beforeHash(relatedTable));
-                    _logger->trace("[#{}->#{}] hash init: {}", rootNodeId, nodeId, relatedTable);
-                    _stateHashMap[relatedTable].hexdump();
-                }
-
-                auto &hash = _stateHashMap[relatedTable];
-                auto beforeHash = hash;
-                
-                // FIXME
-                if (query->type() != Query::UNKNOWN && hash == query->afterHash(relatedTable)) {
-                    _logger->trace("[#{}->#{}] skipping query: table hash is equal", rootNodeId, nodeId);
-                    goto NEXT_QUERY;
-                }
-
-                for (int i = 0; i < query->affectedRows(); i++) {
-                    switch (query->type()) {
-                        case Query::INSERT:
-                            hash += query->rowSet()[i];
-                            break;
-                        case Query::DELETE:
-                            hash -= query->rowSet()[i];
-                            break;
-                        case Query::UPDATE:
-                            hash -= query->rowSet()[i];
-                            hash += query->changeSet()[i];
-                            break;
-                        default:
-                            break;
-                    }
-                }
-                
-                
-                if (hash == query->afterHash(relatedTable)) {
-                    _logger->info("hash matches");
-                    query->afterHash(relatedTable).hexdump();
-                    hash.hexdump();
-                } else {
-                    _logger->info("hash not matches");
-                    query->afterHash(relatedTable).hexdump();
-                    hash.hexdump();
-                }
-            }
-             */
-        
+           
             {
                 const auto readSetHash = std::hash<ColumnSet>{}(query->readSet());
                 const auto writeSetHash = std::hash<ColumnSet>{}(query->writeSet());
@@ -612,7 +576,7 @@ namespace ultraverse::state::v2 {
                 });
                 const bool needsForceExecution =
                     !_plan.isDBDumpAvailable() && transaction->gid() < _plan.rollbackGid();
-            
+                
                 const bool skipQuery = isTargetTransaction || !(needsForceExecution || isDDL || (isRelatedWithCluster && isRelatedWithColumnGraph));
                 
                 if (skipQuery) {
@@ -629,6 +593,23 @@ namespace ultraverse::state::v2 {
                     }
                 
                     goto NEXT_QUERY;
+                }
+                
+                if (_hashWatcher != nullptr) {
+                    const std::string tableName = StateUserQuery::SplitDBNameAndTableName(*query->writeSet().begin())[0];
+    
+                    if (transaction->gid() < _plan.rollbackGid()) {
+                        _hashWatcher->setHash(tableName, query->afterHash(tableName));
+                    } else if (transaction->gid() > _plan.rollbackGid()) {
+                        const bool isHashMatched = _hashWatcher->isHashMatched(tableName);
+    
+                        if (isHashMatched) {
+                            _logger->info("hash matched: skipping query\n\n");
+                            goto NEXT_QUERY;
+                        } else {
+                            _hashWatcher->queue(tableName, query->afterHash(tableName));
+                        }
+                    }
                 }
                 
                 __node__replayQuery(rootNodeId, nodeId, query, dbHandle);

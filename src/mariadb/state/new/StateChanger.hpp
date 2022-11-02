@@ -12,6 +12,7 @@
 #include "StateChangeContext.hpp"
 #include "StateChangePlan.hpp"
 #include "ColumnDependencyGraph.hpp"
+#include "HashWatcher.hpp"
 
 #include "cluster/CandidateColumn.hpp"
 #include "cluster/RowCluster.hpp"
@@ -20,6 +21,7 @@
 #include "mariadb/state/StateGraphBoost.h"
 #include "mariadb/DBHandle.hpp"
 #include "utils/log.hpp"
+
 
 namespace ultraverse::state::v2 {
     class StateChanger {
@@ -116,6 +118,7 @@ namespace ultraverse::state::v2 {
         RowCluster _rowCluster2;
         
         std::unique_ptr<ColumnDependencyGraph> _columnGraph;
+        std::unique_ptr<HashWatcher> _hashWatcher;
     };
 }
 
