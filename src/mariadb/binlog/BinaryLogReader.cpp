@@ -286,7 +286,7 @@ namespace ultraverse::mariadb {
         
         std::vector<std::string> columnNames;
         
-        while (_stream.tellg() < (pos + optionalMetadataLength)) {
+        while (_stream.good() && _stream.tellg() < (pos + optionalMetadataLength)) {
             uint8_t type = 0;
             _stream.read((char *) &type, sizeof(uint8_t));
             
