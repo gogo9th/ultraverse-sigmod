@@ -70,7 +70,7 @@ namespace ultraverse::mariadb {
     
     class BinaryLogSequentialReader {
     public:
-        explicit BinaryLogSequentialReader(const std::string &indexFile);
+        explicit BinaryLogSequentialReader(const std::string &basePath, const std::string &indexFile);
     
         bool seek(int index, int64_t position);
         bool next();
@@ -89,6 +89,7 @@ namespace ultraverse::mariadb {
         
         LoggerPtr _logger;
         
+        std::string _basePath;
         std::string _indexFile;
         std::vector<std::string> _logFileList;
         // TOOD: currentFile or currentIndex;

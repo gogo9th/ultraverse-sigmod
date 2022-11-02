@@ -390,9 +390,10 @@ namespace ultraverse::mariadb {
         );
     }
     
-    BinaryLogSequentialReader::BinaryLogSequentialReader(const std::string &indexFile):
+    BinaryLogSequentialReader::BinaryLogSequentialReader(const std::string &basePath, const std::string &indexFile):
         _logger(createLogger("BinaryLogSeqReader")),
     
+        _basePath(basePath),
         _indexFile(indexFile),
         _currentIndex(0)
     {
@@ -467,7 +468,7 @@ namespace ultraverse::mariadb {
             _binaryLogReader = nullptr;
         }
         
-        _binaryLogReader = std::make_unique<BinaryLogReader>(logFile);
+        _binaryLogReader = std::make_unique<BinaryLogReader>(_basePath + "/" + logFile);
         _binaryLogReader->open();
     }
     
