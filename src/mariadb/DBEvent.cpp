@@ -237,28 +237,33 @@ namespace ultraverse::mariadb {
                     switch (columnSize) {
                         case 8:
                             value = readValue<int64_t>(offset);
+                            sstream << columnName << "=" << "I64!" << value;
                             break;
                         case 4:
                             value = readValue<int32_t>(offset);
+                            sstream << columnName << "=" << "I32!" << value;
                             break;
                         case 2:
                             value = readValue<int16_t>(offset);
+                            sstream << columnName << "=" << "I16!" << value;
                             break;
                         case 1:
                             value = readValue<int8_t>(offset);
+                            sstream << columnName << "=" << "I8!" << value;
                             break;
                     }
     
-                    // sstream << columnName << "=" << value;
                     data.Set(value);
                 } else if (columnType == column_type::FLOAT) {
                     double value;
                     switch (columnSize) {
                         case 8:
                             value = readValue<double>(offset);
+                            sstream << columnName << "=" << "F64!" << value;
                             break;
                         case 4:
                             value = readValue<float>(offset);
+                            sstream << columnName << "=" << "F32!" << value;
                             break;
                     }
     
@@ -278,6 +283,8 @@ namespace ultraverse::mariadb {
                 sstream << ":";
             }
         }
+        
+        std::cout << sstream.str() << std::endl;
         
         return std::make_pair(sstream.str(), nullFieldsSize + rowSize);
     }

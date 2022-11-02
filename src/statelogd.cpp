@@ -331,7 +331,6 @@ public:
                     hash += event->changeSet(i);
                     break;
             }
-
         }
     
         for (auto &it: _tableMap) {
