@@ -48,7 +48,7 @@ namespace ultraverse::state::v2 {
             ++next;
             
             const auto &node = _graph[*vi];
-            if (node->hash == hash || node->accessType == READ) {
+            if (node->accessType == READ) {
                 // R-R, R-W는 무시
                 continue;
             }
