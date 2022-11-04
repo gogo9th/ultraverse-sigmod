@@ -134,7 +134,7 @@ namespace ultraverse::state::v2 {
         if (it == foreignKeys.end()) {
             return exprName;
         } else {
-            return it->toTable->getCurrentName() + "." + it->toColumn;
+            return resolveForeignKey(it->toTable->getCurrentName() + "." + it->toColumn, foreignKeys);
         }
     }
     
