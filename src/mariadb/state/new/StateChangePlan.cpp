@@ -80,4 +80,8 @@ namespace ultraverse::state::v2 {
     std::vector<std::string> &StateChangePlan::keyColumns() {
         return _keyColumns;
     }
+    
+    std::vector<std::pair<std::string, std::string>> &StateChangePlan::columnAliases() {
+        return _columnAliases;
+    }
 }

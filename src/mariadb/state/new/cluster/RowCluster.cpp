@@ -19,6 +19,29 @@ namespace ultraverse::state::v2 {
         mergeCluster(columnName, false);
     }
     
+    void RowCluster::addAlias(StateItem alias, StateItem real) {
+        _aliases.emplace_back(RowAlias { alias, real });
+    }
+    
+    StateItem RowCluster::resolveAlias(const std::vector<RowAlias> &aliases, StateItem alias) {
+        auto it = std::find_if(aliases.begin(), aliases.end(), [&alias](auto &item) {
+            return item.alias.name == alias.name && !(StateRange::AND(
+                StateItem::MakeRange(alias),
+                StateItem::MakeRange(item.alias)
+            ).GetRange()->empty());
+        });
+        
+        if (it == aliases.end()) {
+            return it->real;
+        }
+        
+        return alias;
+    }
+    
+    const std::vector<RowAlias> &RowCluster::aliasSet() {
+        return _aliases;
+    }
+    
     void RowCluster::mergeCluster(const std::string &columnName, bool force) {
         auto &cluster = _clusterMap[columnName];
         
@@ -63,7 +86,7 @@ namespace ultraverse::state::v2 {
         for (auto &query: transaction.queries()) {
             for (auto &keyColumn: keyColumns) {
                 for (auto &range: _clusterMap.at(keyColumn)) {
-                    if (isQueryRelated(range, *query, foreignKeys)) {
+                    if (isQueryRelated(range, *query, foreignKeys, _aliases)) {
                         keyRanges.push_back(range);
                     }
                 }
@@ -74,9 +97,9 @@ namespace ultraverse::state::v2 {
     }
     
     bool RowCluster::isQueryRelated(std::vector<StateRange> &keyRanges, Query &query,
-                                    const std::vector<ForeignKey> &foreignKeys) {
+                                    const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
         for (auto &keyRange: keyRanges) {
-            if (!isQueryRelated(keyRange, query, foreignKeys)) {
+            if (!isQueryRelated(keyRange, query, foreignKeys, aliases)) {
                 return false;
             }
         }
@@ -84,15 +107,15 @@ namespace ultraverse::state::v2 {
         return true;
     }
     
-    bool RowCluster::isQueryRelated(StateRange &range, Query &query, const std::vector<ForeignKey> &foreignKeys) {
+    bool RowCluster::isQueryRelated(StateRange &range, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
         for (auto expr: query.whereSet()) {
-            if (isExprRelated(range, expr, foreignKeys)) {
+            if (isExprRelated(range, expr, foreignKeys, aliases)) {
                 return true;
             }
         }
         
         for (auto expr: query.itemSet()) {
-            if (isExprRelated(range, expr, foreignKeys)) {
+            if (isExprRelated(range, expr, foreignKeys, aliases)) {
                 return true;
             }
         }
@@ -100,8 +123,13 @@ namespace ultraverse::state::v2 {
         return false;
     }
     
-    bool RowCluster::isExprRelated(StateRange &keyRange, const StateItem &expr, const std::vector<ForeignKey> &foreignKeys) {
+    bool RowCluster::isExprRelated(StateRange &keyRange, const StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
         if (!expr.name.empty()) {
+            auto alias = resolveAlias(aliases, expr);
+            if (alias.name != expr.name) {
+                return isExprRelated(keyRange, alias, foreignKeys, aliases);
+            }
+            
             auto name = resolveForeignKey(expr.name, foreignKeys);
             
             auto range = StateItem::MakeRange(expr);
@@ -111,7 +139,7 @@ namespace ultraverse::state::v2 {
         }
         
         for (auto &subExpr: expr.arg_list) {
-            if (isExprRelated(keyRange, subExpr, foreignKeys)) {
+            if (isExprRelated(keyRange, subExpr, foreignKeys, aliases)) {
                 return true;
             }
         }

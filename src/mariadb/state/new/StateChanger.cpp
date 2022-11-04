@@ -387,6 +387,23 @@ namespace ultraverse::state::v2 {
                 for (auto &stateItem: query->itemSet()) {
                     walkStateItem(stateItem);
                 }
+                
+                if (query->type() == Query::INSERT) {
+                    // TODO: UPDATE 지원해야 하나?
+                    for (auto &aliasPair: _plan.columnAliases()) {
+                        auto alias = std::find_if(query->itemSet().begin(), query->itemSet().end(), [&aliasPair](auto &item) {
+                            return item.name == aliasPair.first;
+                        });
+                        auto real = std::find_if(query->itemSet().begin(), query->itemSet().end(), [&aliasPair](auto &item) {
+                            return item.name == aliasPair.second;
+                        });
+                        
+                        if (alias != query->itemSet().end() && real != query->itemSet().end()) {
+                            _logger->trace("adding alias: {} ({}) => {} ({})", alias->name, alias->MakeRange().MakeWhereQuery(), real->name, real->MakeRange().MakeWhereQuery());
+                            rowCluster.addAlias(*alias, *real);
+                        }
+                    }
+                }
             }
         } else {
             // FIXME
@@ -570,7 +587,7 @@ namespace ultraverse::state::v2 {
                 const auto writeSetHash = std::hash<ColumnSet>{}(query->writeSet());
                 
                 const bool isDDL = query->flags() & Query::FLAG_IS_DDL;
-                const bool isRelatedWithCluster = RowCluster::isQueryRelated(*_keyRanges, *query, _context->foreignKeys);
+                const bool isRelatedWithCluster = RowCluster::isQueryRelated(*_keyRanges, *query, _context->foreignKeys, _rowCluster.aliasSet());
                 const bool isRelatedWithColumnGraph = std::any_of(_columnSetHashes->begin(), _columnSetHashes->end(), [this, &readSetHash, &writeSetHash](size_t hashA) {
                     return _columnGraph->isRelated(hashA, readSetHash) || _columnGraph->isRelated(hashA, writeSetHash);
                 });

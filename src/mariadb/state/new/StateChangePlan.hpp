@@ -40,6 +40,7 @@ namespace ultraverse::state::v2 {
         void setDryRun(bool isDryRun);
         
         std::vector<std::string> &keyColumns();
+        std::vector<std::pair<std::string, std::string>> &columnAliases();
     
     private:
         std::string _dbName;
@@ -52,6 +53,7 @@ namespace ultraverse::state::v2 {
         std::string _stateLogName;
         
         std::vector<std::string> _keyColumns;
+        std::vector<std::pair<std::string, std::string>> _columnAliases;
         bool _isDryRun;
     };
     

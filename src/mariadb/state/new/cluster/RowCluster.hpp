@@ -16,6 +16,12 @@
 #include "utils/log.hpp"
 
 namespace ultraverse::state::v2 {
+    
+    struct RowAlias {
+        StateItem alias;
+        StateItem real;
+    };
+    
     class RowCluster {
     public:
         static std::string resolveForeignKey(std::string exprName, const std::vector<ForeignKey> &foreignKeys);
@@ -26,6 +32,11 @@ namespace ultraverse::state::v2 {
         void addKey(const std::string &columnName) const;
         
         void addKeyRange(const std::string &columnName, StateRange &range);
+    
+        void addAlias(StateItem alias, StateItem real);
+        static StateItem resolveAlias(const std::vector<RowAlias> &aliases, StateItem alias);
+        
+        const std::vector<RowAlias> &aliasSet();
         
         /**
          * @throws std::runtime_error when given key was not found
@@ -34,8 +45,8 @@ namespace ultraverse::state::v2 {
     
         std::unordered_map<std::string, std::vector<StateRange>> &keyMap();
     
-        static bool isQueryRelated(std::vector<StateRange> &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys);
-        static bool isQueryRelated(StateRange &keyRange, Query &query, const std::vector<ForeignKey> &foreignKeys);
+        static bool isQueryRelated(std::vector<StateRange> &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
+        static bool isQueryRelated(StateRange &keyRange, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
         
         std::vector<StateRange> getKeyRangeOf(Transaction &transaction, const std::vector<std::string> &keyColumns, const std::vector<ForeignKey> &foreignKeys);
         
@@ -50,13 +61,14 @@ namespace ultraverse::state::v2 {
         LoggerPtr _logger;
         
         
-        static bool isExprRelated(StateRange &keyRange, const StateItem &expr, const std::vector<ForeignKey> &foreignKeys);
+        static bool isExprRelated(StateRange &keyRange, const StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
         
         /**
          * FIXME: 이거 std::string에서 std::pair<NamingHistory, std::string> 같은걸로 바꿔야 할듯
          *        안그러면 이거 테이블 리네임되면 맛감
          */
         std::unordered_map<std::string, std::vector<StateRange>> _clusterMap;
+        std::vector<RowAlias> _aliases;
     };
 }
 
