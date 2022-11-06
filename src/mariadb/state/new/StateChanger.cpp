@@ -223,8 +223,7 @@ namespace ultraverse::state::v2 {
         _reader >> _rowCluster;
         
         // FIXME: startGid 빼야 함
-        _hashWatcher = std::make_unique<HashWatcher>("/var/lib/mysql/" + _plan.stateLogName() + ".index", _intermediateDBName);
-        _hashWatcher->setStartGid(_plan.rollbackGid());
+        _hashWatcher = std::make_unique<HashWatcher>(_plan.binlogPath(), _plan.stateLogName() + ".index", _intermediateDBName);
         
         createIntermediateDB();
         

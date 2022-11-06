@@ -5,13 +5,11 @@
 #include "HashWatcher.hpp"
 
 namespace ultraverse::state::v2 {
-    HashWatcher::HashWatcher(const std::string &binlogName, const std::string &database):
+    HashWatcher::HashWatcher(const std::string &basePath, const std::string &binlogName, const std::string &database):
         _logger(createLogger("HashWatcher")),
         _binlogName(binlogName),
         _database(database),
-        _binlogReader(binlogName),
-        _startGid(0),
-        _currentGid(0)
+        _binlogReader(basePath, binlogName)
     {
         _hashQueue.reserve(100);
     }
@@ -28,10 +26,6 @@ namespace ultraverse::state::v2 {
             _binlogReader.terminate();
             _watcherThread.join();
         }
-    }
-    
-    void HashWatcher::setStartGid(uint64_t gid) {
-        _startGid = gid;
     }
     
     void HashWatcher::setHash(const std::string &tableName, const StateHash &hash) {
@@ -67,7 +61,6 @@ namespace ultraverse::state::v2 {
                 }
                     break;
                 case event_type::TXNID:
-                    _logger->trace("{} / {}", _currentGid, _startGid);
                     break;
                 case event_type::TABLE_MAP:
                     processTableMapEvent(std::dynamic_pointer_cast<mariadb::TableMapEvent>(event));

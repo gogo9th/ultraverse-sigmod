@@ -21,12 +21,11 @@
 namespace ultraverse::state::v2 {
     class HashWatcher {
     public:
-        HashWatcher(const std::string &binlogName, const std::string &database);
+        HashWatcher(const std::string &basePath, const std::string &binlogName, const std::string &database);
         
         void start();
         void stop();
         
-        void setStartGid(uint64_t gid);
         void setHash(const std::string &tableName, const StateHash &hash);
         void queue(const std::string &tableName, const StateHash &hash);
         
@@ -49,9 +48,6 @@ namespace ultraverse::state::v2 {
         bool _isWatcherEnabled;
         
         std::mutex _mutex;
-    
-        uint64_t _startGid;
-        uint64_t _currentGid;
         
         std::unordered_map<uint64_t, std::shared_ptr<mariadb::TableMapEvent>> _tableMap;
         std::unordered_map<std::string, StateHash> _hashState;
