@@ -204,23 +204,60 @@ namespace ultraverse::mariadb {
         
         std::vector<std::pair<column_type::Value, int>> columnTypeDef2;
         columnTypeDef2.reserve(columns);
+    
+        uint8_t metadataLength = 0;
+        _stream.read((char *) &metadataLength, sizeof(uint8_t));
+        
+        std::unique_ptr<uint8_t> metadata(new uint8_t[metadataLength]);
+        _stream.read((char *) metadata.get(), metadataLength);
+        
+        int metadataPos = 0;
         
         for (int i = 0; i < columns; i++) {
             using namespace internal;
             switch (columnTypeDef.get()[i]) {
                 case MYSQL_TYPE_STRING:
-                case MYSQL_TYPE_VARCHAR:
-                case MYSQL_TYPE_VAR_STRING:
+                case MYSQL_TYPE_VAR_STRING: {
+                    uint8_t size = metadata.get()[metadataPos + 1];
+                    metadataPos += 2;
+                    
+                    columnTypeDef2.emplace_back(column_type::STRING, size);
+                }
+                    break;
+                case MYSQL_TYPE_GEOMETRY:
+                case MYSQL_TYPE_BLOB: {
+                    uint8_t size = metadata.get()[metadataPos];
+                    metadataPos += 1;
+    
+                    columnTypeDef2.emplace_back(column_type::STRING, size);
+                }
+                    break;
+    
+                case MYSQL_TYPE_VARCHAR: {
+                    uint16_t maximumLength = *reinterpret_cast<uint16_t *>(metadata.get() + metadataPos);
+                    metadataPos += 2;
+    
+                    columnTypeDef2.emplace_back(
+                        column_type::STRING,
+                        (maximumLength <= UINT8_MAX) ? 1 : 2
+                    );
+                }
+                    break;
+    
+                case MYSQL_TYPE_NEWDECIMAL:
+                case MYSQL_TYPE_BIT: {
+                    metadataPos += 2;
+    
+                    columnTypeDef2.emplace_back(column_type::STRING, -1);
+                }
+                    break;
+                
                 case MYSQL_TYPE_ENUM:
                 case MYSQL_TYPE_SET:
                 case MYSQL_TYPE_LONG_BLOB:
                 case MYSQL_TYPE_MEDIUM_BLOB:
-                case MYSQL_TYPE_BLOB:
                 case MYSQL_TYPE_TINY_BLOB:
-                case MYSQL_TYPE_GEOMETRY:
-                case MYSQL_TYPE_BIT:
                 case MYSQL_TYPE_DECIMAL:
-                case MYSQL_TYPE_NEWDECIMAL:
                     columnTypeDef2.emplace_back(column_type::STRING, -1);
                     break;
                     
@@ -243,10 +280,12 @@ namespace ultraverse::mariadb {
                     break;
                     
                 case MYSQL_TYPE_DOUBLE:
+                    metadataPos += 1;
                     columnTypeDef2.emplace_back(column_type::FLOAT, 8);
                     break;
                     
                 case MYSQL_TYPE_FLOAT:
+                    metadataPos += 1;
                     columnTypeDef2.emplace_back(column_type::FLOAT, 4);
                     break;
                     
@@ -268,10 +307,8 @@ namespace ultraverse::mariadb {
             }
         }
         
-        uint8_t metadataLength = 0;
-        _stream.read((char *) &metadataLength, sizeof(uint8_t));
         
-        uint8_t skipBytes = metadataLength + ((columns + 7) / 8);
+        uint8_t skipBytes = ((columns + 7) / 8);
         std::unique_ptr<uint8_t> unused(new uint8_t[skipBytes]);
         _stream.read((char *) unused.get(), skipBytes);
         
@@ -281,7 +318,8 @@ namespace ultraverse::mariadb {
             sizeof(uint8_t) + schemaNameLength +
             sizeof(uint8_t) + tableNameLength +
             sizeof(uint8_t) + columns +
-            sizeof(uint8_t) + skipBytes
+            sizeof(uint8_t) + metadataLength +
+            skipBytes
         ) - (_hasChecksum ? 4 : 0);
         
         std::vector<std::string> columnNames;

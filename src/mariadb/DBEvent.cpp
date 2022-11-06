@@ -204,12 +204,26 @@ namespace ultraverse::mariadb {
             if ((nullFields & (1 << i)) != 0) {
                 // NULL
                 sstream << columnName << "=";
-            } else if (columnSize == -1) {
+            } else if (columnType == column_type::STRING) {
                 // length + [string content]
-                int strLength = (_rowData.get()[offset]);
+                uint64_t strLength = 0;
+                size_t strLengthSize = 1;
+                
+                if (columnSize == 1 || columnSize == -1) {
+                    strLength = (_rowData.get()[offset]);
+                } else if (columnSize == 2) {
+                    strLength = *reinterpret_cast<uint16_t *>(_rowData.get() + offset);
+                    strLengthSize = 2;
+                } else if (columnSize == 4) {
+                    strLength = *reinterpret_cast<uint32_t *>(_rowData.get() + offset);
+                    strLengthSize = 4;
+                } else if (columnSize == 8) {
+                    strLength = *reinterpret_cast<uint64_t *>(_rowData.get() + offset);
+                    strLengthSize = 8;
+                }
                 
                 std::unique_ptr<uint8_t> rawValue(new uint8_t[strLength]);
-                memcpy(rawValue.get(), _rowData.get() + offset + 1, strLength);
+                memcpy(rawValue.get(), _rowData.get() + offset + strLengthSize, strLength);
                 
                 std::string strValue((char *) rawValue.get(), strLength);
                 sstream << columnName << "=" << strValue;
@@ -226,7 +240,7 @@ namespace ultraverse::mariadb {
                     _candidateSet.emplace_back(std::move(candidateItem));
                 }
                 
-                rowSize += strLength + 1;
+                rowSize += strLength + strLengthSize;
             } else {
     
                 StateItem candidateItem;
