@@ -27,9 +27,11 @@ namespace ultraverse::state::v2 {
         _intermediateDBName(fmt::format("ult_intermediate_{}", (int) time(nullptr))), // FIXME
         _reader(plan.stateLogPath(), plan.stateLogName()),
         _columnGraph(std::make_unique<ColumnDependencyGraph>()),
-        _keyRanges(std::make_shared<std::vector<StateRange>>()),
+        _keyRanges(std::make_shared<std::map<std::string, std::vector<StateRange>>>()),
         _columnSetHashes(std::make_shared<std::vector<size_t>>()),
-        _context(new StateChangeContext)
+        _context(new StateChangeContext),
+        _ddlTxnId(0),
+        _ddlTxnProcessedId(0)
     {
         _stateGraph = std::make_unique<StateGraphBoost>(_context);
     }
@@ -242,7 +244,12 @@ namespace ultraverse::state::v2 {
             if (transactionHeader->gid == _plan.rollbackGid()) {
                 _logger->info("rollback target found");
                 _rollbackTarget = _reader.txnBody();
-                *_keyRanges = _rowCluster.getKeyRangeOf(*_rollbackTarget, _plan.keyColumns(), _context->foreignKeys);
+                
+                for (const auto &keyColumn: _plan.keyColumns()) {
+                    (*_keyRanges)[keyColumn] =
+                        _rowCluster.getKeyRangeOf(*_rollbackTarget, keyColumn, _context->foreignKeys);
+                }
+                
                 for (auto &query: _rollbackTarget->queries()) {
                     _columnSetHashes->push_back(std::hash<ColumnSet>{}(query->writeSet()));
                 }
@@ -261,8 +268,16 @@ namespace ultraverse::state::v2 {
                 processDDLTransaction(transaction);
             }
             
+            while (_ddlTxnProcessedId < _ddlTxnId) {
+                using namespace std::chrono_literals;
+                std::this_thread::sleep_for(100ms);
+            }
+    
             auto node = _stateGraph->addTransaction(transaction);
             if (node.second) {
+                if (flags & Transaction::FLAG_CONTAINS_DDL) {
+                    _ddlTxnId = transaction->gid();
+                }
                 _executorThreads.emplace_back(&StateChanger::processNode, this, node.first);
             }
         }
@@ -298,17 +313,32 @@ namespace ultraverse::state::v2 {
             
                 queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, _intermediateDBName, tableName, where);
                 
-                for (auto &x: *_keyRanges->at(0).GetRange()) {
-                    if (std::find(range->begin(), range->end(), x) == range->end()) {
-                        int64_t intval = 0;
-                        x.begin.Get(intval);
-                        
-                        queryBuilder << fmt::format("DELETE FROM {} WHERE {} = {};\n", tableName, columnName, intval);
+                auto rangeIt = _keyRanges->find(it.first);
+                
+                if (rangeIt != _keyRanges->end()) {
+                    auto keyRange = rangeIt->second.at(0);
+                    for (auto &x: *keyRange.GetRange()) {
+                        if (std::find(range->begin(), range->end(), x) == range->end()) {
+                            std::string strval;
+                            x.begin.Get(strval);
+            
+                            queryBuilder
+                                << fmt::format("DELETE FROM {} WHERE {} = {};\n", tableName, columnName, strval);
+                        }
+                    }
+                } else {
+                    auto invertedRanges = RowCluster::resolveInvertedAliasRange(_rowCluster.aliasSet(),
+                                                                   RowCluster::resolveForeignKey(it.first,
+                                                                                                 _context->foreignKeys),
+                                                                   cluster);
+                    for (auto &invertedRange: invertedRanges) {
+                        queryBuilder
+                            << fmt::format("DELETE FROM {} WHERE {};\n", tableName, invertedRange->second.MakeWhereQuery(columnName));
                     }
                 }
             }
         }
-
+        
     
         queryBuilder << "COMMIT;\n";
         
@@ -321,37 +351,41 @@ namespace ultraverse::state::v2 {
     void StateChanger::expandClusterMap(RowCluster &rowCluster, Transaction &transaction, bool includeFK, bool merge) {
         std::unordered_map<std::string, StateRange> clusterMap;
         
-        std::function<void(StateItem &)> walkStateItem = [this, includeFK, &walkStateItem, &clusterMap](StateItem &stateItem) {
+        std::function<void(StateItem &)> walkStateItem = [this, includeFK, &walkStateItem, &clusterMap, &rowCluster](StateItem &stateItem) {
             if (!stateItem.name.empty()) {
-                auto resolvedName = RowCluster::resolveForeignKey(stateItem.name, _context->foreignKeys);
-                
                 auto &keyColumns = _plan.keyColumns();
-                if (std::find(keyColumns.begin(), keyColumns.end(), resolvedName) != keyColumns.end()) {
-                    assert(stateItem.condition_type == EN_CONDITION_NONE);
-                    assert(stateItem.function_type != FUNCTION_NONE);
+                
+                auto resolvedName = RowCluster::resolveForeignKey(stateItem.name, _context->foreignKeys);
+                auto tmp = stateItem;
+                tmp.name = resolvedName;
+                auto resolvedAlias = RowCluster::resolveAlias(rowCluster.aliasSet(), tmp);
+                
+                if (std::find(keyColumns.begin(), keyColumns.end(), resolvedAlias.name) != keyColumns.end()) {
+                    assert(resolvedAlias.condition_type == EN_CONDITION_NONE);
+                    assert(resolvedAlias.function_type != FUNCTION_NONE);
                     StateRange stateRange;
         
-                    switch (stateItem.function_type) {
+                    switch (resolvedAlias.function_type) {
                         case FUNCTION_EQ:
-                            stateRange.SetValue(stateItem.data_list[0], true);
+                            stateRange.SetValue(resolvedAlias.data_list[0], true);
                             break;
                         case FUNCTION_NE:
-                            stateRange.SetValue(stateItem.data_list[0], false);
+                            stateRange.SetValue(resolvedAlias.data_list[0], false);
                             break;
                         case FUNCTION_GT:
-                            stateRange.SetBegin(stateItem.data_list[0], false);
+                            stateRange.SetBegin(resolvedAlias.data_list[0], false);
                             break;
                         case FUNCTION_GE:
-                            stateRange.SetBegin(stateItem.data_list[0], true);
+                            stateRange.SetBegin(resolvedAlias.data_list[0], true);
                             break;
                         case FUNCTION_LT:
-                            stateRange.SetEnd(stateItem.data_list[0], false);
+                            stateRange.SetEnd(resolvedAlias.data_list[0], false);
                             break;
                         case FUNCTION_LE:
-                            stateRange.SetEnd(stateItem.data_list[0], true);
+                            stateRange.SetEnd(resolvedAlias.data_list[0], true);
                             break;
                         case FUNCTION_BETWEEN:
-                            stateRange.SetBetween(stateItem.data_list[0], stateItem.data_list[1]);
+                            stateRange.SetBetween(resolvedAlias.data_list[0], resolvedAlias.data_list[1]);
                             break;
                         default:
                             break;
@@ -360,13 +394,40 @@ namespace ultraverse::state::v2 {
 
                     _logger->trace(
                         "RowCluster: expanding range of {} => (WHERE {})",
-                        resolvedName,
-                        stateRange.MakeWhereQuery(resolvedName)
+                        resolvedAlias.name,
+                        stateRange.MakeWhereQuery(resolvedAlias.name)
                     );
-                    clusterMap[resolvedName] = StateRange::OR(clusterMap[resolvedName], stateRange);
+                    clusterMap[resolvedAlias.name] = StateRange::OR(clusterMap[resolvedAlias.name], stateRange);
                     // FK
                     
                     if (includeFK) {
+                        StateRange stateRange;
+        
+                        switch (stateItem.function_type) {
+                            case FUNCTION_EQ:
+                                stateRange.SetValue(stateItem.data_list[0], true);
+                                break;
+                            case FUNCTION_NE:
+                                stateRange.SetValue(stateItem.data_list[0], false);
+                                break;
+                            case FUNCTION_GT:
+                                stateRange.SetBegin(stateItem.data_list[0], false);
+                                break;
+                            case FUNCTION_GE:
+                                stateRange.SetBegin(stateItem.data_list[0], true);
+                                break;
+                            case FUNCTION_LT:
+                                stateRange.SetEnd(stateItem.data_list[0], false);
+                                break;
+                            case FUNCTION_LE:
+                                stateRange.SetEnd(stateItem.data_list[0], true);
+                                break;
+                            case FUNCTION_BETWEEN:
+                                stateRange.SetBetween(stateItem.data_list[0], stateItem.data_list[1]);
+                                break;
+                            default:
+                                break;
+                        }
                         clusterMap[stateItem.name] = StateRange::OR(clusterMap[stateItem.name], stateRange);
                     }
                 }
@@ -398,7 +459,7 @@ namespace ultraverse::state::v2 {
                         });
                         
                         if (alias != query->itemSet().end() && real != query->itemSet().end()) {
-                            _logger->trace("adding alias: {} ({}) => {} ({})", alias->name, alias->MakeRange().MakeWhereQuery(), real->name, real->MakeRange().MakeWhereQuery());
+                            _logger->trace("adding alias: {} ({}) => {} ({})", alias->name, alias->MakeRange().MakeWhereQuery(alias->name), real->name, real->MakeRange().MakeWhereQuery(real->name));
                             rowCluster.addAlias(*alias, *real);
                         }
                     }
@@ -508,7 +569,6 @@ namespace ultraverse::state::v2 {
         auto node = _stateGraph->getTxnNode(nodeIdx);
     
         using namespace std::chrono_literals;
-        std::this_thread::sleep_for(100ms);
         
         while (node != nullptr) {
             {
@@ -569,7 +629,7 @@ namespace ultraverse::state::v2 {
             dbHandle.executeQuery("use " + _intermediateDBName);
             dbHandle.executeQuery(fmt::format("/* ULTRAVERSE_HASHWATCHER_START_{} */ CREATE TABLE __ULTRAVERSE_HASHWATCHER_START__( dummy INTEGER )", _intermediateDBName));
             _logger->info("starting hashwatcher");
-            _hashWatcher->start();
+            // _hashWatcher->start();
         }
         
         _logger->info("[#{}->#{}] replaying transaction", rootNodeId, nodeId);
@@ -611,9 +671,10 @@ namespace ultraverse::state::v2 {
                     goto NEXT_QUERY;
                 }
                 
-                if (_hashWatcher != nullptr) {
-                    const std::string tableName = StateUserQuery::SplitDBNameAndTableName(*query->writeSet().begin())[0];
-    
+                if (!isDDL && _hashWatcher != nullptr) {
+                    const std::string tableName = StateUserQuery::SplitDBNameAndTableName(
+                        *query->writeSet().begin())[0];
+
                     if (transaction->gid() < _plan.rollbackGid()) {
                         _hashWatcher->setHash(tableName, query->afterHash(tableName));
                     } else if (transaction->gid() > _plan.rollbackGid()) {
@@ -641,6 +702,10 @@ namespace ultraverse::state::v2 {
         if (!isTargetTransaction) {
             expandClusterMap(_rowCluster2, *transaction, true, true);
         }
+        
+        if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {
+            _ddlTxnProcessedId = std::max(_ddlTxnProcessedId, transaction->gid());
+        }
     }
     
     void StateChanger::__node__replayQuery(
@@ -652,11 +717,9 @@ namespace ultraverse::state::v2 {
         auto statement = QUERY_TAG_STATECHANGE + query->statement();
         _logger->trace("[#{}->#{}] executing query: (timestamp={}) {}", rootNodeId, nodeId, query->timestamp(), query->statement());
         // TODO: 제거하기로 함
-        /*
         if (dbHandle.executeQuery("SET foreign_key_checks=0") != 0) {
             _logger->warn("[#{}->#{}] failed to turn off foreign key constraint", rootNodeId, nodeId);
         }
-         */
         if (dbHandle.executeQuery(fmt::format("SET TIMESTAMP={}", query->timestamp())) != 0) {
             _logger->warn("[#{}->#{}] failed to set timestamp", rootNodeId, nodeId);
         }
@@ -668,7 +731,7 @@ namespace ultraverse::state::v2 {
             // dbHandle.executeQuery("ROLLBACK");
             throw std::runtime_error(mysql_error(dbHandle));
         }
-    
+        
         if (query->flags() & Query::FLAG_IS_DDL) {
             _logger->info("[#{}->#{}] updating foreign key..", rootNodeId, nodeId);
             updatePrimaryKeys(dbHandle, query->timestamp());
@@ -787,7 +850,7 @@ namespace ultraverse::state::v2 {
             std::string toTable(row[2]);
             std::string toColumn(row[3]);
             
-            _logger->trace("updateForeignKeys(): adding foreign key: {}.{} -> {}.{}", fromTable, fromColumn, toTable, toColumn);
+            // _logger->trace("updateForeignKeys(): adding foreign key: {}.{} -> {}.{}", fromTable, fromColumn, toTable, toColumn);
             
             ForeignKey foreignKey {
                 _context->findTable(fromTable, timestamp), fromColumn,

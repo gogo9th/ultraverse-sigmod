@@ -284,7 +284,7 @@ bool StateData::Get(std::string &val) const
 
   case en_column_data_string:
     char *end;
-    val = std::strtold(d.str, &end);
+    val = std::string(d.str);
     return true;
 
   default:

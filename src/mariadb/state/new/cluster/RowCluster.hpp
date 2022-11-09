@@ -20,6 +20,9 @@ namespace ultraverse::state::v2 {
     struct RowAlias {
         StateItem alias;
         StateItem real;
+    
+        template <typename Archive>
+        void serialize(Archive &archive);
     };
     
     class RowCluster {
@@ -36,6 +39,11 @@ namespace ultraverse::state::v2 {
         void addAlias(StateItem alias, StateItem real);
         static StateItem resolveAlias(const std::vector<RowAlias> &aliases, StateItem alias);
         
+        static std::vector<std::unique_ptr<std::pair<std::string, StateRange>>>
+        resolveInvertedAliasRange(const std::vector<RowAlias> &aliases, std::string alias, StateRange range);
+        
+        static std::string resolveAliasName(const std::vector<RowAlias> &aliases, std::string alias);
+        
         const std::vector<RowAlias> &aliasSet();
         
         /**
@@ -45,10 +53,10 @@ namespace ultraverse::state::v2 {
     
         std::unordered_map<std::string, std::vector<StateRange>> &keyMap();
     
-        static bool isQueryRelated(std::vector<StateRange> &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
-        static bool isQueryRelated(StateRange &keyRange, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
+        static bool isQueryRelated(std::map<std::string, std::vector<StateRange>> &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
+        static bool isQueryRelated(std::string keyColumn, StateRange &keyRange, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
         
-        std::vector<StateRange> getKeyRangeOf(Transaction &transaction, const std::vector<std::string> &keyColumns, const std::vector<ForeignKey> &foreignKeys);
+        std::vector<StateRange> getKeyRangeOf(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys);
         
         RowCluster operator&(const RowCluster &other) const;
         RowCluster operator|(const RowCluster &other) const;
@@ -61,7 +69,7 @@ namespace ultraverse::state::v2 {
         LoggerPtr _logger;
         
         
-        static bool isExprRelated(StateRange &keyRange, const StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
+        static bool isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem expr, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
         
         /**
          * FIXME: 이거 std::string에서 std::pair<NamingHistory, std::string> 같은걸로 바꿔야 할듯

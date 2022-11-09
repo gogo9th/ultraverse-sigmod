@@ -43,7 +43,7 @@ namespace ultraverse {
             "    -i file        ultraverse state log (.ultstatelog)\n"
             "    -d database    database name\n"
             "    -g gid         gid to rollback\n"
-            "    -e columns     key columns (eg. user.id article.id)"
+            "    -e columns     key columns (eg. user.id,article.id)"
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -D             dry-run\n"
             "    -v             set logger level to DEBUG\n"
@@ -107,6 +107,8 @@ namespace ultraverse {
         changePlan.setStateLogName(getArg('i'));
         changePlan.setDBName(getArg('d'));
         changePlan.setRollbackGid(std::stoi(getArg('g')));
+        changePlan.setBinlogPath("/var/lib/mysql");
+        changePlan.columnAliases().push_back(std::make_pair("users.name", "users.id"));
     
         StateChanger stateChanger(dbHandlePool, changePlan);
         std::string action(argv()[argc() - 1]);
@@ -138,7 +140,7 @@ namespace ultraverse {
         std::stringstream sstream(expression);
         std::string column;
         
-        while (std::getline(sstream, column, ' ')) {
+        while (std::getline(sstream, column, ',')) {
             _logger->debug("using {} as key column", column);
             keyColumns.push_back(column);
         }

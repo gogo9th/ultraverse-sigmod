@@ -45,12 +45,13 @@ namespace ultraverse::base {
         return result;
     }
     
-    bool QueryEventBase::parseDDL() {
+    bool QueryEventBase::parseDDL(int limit) {
         std::vector<int16_t> tokens;
         std::vector<size_t> tokenPos;
         hsql::SQLParser::tokenize(statement(), &tokens, &tokenPos);
         
         int i = 0;
+        int j = 0;
         for (auto &token: tokens) {
             if (token == SQL_IDENTIFIER) {
                 std::string value;
@@ -68,9 +69,16 @@ namespace ultraverse::base {
                 
                 _writeSet.insert(value + ".*");
                 std::cout << value << std::endl;
+                j++;
             }
             i++;
+            
+            if (limit > 0 && j >= limit) {
+                return true;
+            }
         }
+        
+        return true;
     }
     
     void QueryEventBase::extractReadWriteSet(const hsql::InsertStatement *insert) {

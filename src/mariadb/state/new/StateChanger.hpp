@@ -97,7 +97,7 @@ namespace ultraverse::state::v2 {
         std::unique_ptr<StateGraphBoost> _stateGraph;
         std::shared_ptr<Transaction> _rollbackTarget;
         // FIXME: keyRanges는 map<keyColumn, StateRange>로 바뀌어야 하는게 맞음
-        std::shared_ptr<std::vector<StateRange>> _keyRanges;
+        std::shared_ptr<std::map<std::string, std::vector<StateRange>>> _keyRanges;
         std::shared_ptr<std::vector<size_t>> _columnSetHashes;
         
         std::shared_ptr<StateChangeContext> _context;
@@ -119,6 +119,9 @@ namespace ultraverse::state::v2 {
         
         std::unique_ptr<ColumnDependencyGraph> _columnGraph;
         std::unique_ptr<HashWatcher> _hashWatcher;
+        
+        gid_t _ddlTxnId;
+        gid_t _ddlTxnProcessedId;
     };
 }
 

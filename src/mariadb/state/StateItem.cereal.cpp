@@ -44,6 +44,7 @@ void StateData::load(Archive &archive) {
         std::string strVal;
         archive(strVal);
         d.str = new char[strVal.size() + 1];
+        memset(d.str, 0, strVal.size() + 1);
         strncpy(d.str, strVal.c_str(), strVal.size());
     }
 }

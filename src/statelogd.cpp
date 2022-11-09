@@ -89,7 +89,7 @@ public:
     
     [[noreturn]]
     void writerMain() {
-        _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(_binlogIndexPath);
+        _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(".", _binlogIndexPath);
         _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(".", _stateLogName);
 
         _pendingTxn = std::make_shared<state::v2::Transaction>();
@@ -232,7 +232,10 @@ public:
             return nullptr;
         } else if (event->isDML()) {
             // rowset, changeset이 없으므로 해시 계산 불가능
-            event->parse();
+            if (!event->parse()) {
+                // HACK: writeSet만이라도 건짐
+                event->parseDDL(1);
+            }
             
             pendingQuery->readSet().insert(
                 event->readSet().begin(), event->readSet().end()
@@ -357,8 +360,11 @@ public:
         pendingQuery->setStatement(event->statement());
 
         mariadb::QueryEvent dummyEvent(pendingQuery->database(), event->statement(), 0);
-        dummyEvent.parse();
-
+        
+        if (!dummyEvent.parse()) {
+            dummyEvent.parseDDL(1);
+        }
+    
         pendingQuery->readSet().insert(
             dummyEvent.readSet().begin(), dummyEvent.readSet().end()
         );

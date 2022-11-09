@@ -55,6 +55,9 @@ static thread_local std::stringstream strbuf;
 <COMMENT>[^\n]*	/* skipping comment content until a end of line is read */;
 <COMMENT>\n 	BEGIN(INITIAL);
 
+\/\*            BEGIN(COMMENT);
+<COMMENT>\*\/   BEGIN(INITIAL);
+
 [ \t\n]+	/* skip whitespace */;
 
 ACCESSIBLE	TOKEN(ACCESSIBLE)

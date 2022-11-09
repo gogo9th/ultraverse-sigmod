@@ -9,7 +9,14 @@
 
 namespace ultraverse::state::v2 {
     template <typename Archive>
+    void RowAlias::serialize(Archive &archive) {
+        archive(alias);
+        archive(real);
+    }
+    
+    template <typename Archive>
     void RowCluster::serialize(Archive &archive) {
         archive(_clusterMap);
+        archive(_aliases);
     }
 }

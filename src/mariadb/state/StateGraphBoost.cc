@@ -27,6 +27,7 @@ namespace ultraverse::state {
         _graph[nodeIdx]->nodeIdx = nodeIdx;
         
         bool isEntrypoint = CreateEdge(nodeIdx);
+        _logger->info("inserted node #{}", nodeIdx);
         return std::make_pair(nodeIdx, isEntrypoint);
     }
     
@@ -125,6 +126,24 @@ namespace ultraverse::state {
         std::vector<std::string> table_list;
         table_list.insert(table_list.begin(), curr->transaction->writeSet().begin(), curr->transaction->writeSet().end());
         table_list.insert(table_list.begin(), curr->transaction->readSet().begin(), curr->transaction->readSet().end());
+    
+        {
+            std::scoped_lock _lock(_context->contextLock);
+            for (const std::string &dbTableName: curr->transaction->writeSet()) {
+                auto pair = StateUserQuery::SplitDBNameAndTableName(dbTableName);
+                auto dbName = pair[0];
+                auto tableName = pair[1];
+            
+                for (const v2::ForeignKey &foreignKey: _context->foreignKeys) {
+                    if (foreignKey.fromTable->getCurrentName() == tableName) {
+                        table_list.push_back(dbName + "." + foreignKey.toTable->getCurrentName());
+                    } else if (foreignKey.toTable->getCurrentName() == tableName) {
+                        table_list.push_back(dbName + "." + foreignKey.fromTable->getCurrentName());
+                    }
+                }
+            }
+        }
+        
         StateUtil::unique_vector(table_list);
         
         std::multimap<int, std::string> prior_map;
@@ -146,6 +165,7 @@ namespace ultraverse::state {
         for (auto &i: r_wrap(prior_map)) {
             CreateEdge(node_idx, i.first, i.second);
             _graph[node_idx]->dependencies.push_back(i.first);
+            
             if (_graph[i.first]->next() == nullptr) {
                 _graph[i.first]->setNext(_graph[node_idx]);
             } else {
@@ -154,7 +174,7 @@ namespace ultraverse::state {
             
         }
         
-        for (auto &i: curr->transaction->writeSet()) {
+        for (auto &i: table_list) {
             write_node_idx_map[i] = node_idx;
         }
         
