@@ -291,13 +291,34 @@ namespace ultraverse::mariadb {
                     
                 // TODO: https://mariadb.com/kb/en/rows_event_v1v2/
                 case MYSQL_TYPE_DATE:
+                    columnTypeDef2.emplace_back(column_type::DATETIME, 3);
+                    break;
                 case MYSQL_TYPE_DATETIME:
+                    columnTypeDef2.emplace_back(column_type::DATETIME, 8);
+                    break;
                 case MYSQL_TYPE_TIMESTAMP:
+                    columnTypeDef2.emplace_back(column_type::DATETIME, 4);
+                    break;
                 case MYSQL_TYPE_TIME:
-                case MYSQL_TYPE_DATETIME2:
-                case MYSQL_TYPE_TIME2:
-                case MYSQL_TYPE_TIMESTAMP2:
-                    columnTypeDef2.emplace_back(column_type::STRING, -1);
+                    columnTypeDef2.emplace_back(column_type::DATETIME, 3);
+                    break;
+                case MYSQL_TYPE_DATETIME2: {
+                    uint8_t fractionalLength = *reinterpret_cast<uint8_t *>(metadata.get() + metadataPos);
+                    metadataPos += 1;
+                    columnTypeDef2.emplace_back(column_type::DATETIME, 5 + ((fractionalLength + 1) / 2));
+                }
+                    break;
+                case MYSQL_TYPE_TIME2: {
+                    uint8_t fractionalLength = *reinterpret_cast<uint8_t *>(metadata.get() + metadataPos);
+                    metadataPos += 1;
+                    columnTypeDef2.emplace_back(column_type::DATETIME, 3 + ((fractionalLength + 1) / 2));
+                }
+                    break;
+                case MYSQL_TYPE_TIMESTAMP2: {
+                    uint8_t fractionalLength = *reinterpret_cast<uint8_t *>(metadata.get() + metadataPos);
+                    metadataPos += 1;
+                    columnTypeDef2.emplace_back(column_type::DATETIME, 4 + ((fractionalLength + 1) / 2));
+                }
                     break;
                     
                 default:
@@ -419,12 +440,13 @@ namespace ultraverse::mariadb {
         _stream.read((char *) data.get(), dataSize);
         
         auto timestamp = header->timestamp;
+        auto flags = header->flags;
         
         return std::make_shared<RowEvent>(
             eventType,
             tableId, columns,
             data, dataSize,
-            timestamp
+            timestamp, flags
         );
     }
     
