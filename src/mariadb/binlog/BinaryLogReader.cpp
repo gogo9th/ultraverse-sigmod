@@ -440,7 +440,7 @@ namespace ultraverse::mariadb {
         _stream.read((char *) data.get(), dataSize);
         
         auto timestamp = header->timestamp;
-        auto flags = header->flags;
+        uint16_t flags = postHeader->flags;
         
         return std::make_shared<RowEvent>(
             eventType,
