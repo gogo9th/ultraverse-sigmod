@@ -268,7 +268,19 @@ public:
     
     void processTableMapEvent(std::shared_ptr<mariadb::TableMapEvent> event) {
         std::scoped_lock<std::mutex> _scopedLock(_tableMapMutex);
-        _logger->debug("[ROW] read row event: table id {} will be mapped with {}.{}", event->tableId(), event->database(), event->table());
+        _logger->debug("[ROW] read table map event: table id {} will be mapped with {}.{}", event->tableId(), event->database(), event->table());
+        
+        auto it = std::find_if(_tableMap.begin(), _tableMap.end(), [&event](auto &prevEvent) {
+            return (
+                prevEvent.second->database() == event->database() &&
+                prevEvent.second->table() == event->table()
+            );
+        });
+        
+        if (it != _tableMap.end()) {
+            _tableMap.erase(it);
+        }
+       
         _tableMap[event->tableId()] = event;
     }
     
@@ -277,7 +289,7 @@ public:
         
         _tableMapMutex.lock();
         auto table = _tableMap[event->tableId()];
-        auto &hash = _stateHashMap[event->tableId()];
+        auto &hash = _stateHashMap[table->table()];
 
         if (!hash.isInitialized()) {
             hash.init();
@@ -287,7 +299,7 @@ public:
     
         for (auto &it: _tableMap) {
             if (it.second->database() == table->database()) {
-                pendingQuery->setBeforeHash(it.second->table(), _stateHashMap[it.first]);
+                pendingQuery->setBeforeHash(it.second->table(), _stateHashMap[it.second->table()]);
             }
         }
 
@@ -325,10 +337,10 @@ public:
                     break;
             }
         }
-    
+        
         for (auto &it: _tableMap) {
             if (it.second->database() == table->database()) {
-                pendingQuery->setAfterHash(it.second->table(), _stateHashMap[it.first]);
+                pendingQuery->setAfterHash(it.second->table(), _stateHashMap[it.second->table()]);
             }
         }
         _tableMapMutex.unlock();
@@ -412,13 +424,15 @@ private:
     std::unique_ptr<state::v2::StateLogWriter> _stateLogWriter;
 
     std::unordered_map<uint64_t, std::shared_ptr<mariadb::TableMapEvent>> _tableMap;
-    std::unordered_map<uint64_t, state::StateHash> _stateHashMap;
+    std::unordered_map<std::string, state::StateHash> _stateHashMap;
     
     std::shared_ptr<state::v2::Transaction> _pendingTxn;
     std::shared_ptr<state::v2::Query> _pendingQuery;
 
     std::queue<std::shared_ptr<std::promise<std::shared_ptr<state::v2::Query>>>> _pendingQueries;
     std::mutex _tableMapMutex;
+    
+    std::mutex _txnMutex;
 
     bool terminateStatus = false;
 };
