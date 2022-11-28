@@ -74,6 +74,7 @@ namespace ultraverse {
             lock.unlock();
             
             return DBHandleLease<T>(handle, [this, handle]() {
+                std::scoped_lock lock(_mutex);
                 this->_handles.push(handle);
                 this->_condvar.notify_one();
             });
