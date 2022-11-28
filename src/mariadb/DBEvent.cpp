@@ -134,14 +134,15 @@ namespace ultraverse::mariadb {
     
     RowEvent::RowEvent(Type type, uint64_t tableId, int columns,
                        std::shared_ptr<uint8_t> rowData, int dataSize,
-                       uint64_t timestamp):
+                       uint64_t timestamp, uint16_t flags):
         _timestamp(timestamp),
        
         _type(type),
         _tableId(tableId),
         _columns(columns),
         _rowData(std::move(rowData)),
-        _dataSize(dataSize)
+        _dataSize(dataSize),
+        _flags(flags)
     {
         
     }
@@ -156,6 +157,10 @@ namespace ultraverse::mariadb {
     
     uint64_t RowEvent::tableId() const {
         return _tableId;
+    }
+    
+    uint16_t RowEvent::flags() const {
+        return _flags;
     }
     
     void RowEvent::mapToTable(TableMapEvent &tableMapEvent) {
@@ -212,13 +217,13 @@ namespace ultraverse::mariadb {
                 if (columnSize == 1 || columnSize == -1) {
                     strLength = (_rowData.get()[offset]);
                 } else if (columnSize == 2) {
-                    strLength = *reinterpret_cast<uint16_t *>(_rowData.get() + offset);
+                    strLength = (uint16_t) *reinterpret_cast<uint16_t *>(_rowData.get() + offset);
                     strLengthSize = 2;
                 } else if (columnSize == 4) {
-                    strLength = *reinterpret_cast<uint32_t *>(_rowData.get() + offset);
+                    strLength = (uint32_t) *reinterpret_cast<uint32_t *>(_rowData.get() + offset);
                     strLengthSize = 4;
                 } else if (columnSize == 8) {
-                    strLength = *reinterpret_cast<uint64_t *>(_rowData.get() + offset);
+                    strLength = (uint64_t) *reinterpret_cast<uint64_t *>(_rowData.get() + offset);
                     strLengthSize = 8;
                 }
                 
@@ -241,6 +246,26 @@ namespace ultraverse::mariadb {
                 }
                 
                 rowSize += strLength + strLengthSize;
+            } else if (columnType == column_type::DATETIME) {
+                std::unique_ptr<uint8_t> rawValue(new uint8_t[columnSize]);
+                memcpy(rawValue.get(), _rowData.get() + offset, columnSize);
+    
+                std::string strValue((char *) rawValue.get(), columnSize);
+                sstream << columnName << "=" << strValue;
+    
+                {
+                    StateItem candidateItem;
+                    StateData data;
+        
+                    data.Set(strValue.c_str(), columnSize);
+                    candidateItem.data_list.emplace_back(std::move(data));
+                    candidateItem.function_type = FUNCTION_EQ;
+                    candidateItem.name = tableMapEvent.table() + "." + columnName;
+        
+                    _candidateSet.emplace_back(std::move(candidateItem));
+                }
+    
+                rowSize += columnSize;
             } else {
     
                 StateItem candidateItem;

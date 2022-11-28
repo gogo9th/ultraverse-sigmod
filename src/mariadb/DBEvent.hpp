@@ -103,7 +103,7 @@ namespace ultraverse::mariadb {
         
         explicit RowEvent(Type type, uint64_t tableId, int columns,
                           std::shared_ptr<uint8_t> rowData, int dataSize,
-                          uint64_t timestamp);
+                          uint64_t timestamp, uint16_t flags);
         
         
         event_type::Value eventType() override {
@@ -115,6 +115,8 @@ namespace ultraverse::mariadb {
         Type type() const;
         
         uint64_t tableId() const;
+        
+        uint16_t flags() const;
         
         void mapToTable(TableMapEvent &tableMapEvent);
         
@@ -146,6 +148,7 @@ namespace ultraverse::mariadb {
         }
         
         Type _type;
+        uint16_t _flags;
         
         uint64_t _timestamp;
         uint64_t _tableId;
@@ -155,6 +158,7 @@ namespace ultraverse::mariadb {
         int _dataSize;
         
         int _affectedRows;
+        
         
         std::vector<std::string> _rowSet;
         std::vector<std::string> _changeSet;
