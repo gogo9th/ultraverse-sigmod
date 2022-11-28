@@ -56,6 +56,7 @@ namespace ultraverse::state::v2 {
         );
         
         bool isTransactionRelatedToPlan(std::shared_ptr<Transaction> transaction) const;
+        bool isTransactionRelatedToCluster(std::shared_ptr<Transaction> transaction) const;
         
         std::vector<CandidateColumn>
         buildCandidateColumnList(std::shared_ptr<Transaction> transaction) const;
@@ -97,7 +98,7 @@ namespace ultraverse::state::v2 {
         std::unique_ptr<StateGraphBoost> _stateGraph;
         std::shared_ptr<Transaction> _rollbackTarget;
         // FIXME: keyRanges는 map<keyColumn, StateRange>로 바뀌어야 하는게 맞음
-        std::shared_ptr<std::map<std::string, std::vector<StateRange>>> _keyRanges;
+        std::shared_ptr<std::map<std::string, std::vector<std::shared_ptr<StateRange>>>> _keyRanges;
         std::shared_ptr<std::vector<size_t>> _columnSetHashes;
         
         std::shared_ptr<StateChangeContext> _context;
@@ -116,6 +117,8 @@ namespace ultraverse::state::v2 {
         RowCluster _rowCluster;
         // FIXME: 네이밍
         RowCluster _rowCluster2;
+        
+        std::mutex _clusterMutex2;
         
         std::unique_ptr<ColumnDependencyGraph> _columnGraph;
         std::unique_ptr<HashWatcher> _hashWatcher;

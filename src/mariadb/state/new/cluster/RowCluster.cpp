@@ -1,3 +1,4 @@
+#include <boost/graph/adjacency_list.hpp>
 #include <fmt/format.h>
 
 #include "RowCluster.hpp"
@@ -14,9 +15,27 @@ namespace ultraverse::state::v2 {
         return _clusterMap.find(columnName) != _clusterMap.end();
     }
     
-    void RowCluster::addKeyRange(const std::string &columnName, StateRange &range) {
-        _clusterMap[columnName].push_back(range);
-        mergeCluster(columnName, false);
+    void RowCluster::addKeyRange(const std::string &columnName, std::shared_ptr<StateRange> range) {
+        auto &cluster = _clusterMap[columnName];
+        
+        cluster.emplace_back(range);
+        auto size = cluster.size();
+        auto nodeIdx = add_vertex({ size - 1, false }, _clusterGraph[columnName]);
+    
+    
+        boost::graph_traits<ClusterGraph>::vertex_iterator vi, viEnd, next;
+        boost::tie(vi, viEnd) = vertices(_clusterGraph[columnName]);
+        
+        for (next = vi; vi != viEnd; vi = next) {
+            ++next;
+            
+            const auto &pair = _clusterGraph[columnName][*vi];
+            int index = pair.first;
+            if (StateRange::AND_FAST(*range, *(cluster[index]))) {
+                add_edge(*vi, nodeIdx, _clusterGraph[columnName]);
+                break;
+            }
+        }
     }
     
     void RowCluster::addAlias(StateItem alias, StateItem real) {
@@ -29,8 +48,8 @@ namespace ultraverse::state::v2 {
             auto range2 = item.alias.MakeRange();
             
             auto range = StateRange::AND(
-                range1, range2
-            ).GetRange();
+                *range1, *range2
+            )->GetRange();
             return item.alias.name == alias.name && !range->empty();
         });
         
@@ -41,21 +60,21 @@ namespace ultraverse::state::v2 {
         return alias;
     }
     
-    std::vector<std::unique_ptr<std::pair<std::string, StateRange>>>
-    RowCluster::resolveInvertedAliasRange(const std::vector<RowAlias> &aliases, std::string alias, StateRange range) {
-        std::vector<std::unique_ptr<std::pair<std::string, StateRange>>> ranges;
+    std::vector<std::unique_ptr<std::pair<std::string, std::shared_ptr<StateRange>>>>
+    RowCluster::resolveInvertedAliasRange(const std::vector<RowAlias> &aliases, std::string alias, std::shared_ptr<StateRange> range) {
+        std::vector<std::unique_ptr<std::pair<std::string, std::shared_ptr<StateRange>>>> ranges;
         auto it = std::find_if(aliases.begin(), aliases.end(), [&alias, &range](auto item) {
             auto range2 = item.alias.MakeRange();
             auto range3 = StateRange::AND(
-                range, range2
+                *range, *range2
             );
             
-            return item.alias.name == alias && range3.GetRange()->empty();
+            return item.alias.name == alias && range3->GetRange()->empty();
         });
         
         while (it != aliases.end()) {
             auto item = it->alias;
-            ranges.emplace_back(std::make_unique<std::pair<std::string, StateRange>>(
+            ranges.emplace_back(std::make_unique<std::pair<std::string, std::shared_ptr<StateRange>>>(
                 it->alias.name, item.MakeRange()
             ));
             
@@ -83,25 +102,117 @@ namespace ultraverse::state::v2 {
     }
     
     void RowCluster::mergeCluster(const std::string &columnName, bool force) {
+        using VertexIterator = boost::graph_traits<ClusterGraph>::vertex_descriptor;
         auto &cluster = _clusterMap[columnName];
+        std::vector<std::shared_ptr<StateRange>> newCluster;
         
-        MERGE_LOOP:
-        for (auto it = cluster.begin(); it != cluster.end(); it++) {
-            for (auto it2 = cluster.begin(); it2 != cluster.end(); it2++) {
-                if (it == it2) {
+        std::function<void (VertexIterator, std::shared_ptr<StateRange>)> visitNode = [this, &columnName, &visitNode](VertexIterator vi, std::shared_ptr<StateRange> range) {
+            auto &pair1 = _clusterGraph[columnName][vi];
+            
+            if (pair1.second) {
+                return;
+            }
+            _logger->trace("visiting node {}", pair1.first);
+            
+            pair1.second = true;
+            
+            boost::graph_traits<ClusterGraph>::adjacency_iterator ai, aiEnd, aiNext;
+            boost::tie(ai, aiEnd) = boost::adjacent_vertices(vi, _clusterGraph[columnName]);
+            
+            for (aiNext = ai; ai != aiEnd; ai = aiNext) {
+                aiNext++;
+                
+                if (*ai == vi) {
                     continue;
                 }
                 
-                auto result = StateRange::AND(*it, *it2);
-                if (force || !result.GetRange()->empty()) {
-                    _logger->trace("merging cluster: {} + {}", it->MakeWhereQuery(columnName), it2->MakeWhereQuery(columnName));
-                    *it = StateRange::OR(*it, *it2);
-                    cluster.erase(it2);
-                    _logger->trace("cluster merged: {}", it->MakeWhereQuery(columnName));
-                    goto MERGE_LOOP;
+                auto &pair2 = _clusterGraph[columnName][*ai];
+                
+                if (pair2.second) {
+                    continue;
+                }
+                
+                range->OR_FAST(*_clusterMap[columnName][pair2.first]);
+                
+                visitNode(*ai, range);
+            }
+        };
+    
+        
+        boost::graph_traits<ClusterGraph>::vertex_iterator vi, viEnd, viNext;
+        boost::tie(vi, viEnd) = boost::vertices(_clusterGraph[columnName]);
+        
+        for (viNext = vi; vi != viEnd; vi = viNext) {
+            viNext++;
+            
+            auto &pair = _clusterGraph[columnName][*vi];
+            if (pair.second) {
+                continue;
+            }
+            
+            std::shared_ptr<StateRange> range = std::make_shared<StateRange>();
+            range->OR_FAST(*_clusterMap[columnName][pair.first]);
+            
+            visitNode(*vi, range);
+            newCluster.push_back(range);
+        }
+        
+        cluster = newCluster;
+        _clusterGraph[columnName].clear();
+    
+        bool rerun = false;
+        
+        for (int i = 0; i < cluster.size(); i++) {
+            auto nodeIdx = add_vertex({i, false}, _clusterGraph[columnName]);
+            
+            boost::graph_traits<ClusterGraph>::vertex_iterator vi, viEnd, next;
+            boost::tie(vi, viEnd) = vertices(_clusterGraph[columnName]);
+            
+            for (next = vi; vi != viEnd; vi = next) {
+                ++next;
+                
+                
+                const auto &pair = _clusterGraph[columnName][*vi];
+                int index = pair.first;
+                
+                if (i == index) {
+                    continue;
+                }
+                
+                if (StateRange::AND_FAST(*cluster[i], *(cluster[index]))) {
+                    rerun = true;
+                    add_edge(*vi, nodeIdx, _clusterGraph[columnName]);
+                    break;
                 }
             }
         }
+        
+        if (rerun) {
+            mergeCluster(columnName, force);
+        }
+        
+        
+        /*
+        // TODO: 이중 루프 제거해야 해
+        auto it = cluster.begin();
+        while (it != cluster.end()) {
+            MERGE_LOOP:
+            for (auto it2 = it; it2 != cluster.end(); it2++) {
+                if (it == it2) {
+                    continue;
+                }
+        
+                if (force || StateRange::AND_FAST(**it, **it2)) {
+                    _logger->trace("merging cluster: {} ({})", columnName, cluster.size());
+                    (*it)->OR_FAST(**it2);
+                    cluster.erase(it2++);
+                    _logger->trace("cluster merged: {} ({})", columnName, cluster.size());
+                }
+            }
+    
+            it++;
+        }
+         */
     }
     
     StateRange &RowCluster::getKeyRange(const std::string &columnName) {
@@ -116,12 +227,12 @@ namespace ultraverse::state::v2 {
     }
     
     
-    std::unordered_map<std::string, std::vector<StateRange>> &RowCluster::keyMap() {
+    std::unordered_map<std::string, std::vector<std::shared_ptr<StateRange>>> &RowCluster::keyMap() {
         return _clusterMap;
     }
     
-    std::vector<StateRange> RowCluster::getKeyRangeOf(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys) {
-        std::vector<StateRange> keyRanges;
+    std::vector<std::shared_ptr<StateRange>> RowCluster::getKeyRangeOf(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys) {
+        std::vector<std::shared_ptr<StateRange>> keyRanges;
         
         for (auto &query: transaction.queries()) {
             for (auto &range: _clusterMap.at(keyColumn)) {
@@ -134,7 +245,7 @@ namespace ultraverse::state::v2 {
         return keyRanges;
     }
     
-    bool RowCluster::isQueryRelated(std::map<std::string, std::vector<StateRange>> &keyRanges, Query &query,
+    bool RowCluster::isQueryRelated(std::map<std::string, std::vector<std::shared_ptr<StateRange>>> &keyRanges, Query &query,
                                     const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
         for (auto &pair: keyRanges) {
             for (auto &keyRange: pair.second) {
@@ -147,15 +258,15 @@ namespace ultraverse::state::v2 {
         return false;
     }
     
-    bool RowCluster::isQueryRelated(std::string keyColumn, StateRange &range, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
+    bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
         for (auto expr: query.whereSet()) {
-            if (isExprRelated(keyColumn, range, expr, foreignKeys, aliases)) {
+            if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases)) {
                 return true;
             }
         }
         
         for (auto expr: query.itemSet()) {
-            if (isExprRelated(keyColumn, range, expr, foreignKeys, aliases)) {
+            if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases)) {
                 return true;
             }
         }
@@ -173,7 +284,7 @@ namespace ultraverse::state::v2 {
             
             if (keyColumn == expr.name) {
                 auto range = StateItem::MakeRange(expr);
-                if (!StateRange::AND(range, keyRange).GetRange()->empty()) {
+                if (!StateRange::AND(*range, keyRange)->GetRange()->empty()) {
                     return true;
                 }
             }

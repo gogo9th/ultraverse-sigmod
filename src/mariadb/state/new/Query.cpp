@@ -10,6 +10,7 @@
 namespace ultraverse::state::v2 {
     Query::Query():
         _type(UNKNOWN),
+        _flags(0),
         _timestamp(0),
         _affectedRows(0),
         _referencePos(0)
@@ -71,6 +72,10 @@ namespace ultraverse::state::v2 {
     
     void Query::setAfterHash(std::string tableName, StateHash hash) {
         _afterHash[tableName] = hash;
+    }
+    
+    bool Query::isAfterHashPresent(std::string tableName) {
+        return _afterHash.find(tableName) != _afterHash.end();
     }
     
     uint8_t Query::flags() {

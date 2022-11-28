@@ -52,10 +52,7 @@ namespace ultraverse::state {
         int32_t bnSize = 0;
         int32_t listSize = 0;
         std::unique_ptr<std::vector<uint8_t>> srcPtr;
-
-        _moduloList.reserve(listSize / 2);
-        _hashList.reserve(listSize / 2);
-
+        
         archive(bnSize);
         
         if (bnSize == 0) {
@@ -67,6 +64,9 @@ namespace ultraverse::state {
 
         assert(bnSize != 0);
         assert(listSize != 0);
+    
+        _moduloList.reserve(listSize);
+        _hashList.reserve(listSize);
 
         for (auto i = 0; i < listSize * 2; i++) {
             StateHash::BigNumPtr bignum(BN_new(), BN_free);

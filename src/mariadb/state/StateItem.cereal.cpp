@@ -3,6 +3,7 @@
 //
 
 #include <cereal/types/vector.hpp>
+#include <cereal/types/memory.hpp>
 
 #include "StateItem.h"
 

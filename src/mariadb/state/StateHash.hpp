@@ -67,7 +67,7 @@ namespace ultraverse::state {
         StateHash& operator+=(Record record);
         StateHash& operator-=(Record record);
         
-        bool operator==(StateHash &other);
+        bool operator==(const StateHash &other) const;
         
         template <typename Archive>
         void save(Archive &archive) const;

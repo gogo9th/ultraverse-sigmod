@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <memory>
 
 #include "state_log_hdr.h"
 
@@ -94,11 +95,56 @@ public:
     StateData begin;
     StateData end;
     
+    bool empty() {
+        return begin.Type() == en_column_data_null &&
+               end.Type() == en_column_data_null;
+    }
+    
     bool operator== (const ST_RANGE &other) const {
         return this->begin == other.begin && this->end == other.end;
     }
     
-    template <typename Archive>
+    ST_RANGE operator& (const ST_RANGE &other) const {
+        ST_RANGE range;
+        const ST_RANGE *small, *big;
+    
+        auto new_range = std::make_shared<std::vector<ST_RANGE>>();
+    
+        //a.begin 이 더 작을경우
+        if (MIN(begin, other.begin) == 0)
+        {
+            small = this;
+            big = &other;
+        }
+            //b.begin 이 더 작을경우 (또는 완벽히 동일할 경우)
+        else
+        {
+            small = &other;
+            big = this;
+        }
+    
+        if (IsIntersection(*small, *big))
+        {
+            //교집합
+            if (big->begin == big->end)
+            {
+                range = *big;
+            }
+            else
+            {
+                range.begin = big->begin;
+                range.end = small->end;
+            }
+        }
+        else
+        {
+            //공집합
+        }
+    
+        return std::move(range);
+    }
+    
+      template <typename Archive>
     void serialize(Archive &archive);
   };
 
@@ -115,10 +161,14 @@ public:
   void SetBetween(const StateData &_begin, const StateData &_end);
   void SetValue(const StateData &_value, bool _add_equal);
   const std::vector<ST_RANGE> *GetRange() const;
-  static std::vector<StateRange> OR_ARRANGE(const std::vector<StateRange> &a);
-
-  static StateRange AND(const StateRange &a, const StateRange &b);
-  static StateRange OR(const StateRange &a, const StateRange &b);
+  static std::shared_ptr<std::vector<StateRange>> OR_ARRANGE(const std::vector<StateRange> &a);
+  
+  static bool AND_FAST(const StateRange &a, const StateRange &b);
+  
+  void OR_FAST(const StateRange &b);
+  
+  static std::shared_ptr<StateRange> AND(const StateRange &a, const StateRange &b);
+  static std::shared_ptr<StateRange> OR(const StateRange &a, const StateRange &b);
 
   template <typename Archive>
   void serialize(Archive &archive);
@@ -132,13 +182,13 @@ private:
   static EN_VALID IsValid(const StateRange &a, const StateRange &b);
   static bool IsIntersection(const ST_RANGE &small, const ST_RANGE &big);
 
-  static std::vector<ST_RANGE> AND(const ST_RANGE &a, const ST_RANGE &b);
-  static std::vector<ST_RANGE> OR_ARRANGE(const std::vector<ST_RANGE> &a);
-  static std::vector<ST_RANGE> OR(const ST_RANGE &a, const ST_RANGE &b);
+  static std::shared_ptr<std::vector<ST_RANGE>> AND(const ST_RANGE &a, const ST_RANGE &b);
+  static std::shared_ptr<std::vector<ST_RANGE>> OR_ARRANGE(const std::shared_ptr<std::vector<ST_RANGE>> a);
+  static std::shared_ptr<std::vector<ST_RANGE>> OR(const ST_RANGE &a, const ST_RANGE &b);
   static int MIN(const StateData &a, const StateData &b);
   static int MAX(const StateData &a, const StateData &b);
 
-  std::vector<ST_RANGE> range;
+  std::shared_ptr<std::vector<ST_RANGE>> range;
 };
 
 class StateItem
@@ -147,9 +197,9 @@ public:
   StateItem();
   ~StateItem();
 
-  StateRange MakeRange();
-  StateRange MakeRange(const std::string &column_name, bool &is_valid);
-  static StateRange MakeRange(const StateItem &item);
+  std::shared_ptr<StateRange> MakeRange();
+  std::shared_ptr<StateRange> MakeRange(const std::string &column_name, bool &is_valid);
+  static std::shared_ptr<StateRange> MakeRange(const StateItem &item);
 
   // 두 범위(또는 값)가 교집합인지 공집합인지 확인
   // 정보가 불완전 할 경우 / 기본값은 교집합으로 함

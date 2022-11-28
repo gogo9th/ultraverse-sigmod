@@ -81,6 +81,18 @@ namespace ultraverse::state::v2 {
         }
         
         _logger->debug("[ROW] read row event: table id {} will be mapped with {}.{}", event->tableId(), event->database(), event->table());
+        
+        auto it = std::find_if(_tableMap.begin(), _tableMap.end(), [&event](auto &prevEvent) {
+            return (
+                prevEvent.second->database() == event->database() &&
+                prevEvent.second->table() == event->table()
+            );
+        });
+        
+        if (it != _tableMap.end()) {
+            _tableMap.erase(it);
+        }
+        
         _tableMap[event->tableId()] = event;
     }
     
@@ -95,13 +107,21 @@ namespace ultraverse::state::v2 {
         auto &hash = _hashState[table->table()];
         auto &queue = _hashQueue[table->table()];
         
+        int count = 0;
         while (queue.empty()) {
             if (!_isThreadRunning) {
                 return;
             }
             
             using namespace std::chrono_literals;
-            std::this_thread::sleep_for(1ms);
+            std::this_thread::sleep_for(10ms);
+            
+            count++;
+            
+            if (count > 10) {
+                _logger->warn("table desync: {}", table->table());
+                return;
+            }
         }
         
         if (_matchState[table->table()]) {
@@ -135,7 +155,12 @@ namespace ultraverse::state::v2 {
         if (hash == expectedHash) {
             _logger->trace("hash matched");
             _matchState[table->table()] = true;
-        }
+        } else {
+            _logger->trace("== current ==");
+            hash.hexdump();
+            _logger->trace("== expected ==");
+            expectedHash.hexdump();
+        };
         _mutex.unlock();
     }
 }

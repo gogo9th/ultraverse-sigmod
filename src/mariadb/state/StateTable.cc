@@ -1848,8 +1848,10 @@ StateTable::QueryList::iterator StateTable::BinaryFindList(QueryList &list, cons
     bool update_range(std::vector<StateRange> &current_range_set, const std::vector<StateRange> &range_set) {
         // 교차한 범위를 current_range_set 을 합집합으로 업데이트
         auto new_range_set = current_range_set;
+        /*
         new_range_set.insert(new_range_set.end(), range_set.begin(), range_set.end());
         new_range_set = StateRange::OR_ARRANGE(new_range_set);
+         */
         
         bool is_range_changed = true;
         if (current_range_set.size() == new_range_set.size()) {
@@ -2025,7 +2027,7 @@ StateTable::QueryList::iterator StateTable::BinaryFindList(QueryList &list, cons
                         for (auto &query_range: i->range) {
                             for (auto &base_range: current_range_set) {
                                 auto and_range = StateRange::AND(query_range, base_range);
-                                if (and_range.GetRange()->size() == 0) {
+                                if (and_range->GetRange()->size() == 0) {
                                     // 공집합
                                     ++empty_size;
                                 } else {
@@ -2279,7 +2281,7 @@ StateTable::QueryList::iterator StateTable::BinaryFindList(QueryList &list, cons
     group list 에서 item_set - where_set 을 구함, 이 목록안에 해당되면 되감기 대상임
     redo list 에서 foreign_set 체크할때 같이 수행
   */
-        current_range_set = StateRange::OR_ARRANGE(current_range_set);
+        // current_range_set = StateRange::OR_ARRANGE(current_range_set);
         
         // group list 쿼리와 연결된 TABLE 목록 획득
         auto func = [&](Query &i, bool is_grp) {
@@ -2926,7 +2928,7 @@ StateTable::QueryList::iterator StateTable::BinaryFindList(QueryList &list, cons
                             for (auto &c: cols) {
                                 // 테이블명은 다르고 column명이 동일할때 후보임
                                 if (std::get<1>(c) != vec[1] && std::get<2>(c) == vec[2]) {
-                                    result_cols.emplace_back(std::get<0>(c), std::get<3>(c).MakeRange());
+                                    // result_cols.emplace_back(std::get<0>(c), std::get<3>(c).MakeRange());
                                 }
                             }
                         }
@@ -2953,18 +2955,18 @@ StateTable::QueryList::iterator StateTable::BinaryFindList(QueryList &list, cons
                         auto copy_item_set = t.item_set;
                         for (auto &item: copy_item_set) {
                             if (item.name == column_name)
-                                i->range.emplace_back(item.MakeRange(column_name, is_valid));
+                                // i->range.emplace_back(item.MakeRange(column_name, is_valid));
                             if (!is_valid) ret = false;
                         }
                         
                         auto copy_where_set = t.where_set;
                         for (auto &where: copy_where_set) {
-                            i->range.emplace_back(where.MakeRange(column_name, is_valid));
+                            // i->range.emplace_back(where.MakeRange(column_name, is_valid));
                             if (!is_valid) ret = false;
                         }
                     }
                     
-                    i->range = StateRange::OR_ARRANGE(i->range);
+                    // i->range = StateRange::OR_ARRANGE(i->range);
                     
                     return ret;
                 },
@@ -3010,7 +3012,7 @@ StateTable::QueryList::iterator StateTable::BinaryFindList(QueryList &list, cons
                 double count = 0;
                 for (auto &i: c.second) {
                     auto range = StateRange::AND(i, r);
-                    if (range.GetRange()->size() > 0) {
+                    if (range->GetRange()->size() > 0) {
                         count += 1.0f;
                     }
                 }

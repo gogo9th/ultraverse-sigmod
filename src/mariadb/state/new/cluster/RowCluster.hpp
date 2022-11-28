@@ -34,13 +34,13 @@ namespace ultraverse::state::v2 {
         bool hasKey(const std::string &columnName) const;
         void addKey(const std::string &columnName) const;
         
-        void addKeyRange(const std::string &columnName, StateRange &range);
+        void addKeyRange(const std::string &columnName, std::shared_ptr<StateRange> range);
     
         void addAlias(StateItem alias, StateItem real);
         static StateItem resolveAlias(const std::vector<RowAlias> &aliases, StateItem alias);
         
-        static std::vector<std::unique_ptr<std::pair<std::string, StateRange>>>
-        resolveInvertedAliasRange(const std::vector<RowAlias> &aliases, std::string alias, StateRange range);
+        static std::vector<std::unique_ptr<std::pair<std::string, std::shared_ptr<StateRange>>>>
+        resolveInvertedAliasRange(const std::vector<RowAlias> &aliases, std::string alias, std::shared_ptr<StateRange> range);
         
         static std::string resolveAliasName(const std::vector<RowAlias> &aliases, std::string alias);
         
@@ -51,12 +51,12 @@ namespace ultraverse::state::v2 {
          */
         StateRange &getKeyRange(const std::string &columnName);
     
-        std::unordered_map<std::string, std::vector<StateRange>> &keyMap();
+        std::unordered_map<std::string, std::vector<std::shared_ptr<StateRange>>> &keyMap();
     
-        static bool isQueryRelated(std::map<std::string, std::vector<StateRange>> &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
-        static bool isQueryRelated(std::string keyColumn, StateRange &keyRange, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
+        static bool isQueryRelated(std::map<std::string, std::vector<std::shared_ptr<StateRange>>> &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
+        static bool isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> keyRange, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
         
-        std::vector<StateRange> getKeyRangeOf(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys);
+        std::vector<std::shared_ptr<StateRange>> getKeyRangeOf(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys);
         
         RowCluster operator&(const RowCluster &other) const;
         RowCluster operator|(const RowCluster &other) const;
@@ -67,6 +67,8 @@ namespace ultraverse::state::v2 {
         void serialize(Archive &archive);
     private:
         LoggerPtr _logger;
+        using ClusterGraph =
+            boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, std::pair<int, bool>>;
         
         
         static bool isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem expr, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
@@ -75,7 +77,8 @@ namespace ultraverse::state::v2 {
          * FIXME: 이거 std::string에서 std::pair<NamingHistory, std::string> 같은걸로 바꿔야 할듯
          *        안그러면 이거 테이블 리네임되면 맛감
          */
-        std::unordered_map<std::string, std::vector<StateRange>> _clusterMap;
+        std::unordered_map<std::string, std::vector<std::shared_ptr<StateRange>>> _clusterMap;
+        std::unordered_map<std::string, ClusterGraph> _clusterGraph;
         std::vector<RowAlias> _aliases;
     };
 }

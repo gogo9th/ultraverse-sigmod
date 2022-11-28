@@ -51,6 +51,7 @@ namespace ultraverse::state {
     }
     
     std::shared_ptr<StateGraphBoost::TxnNode> StateGraphBoost::getTxnNode(uint64_t index) {
+        std::scoped_lock<std::mutex> _lock(_nodeMutex);
         return _graph[index];
     }
     

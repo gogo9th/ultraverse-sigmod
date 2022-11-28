@@ -129,6 +129,7 @@ namespace ultraverse::state {
         _moduloList(copyHashList(other._moduloList)),
         _hashList(copyHashList(other._hashList))
     {
+        // assert(*this == other);
         assert(_moduloList.size() == _hashList.size());
     }
     
@@ -178,7 +179,8 @@ namespace ultraverse::state {
         return *this;
     }
     
-    bool StateHash::operator==(StateHash &other) {
-        return compareHashList(this->_hashList, other._hashList);
+    bool StateHash::operator==(const StateHash &other) const {
+        return compareHashList(this->_hashList, other._hashList) &&
+               compareHashList(this->_moduloList, other._moduloList);
     }
 }

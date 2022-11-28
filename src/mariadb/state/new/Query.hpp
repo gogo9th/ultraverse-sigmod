@@ -35,13 +35,8 @@ namespace ultraverse::state::v2 {
         };
     
         static const uint8_t FLAG_IS_IGNORABLE      = 0b00000001;
-        
         static const uint8_t FLAG_IS_DDL            = 0b00000010;
-        static const uint8_t FLAG_DEFINES_DATABASE  = 0b10000010;
-        static const uint8_t FLAG_DEFINES_TABLE     = 0b01000010;
-        static const uint8_t FLAG_DEFINES_INDEX     = 0b00100010;
-        static const uint8_t FLAG_DEFINES_TRIGGER   = 0b00010010;
-        static const uint8_t FLAG_DEFINES_VIEW      = 0b00001010;
+        static const uint8_t FLAG_IS_CONTINUOUS     = 0b10000000;
     
         Query();
         
@@ -65,6 +60,7 @@ namespace ultraverse::state::v2 {
         
         StateHash &afterHash(std::string tableName);
         void setAfterHash(std::string tableName, StateHash hash);
+        bool isAfterHashPresent(std::string tableName);
         
         uint8_t flags();
         void setFlags(uint8_t flags);
