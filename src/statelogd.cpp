@@ -135,11 +135,7 @@ public:
             
             switch (event->eventType()) {
                 case event_type::QUERY:
-                    _pendingQueries.push(
-                        _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, event = std::move(event)]() {
-                            return processQueryEvent(std::dynamic_pointer_cast<mariadb::QueryEvent>(event));
-                        })
-                    );
+                    processQueryEvent(std::dynamic_pointer_cast<mariadb::QueryEvent>(event));
                     break;
                 case event_type::TXNID:
                     processTransactionIDEvent(std::dynamic_pointer_cast<mariadb::TransactionIDEvent>(event));
@@ -151,7 +147,7 @@ public:
                     break;
                 case event_type::ROW_EVENT: {
                     _pendingQueries.push(
-                        _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, event = std::move(event), pendingRowQueryEvent = std::move(pendingRowQueryEvent)]() {
+                        _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, event = std::move(event), pendingRowQueryEvent]() {
                             auto pendingQuery = std::make_shared<state::v2::Query>();
                             processRowEvent(std::dynamic_pointer_cast<mariadb::RowEvent>(event), pendingQuery);
                             processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
@@ -190,7 +186,7 @@ public:
         _pendingTxn = std::make_shared<state::v2::Transaction>();
     }
     
-    std::shared_ptr<state::v2::Query> processQueryEvent(std::shared_ptr<mariadb::QueryEvent> event) {
+    void processQueryEvent(std::shared_ptr<mariadb::QueryEvent> event) {
         auto pendingQuery = std::make_shared<state::v2::Query>();
 
         pendingQuery->setTimestamp(event->timestamp());
@@ -215,21 +211,11 @@ public:
                 event->writeSet().begin(), event->writeSet().end()
             );
 
-            auto transaction = std::make_shared<state::v2::Transaction>();
-            transaction->setFlags(
-                transaction->flags() |
+            _pendingTxn->setFlags(
+                _pendingTxn->flags() |
                 state::v2::Transaction::FLAG_CONTAINS_DDL
             );
 
-            *transaction << pendingQuery;
-            transaction->setGid(_gid++);
-            transaction->setXid(0);
-
-
-
-            *_stateLogWriter << *transaction;
-
-            return nullptr;
         } else if (event->isDML()) {
             // rowset, changeset이 없으므로 해시 계산 불가능
             if (!event->parse()) {
@@ -252,7 +238,9 @@ public:
              */
         }
         
-        return pendingQuery;
+        *_pendingTxn << pendingQuery;
+        _pendingTxn->setXid(0);
+        finalizeTransaction();
     }
     
     void processTransactionIDEvent(std::shared_ptr<mariadb::TransactionIDEvent> event) {
@@ -267,6 +255,8 @@ public:
             if (pendingQuery == nullptr) {
                 continue;
             }
+            
+            _logger->trace("[{}]: {}", _gid, pendingQuery->statement());
 
             *_pendingTxn << pendingQuery;
         }
@@ -354,6 +344,10 @@ public:
             pendingQuery->itemSet().begin(),
             candidateSet.begin(), candidateSet.end()
         );
+        
+        if (!(event->flags() & 1)) {
+            pendingQuery->setFlags(pendingQuery->flags() | state::v2::Query::FLAG_IS_CONTINUOUS);
+        }
     }
     
     void processRowQueryEvent(std::shared_ptr<mariadb::RowQueryEvent> event, std::shared_ptr<state::v2::Query> pendingQuery) {
