@@ -36,6 +36,7 @@ namespace ultraverse::column_type {
         STRING = 0,
         INTEGER = 1,
         FLOAT = 2,
+        DATETIME = 3,
     };
 }
 
