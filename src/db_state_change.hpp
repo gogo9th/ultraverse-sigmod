@@ -20,6 +20,7 @@ namespace ultraverse {
         bool confirm(std::string message);
         
         std::vector<std::string> buildKeyColumnList(std::string expression);
+        std::vector<uint64_t> buildSkipGidList(std::string gidsStr);
         
     private:
         LoggerPtr _logger;

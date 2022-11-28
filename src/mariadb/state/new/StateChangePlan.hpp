@@ -41,6 +41,10 @@ namespace ultraverse::state::v2 {
         
         std::vector<std::string> &keyColumns();
         std::vector<std::pair<std::string, std::string>> &columnAliases();
+        
+        std::vector<uint64_t> &skipGids();
+        [[nodiscard]]
+        const std::vector<uint64_t> &skipGids() const;
     
     private:
         std::string _dbName;
@@ -54,6 +58,8 @@ namespace ultraverse::state::v2 {
         
         std::vector<std::string> _keyColumns;
         std::vector<std::pair<std::string, std::string>> _columnAliases;
+    
+        std::vector<uint64_t> _skipGids;
         bool _isDryRun;
     };
     

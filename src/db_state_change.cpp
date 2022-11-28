@@ -28,7 +28,7 @@ namespace ultraverse {
     }
     
     std::string DBStateChangeApp::optString() {
-        return "s:i:d:g:e:c:DvVh";
+        return "s:i:d:g:e:c:S:DvVh";
     }
     
     int DBStateChangeApp::main() {
@@ -46,6 +46,7 @@ namespace ultraverse {
             "    -e columns     key columns (eg. user.id,article.id)"
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -D             dry-run\n"
+            "    -S gid,gid,... list of gids to skip processing\n"
             "    -v             set logger level to DEBUG\n"
             "    -V             set logger level to TRACE\n"
             "    -h             print this help and exit application\n"
@@ -84,6 +85,14 @@ namespace ultraverse {
             changePlan.keyColumns().insert(
                 changePlan.keyColumns().begin(),
                 keyColumns.begin(), keyColumns.end()
+            );
+        }
+        
+        if (isArgSet('S')) {
+            auto skipGids = buildSkipGidList(getArg('S'));
+            changePlan.skipGids().insert(
+                changePlan.skipGids().end(),
+                skipGids.begin(), skipGids.end()
             );
         }
     
@@ -146,6 +155,21 @@ namespace ultraverse {
         }
         
         return keyColumns;
+    }
+    
+    
+    std::vector<uint64_t> DBStateChangeApp::buildSkipGidList(std::string gidsStr) {
+        std::vector<uint64_t> skipGids;
+        
+        std::stringstream sstream(gidsStr);
+        std::string gid;
+        
+        while (std::getline(sstream, gid, ',')) {
+            _logger->debug("gid {} will be skipped", gid);
+            skipGids.push_back(std::stoull(gid));
+        }
+        
+        return skipGids;
     }
 }
 
