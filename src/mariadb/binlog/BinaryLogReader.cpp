@@ -508,7 +508,7 @@ namespace ultraverse::mariadb {
     
     void BinaryLogSequentialReader::updateIndex() {
         _logFileList.clear();
-        std::ifstream stream(_indexFile, std::ios::in);
+        std::ifstream stream(_basePath + "/" + _indexFile, std::ios::in);
         
         if (!stream.good()) {
             throw std::runtime_error(
