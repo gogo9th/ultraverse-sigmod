@@ -269,6 +269,9 @@ namespace ultraverse::state::v2 {
         }
         
         stateLogWriter << _rowCluster;
+        
+        dropIntermediateDB();
+        taskExecutor.shutdown();
     }
 
     void StateChanger::start() {
@@ -1123,6 +1126,19 @@ namespace ultraverse::state::v2 {
         auto &dbHandle = dbHandleLease.get();
         if (dbHandle.executeQuery(query) != 0) {
             _logger->error("cannot create intermediate database: {}", mysql_error(dbHandle));
+            throw std::runtime_error(mysql_error(dbHandle));
+        }
+        dbHandle.executeQuery("COMMIT");
+    }
+    
+    void StateChanger::dropIntermediateDB() {
+         _logger->info("dropping intermediate database: {}", _intermediateDBName);
+        
+        auto query = QUERY_TAG_STATECHANGE + fmt::format("DROP DATABASE IF EXISTS {}", _intermediateDBName);
+        auto dbHandleLease = _dbHandlePool.take();
+        auto &dbHandle = dbHandleLease.get();
+        if (dbHandle.executeQuery(query) != 0) {
+            _logger->error("cannot drop intermediate database: {}", mysql_error(dbHandle));
             throw std::runtime_error(mysql_error(dbHandle));
         }
         dbHandle.executeQuery("COMMIT");

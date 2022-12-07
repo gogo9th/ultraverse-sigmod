@@ -13,9 +13,17 @@
 
 class TaskExecutor {
 public:
-    TaskExecutor(int size) {
+    TaskExecutor(int size):
+        _isRunning(true)
+    {
         for (int i = 0; i < size; i++) {
             _workers.emplace_back(&TaskExecutor::workerLoop, this);
+        }
+    }
+    
+    ~TaskExecutor() {
+        if (_isRunning) {
+            shutdown();
         }
     }
     
@@ -35,12 +43,26 @@ public:
         return promise;
     }
     
+    void shutdown() {
+        _isRunning = false;
+        _condvar.notify_all();
+        
+        for (auto &worker: _workers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+    }
+    
 private:
-    [[noreturn]]
     void workerLoop() {
-        while (true) {
+        while (_isRunning) {
             std::unique_lock lock(_mutex);
-            _condvar.wait(lock, [this] { return !_tasks.empty(); });
+            _condvar.wait(lock, [this] { return !_tasks.empty() || !_isRunning; });
+    
+            if (!_isRunning) {
+                return;
+            }
     
             auto task = std::move(_tasks.front());
             _tasks.pop();
@@ -49,6 +71,8 @@ private:
             task();
         }
     }
+    
+    bool _isRunning;
     
     std::queue<std::function<void()>> _tasks;
     std::vector<std::thread> _workers;
