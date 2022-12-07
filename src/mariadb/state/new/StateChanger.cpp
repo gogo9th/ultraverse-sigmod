@@ -452,7 +452,8 @@ namespace ultraverse::state::v2 {
         queryBuilder << fmt::format("SET FOREIGN_KEY_CHECKS = TRUE;\n\n");
     
         _logger->trace("TODO: EXECUTE QUERY:\n{}", queryBuilder.str());
-        
+    
+        taskExecutor.shutdown();
     }
     
     bool StateChanger::isQueryRelatedWithKeyColumns(Query &query) {
@@ -570,39 +571,41 @@ namespace ultraverse::state::v2 {
                     
                     auto stateRange = std::make_shared<StateRange>();
         
-                    switch (resolvedAlias.function_type) {
-                        case FUNCTION_EQ:
-                            stateRange->SetValue(resolvedAlias.data_list[0], true);
-                            break;
-                        case FUNCTION_NE:
-                            stateRange->SetValue(resolvedAlias.data_list[0], false);
-                            break;
-                        case FUNCTION_GT:
-                            stateRange->SetBegin(resolvedAlias.data_list[0], false);
-                            break;
-                        case FUNCTION_GE:
-                            stateRange->SetBegin(resolvedAlias.data_list[0], true);
-                            break;
-                        case FUNCTION_LT:
-                            stateRange->SetEnd(resolvedAlias.data_list[0], false);
-                            break;
-                        case FUNCTION_LE:
-                            stateRange->SetEnd(resolvedAlias.data_list[0], true);
-                            break;
-                        case FUNCTION_BETWEEN:
-                            stateRange->SetBetween(resolvedAlias.data_list[0], resolvedAlias.data_list[1]);
-                            break;
-                        default:
-                            break;
+                    if (!(flags & CLUSTER_EXPAND_FLAG_DONT_EXPAND)) {
+                        switch (resolvedAlias.function_type) {
+                            case FUNCTION_EQ:
+                                stateRange->SetValue(resolvedAlias.data_list[0], true);
+                                break;
+                            case FUNCTION_NE:
+                                stateRange->SetValue(resolvedAlias.data_list[0], false);
+                                break;
+                            case FUNCTION_GT:
+                                stateRange->SetBegin(resolvedAlias.data_list[0], false);
+                                break;
+                            case FUNCTION_GE:
+                                stateRange->SetBegin(resolvedAlias.data_list[0], true);
+                                break;
+                            case FUNCTION_LT:
+                                stateRange->SetEnd(resolvedAlias.data_list[0], false);
+                                break;
+                            case FUNCTION_LE:
+                                stateRange->SetEnd(resolvedAlias.data_list[0], true);
+                                break;
+                            case FUNCTION_BETWEEN:
+                                stateRange->SetBetween(resolvedAlias.data_list[0], resolvedAlias.data_list[1]);
+                                break;
+                            default:
+                                break;
+                        }
+                        
+                        _logger->trace(
+                            "RowCluster: expanding range of {} => (WHERE {})",
+                            resolvedAlias.name,
+                            stateRange->MakeWhereQuery(resolvedAlias.name)
+                        );
                     }
-    
 
-                    _logger->trace(
-                        "RowCluster: expanding range of {} => (WHERE {})",
-                        resolvedAlias.name,
-                        stateRange->MakeWhereQuery(resolvedAlias.name)
-                    );
-                    
+                   
                     if (clusterMap[resolvedAlias.name] == nullptr) {
                         clusterMap[resolvedAlias.name] = std::make_shared<StateRange>();
                     }
@@ -612,31 +615,33 @@ namespace ultraverse::state::v2 {
                     
                     if (flags & CLUSTER_EXPAND_FLAG_INCLUDE_FK) {
                         auto stateRange2 = std::make_shared<StateRange>();
-        
-                        switch (stateItem.function_type) {
-                            case FUNCTION_EQ:
-                                stateRange2->SetValue(stateItem.data_list[0], true);
-                                break;
-                            case FUNCTION_NE:
-                                stateRange2->SetValue(stateItem.data_list[0], false);
-                                break;
-                            case FUNCTION_GT:
-                                stateRange2->SetBegin(stateItem.data_list[0], false);
-                                break;
-                            case FUNCTION_GE:
-                                stateRange2->SetBegin(stateItem.data_list[0], true);
-                                break;
-                            case FUNCTION_LT:
-                                stateRange2->SetEnd(stateItem.data_list[0], false);
-                                break;
-                            case FUNCTION_LE:
-                                stateRange2->SetEnd(stateItem.data_list[0], true);
-                                break;
-                            case FUNCTION_BETWEEN:
-                                stateRange2->SetBetween(stateItem.data_list[0], stateItem.data_list[1]);
-                                break;
-                            default:
-                                break;
+    
+                        if (!(flags & CLUSTER_EXPAND_FLAG_DONT_EXPAND)) {
+                            switch (stateItem.function_type) {
+                                case FUNCTION_EQ:
+                                    stateRange2->SetValue(stateItem.data_list[0], true);
+                                    break;
+                                case FUNCTION_NE:
+                                    stateRange2->SetValue(stateItem.data_list[0], false);
+                                    break;
+                                case FUNCTION_GT:
+                                    stateRange2->SetBegin(stateItem.data_list[0], false);
+                                    break;
+                                case FUNCTION_GE:
+                                    stateRange2->SetBegin(stateItem.data_list[0], true);
+                                    break;
+                                case FUNCTION_LT:
+                                    stateRange2->SetEnd(stateItem.data_list[0], false);
+                                    break;
+                                case FUNCTION_LE:
+                                    stateRange2->SetEnd(stateItem.data_list[0], true);
+                                    break;
+                                case FUNCTION_BETWEEN:
+                                    stateRange2->SetBetween(stateItem.data_list[0], stateItem.data_list[1]);
+                                    break;
+                                default:
+                                    break;
+                            }
                         }
     
                         if (clusterMap[stateItem.name] == nullptr) {
