@@ -41,6 +41,7 @@ namespace ultraverse::state::v2 {
          * indicates the hash is unreliable since row data has omitted (or corrupted)
          */
         static const uint8_t FLAG_UNRELIABLE_HASH = 0b00000100;
+        static const uint8_t FLAG_FORCE_EXECUTE   = 0b10000000;
         
         explicit Transaction();
         

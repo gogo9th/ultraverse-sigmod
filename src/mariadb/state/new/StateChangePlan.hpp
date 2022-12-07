@@ -23,6 +23,15 @@ namespace ultraverse::state::v2 {
         OperationMode mode() const;
         void setMode(OperationMode mode);
         
+        const std::string &dbHost() const;
+        void setDBHost(const std::string &dbHost);
+    
+        const std::string &dbUsername() const;
+        void setDBUsername(const std::string &dbUsername);
+        
+        const std::string &dbPassword() const;
+        void setDBPassword(const std::string &dbPassword);
+    
         const std::string &dbName() const;
         void setDBName(const std::string &dbName);
         
@@ -64,7 +73,11 @@ namespace ultraverse::state::v2 {
     private:
         OperationMode _operationMode;
         
+        std::string _dbHost;
+        std::string _dbUsername;
+        std::string _dbPassword;
         std::string _dbName;
+        
         gid_t _startGid;
         gid_t _rollbackGid;
         gid_t _endGid;

@@ -167,6 +167,10 @@ namespace ultraverse::state::v2 {
         
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
         
+        if (!_plan.dbDumpPath().empty()) {
+            loadBackup(_intermediateDBName, _plan.dbDumpPath());
+        }
+        
         _reader.open();
         
         while (_reader.next()) {
@@ -277,6 +281,8 @@ namespace ultraverse::state::v2 {
     void StateChanger::start() {
         TaskExecutor taskExecutor(8);
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
+        std::shared_ptr<Transaction> userQuery;
+        
         _logger->info("loading column dependency graph");
         _reader >> *_columnGraph;
         _reader >> *_tableGraph;
@@ -284,15 +290,38 @@ namespace ultraverse::state::v2 {
         _logger->info("loading row cluster");
         _reader >> _rowCluster;
         
-        // FIXME: startGid 빼야 함
         _hashWatcher = std::make_unique<HashWatcher>(_plan.binlogPath(), _plan.stateLogName() + ".index", _intermediateDBName);
         
         createIntermediateDB();
+    
+        if (!_plan.dbDumpPath().empty()) {
+            loadBackup(_intermediateDBName, _plan.dbDumpPath());
+        }
+    
+        if (!_plan.userQueryPath().empty()) {
+            userQuery = std::move(loadUserQuery(_plan.userQueryPath()));
+        }
         
         _logger->info("opening state log");
         _reader.open();
         
         _isRunning = true;
+        
+        auto addTransaction = [this, &taskExecutor, &taskQueue] (std::shared_ptr<Transaction> transaction) {
+            auto node = _stateGraph->addTransaction(transaction);
+            if (node.second) {
+                if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {
+                    _ddlTxnId = transaction->gid();
+                }
+                
+                auto task = taskExecutor.post<int>([this, node = std::move(node)]() {
+                    this->processNode(node.first);
+                    return 0;
+                });
+                
+                taskQueue.push(std::move(task));
+            }
+        };
         
         while (_reader.next()) {
             auto transactionHeader = _reader.txnHeader();
@@ -339,18 +368,11 @@ namespace ultraverse::state::v2 {
                 std::this_thread::sleep_for(100ms);
             }
     
-            auto node = _stateGraph->addTransaction(transaction);
-            if (node.second) {
-                if (flags & Transaction::FLAG_CONTAINS_DDL) {
-                    _ddlTxnId = transaction->gid();
-                }
-                
-                auto task = taskExecutor.post<int>([this, node = std::move(node)]() {
-                    this->processNode(node.first);
-                    return 0;
-                });
-                
-                taskQueue.push(std::move(task));
+            addTransaction(transaction);
+            
+            if (transactionHeader->gid == _plan.rollbackGid() && userQuery != nullptr) {
+                _logger->info("executing user-provided query");
+                addTransaction(userQuery);
             }
         }
         
@@ -402,94 +424,6 @@ namespace ultraverse::state::v2 {
                 auto &keyRange = (*_keyRanges)[it.first][0];
                 result[tableName].push_back(keyRange->MakeWhereQuery(columnName));
             }
-    
-            
-            /*
-            std::string where;
-            
-            auto keyRangeIt = std::find_if(_keyRanges->begin(), _keyRanges->end(), [this, &tableName](const auto &pair) {
-                auto vec2 = StateUserQuery::SplitDBNameAndTableName(pair.first);
-                auto keyTableName = vec2[0];
-                
-                return _tableGraph->isRelated(tableName, keyTableName);
-            });
-            
-            for (; keyRangeIt != _keyRanges->end(); keyRangeIt++) {
-                auto &keyRange = keyRangeIt->second[0];
-                where += keyRange->MakeWhereQuery(columnName);
-                where += " AND ";
-            }
-           
-            if (where.empty()) {
-                continue;
-            }
-            
-            where = where.substr(0, where.size() - 5);
-            queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, _intermediateDBName, tableName, where);
-            */
-            
-            /*
-            auto keyRangeIt = _keyRanges->find(fkName);
-            
-            if (keyRangeIt != _keyRanges->end()) {
-                /*
-                auto iterator = std::find_if(it.second.begin(), it.second.end(), [&keyRangeIt](auto &cluster) {
-                    return std::find_if(keyRangeIt->second.begin(), keyRangeIt->second.end(), [&cluster](auto &cluster2) {
-                        return !(StateRange::AND(*cluster, *cluster2)->GetRange()->empty());
-                    }) != keyRangeIt->second.end();
-                });
-                
-                while (iterator != it.second.end()) {
-                    queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n",
-                                                tableName, _intermediateDBName, tableName, (*iterator)->MakeWhereQuery(it.first));
-                    iterator++;
-                }
-    
-                for (auto &cluster: keyRangeIt->second) {
-                    queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n",
-                                                tableName, _intermediateDBName, tableName,
-                                                cluster->MakeWhereQuery(it.first));
-                }
-            }
-             
-                 */
-            
-            /*
-        for (auto &cluster: it.second) {
-            auto where = cluster->MakeWhereQuery(it.first);
-            
-            
-            if (rangeIt == _keyRanges->end()) {
-                auto invertedRanges = RowCluster::resolveInvertedAliasRange(_rowCluster.aliasSet(),
-                                                               RowCluster::resolveForeignKey(it.first,
-                                                                                             _context->foreignKeys),
-                                                               cluster);
-                for (auto &invertedRange: invertedRanges) {
-                    queryBuilder
-                        << fmt::format("DELETE FROM {} WHERE {};\n", tableName, invertedRange->second->MakeWhereQuery(columnName));
-                }
-            }
-        }
-             */
-    
-            /*
-            auto rangeIt = _keyRanges->find(it.first);
-            if (rangeIt != _keyRanges->end()) {
-                auto keyRange = rangeIt->second.at(0);
-                for (auto &x: *keyRange->GetRange()) {
-                    if (std::find_if(it.second.begin(), it.second.end(), [&x](std::shared_ptr<StateRange> r) {
-                        auto r2 = r->GetRange();
-                        return std::find(r2->begin(), r2->end(), x) != r2->end();
-                    }) == it.second.end()) {
-                        std::string strval;
-                        x.begin.Get(strval);
-            
-                        queryBuilder
-                            << fmt::format("DELETE FROM {} WHERE {} = {};\n", tableName, columnName, strval);
-                    }
-                }
-            }
-             */
         }
         
         
@@ -970,7 +904,8 @@ namespace ultraverse::state::v2 {
                     return _columnGraph->isRelated(hashA, readSetHash) || _columnGraph->isRelated(hashA, writeSetHash);
                 });
                 const bool needsForceExecution =
-                    !_plan.isDBDumpAvailable() && transaction->gid() < _plan.rollbackGid();
+                    (!_plan.isDBDumpAvailable() && transaction->gid() < _plan.rollbackGid()) ||
+                    (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
                 
                 const bool skipQuery = isTargetTransaction || !(needsForceExecution || isDDL || (isRelatedWithCluster && isRelatedWithColumnGraph));
                 
@@ -1075,48 +1010,6 @@ namespace ultraverse::state::v2 {
             updateForeignKeys(dbHandle, query->timestamp());
         }
     }
-    
-    /*
-    void StateChanger::__node__invertQuery(
-        uint64_t rootNodeId,
-        uint64_t nodeId,
-        std::shared_ptr<Query> query,
-        mariadb::DBHandle &dbHandle
-    ) {
-        if (query->type() == Query::INSERT) {
-            _logger->trace("[#{}->#{}] inverting INSERT query: (timestamp={}) {}", rootNodeId, nodeId, query->timestamp(), query->statement());
-            auto tableName = StateUserQuery::SplitDBNameAndTableName(*query->writeSet().begin())[0];
-    
-            _logger->trace("[#{}->#{}] increasing auto-increment value of table {}", rootNodeId, nodeId, tableName);
-            int64_t autoIncrement = getAutoIncrement(dbHandle, tableName);
-    
-            if (autoIncrement != -1) {
-                setAutoIncrement(dbHandle, tableName, autoIncrement + 1);
-            } else {
-                _logger->trace("[#{}->#{}] auto-increment is not available for table {}", rootNodeId, nodeId,
-                               tableName);
-            }
-            
-            // FIXME: 이거 적절히 수정좀 해줘요...
-            //        근데 이거 key column에 해당하는 쿼리만 DELETE 해야 해? 아니면 트랜잭션 이후 영향받는거 전부 다?
-            if (!(_invertedRowCluster.isQueryRelated(query, _context->foreignKeys))) {
-                auto it = std::find_if(query->itemSet().begin(), query->itemSet().end(), [this](auto &item) {
-                    return this->_context->primaryKeys.find(item.name) != this->_context->primaryKeys.end();
-                });
-                
-                if (it != query->itemSet().end()) {
-                    StateRange stateRange;
-                    stateRange.SetValue(it->data_list[0], true);
-    
-                    _logger->info("[#{}->#{}] InvertedRowCluster: expanding range of {} => (WHERE {})", rootNodeId, nodeId, it->name, stateRange.MakeWhereQuery(it->name));
-                    _invertedRowCluster.addKeyRange(it->name, stateRange);
-                }
-            }
-        } else {
-            // TODO: if (!_rowCluster & query) then REPLACE INTO ...
-        }
-    }
-     */
     
     void StateChanger::createIntermediateDB() {
         _logger->info("creating intermediate database: {}", _intermediateDBName);

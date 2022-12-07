@@ -36,7 +36,7 @@ namespace ultraverse {
             "\n"
             "Available Actions:\n"
             "    make_cluster   creates row cluster file\n"
-            "    rollback       rollbacks specified transaction and appends query (if given)\n"
+            "    rollback       rollbacks specified transaction and appends query (if provided)\n"
             "    append-only    appends query after specified transaction\n"
             "\n"
             "Options: \n"
@@ -80,17 +80,17 @@ namespace ultraverse {
             getEnv("DB_PASS")
         );
     
+        std::string action(argv()[argc() - 1]);
         StateChangePlan changePlan;
         
         try {
-            preparePlan(changePlan);
+            preparePlan(action, changePlan);
         } catch (std::exception &e) {
             std::cout << e.what() << std::endl;
             return 1;
         }
     
         StateChanger stateChanger(dbHandlePool, changePlan);
-        std::string action(argv()[argc() - 1]);
         
         if (action == "make_clustermap") {
             stateChanger.prepare();
@@ -112,7 +112,7 @@ namespace ultraverse {
         return 0;
     }
     
-    void DBStateChangeApp::preparePlan(StateChangePlan &changePlan) {
+    void DBStateChangeApp::preparePlan(const std::string &action, StateChangePlan &changePlan) {
         auto fail = [this] (std::string reason) {
             _logger->error("requirements not satisfied: {}", reason);
             throw std::runtime_error("requirements not satisfied");
@@ -156,7 +156,7 @@ namespace ultraverse {
             }
         } // @end(startGid)
     
-        { // @start(targetGid)
+        if (action != "make_clustermap") { // @start(targetGid)
             if (!isArgSet('g')) {
                 fail("target gid must be specified");
             }

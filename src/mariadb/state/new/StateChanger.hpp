@@ -66,7 +66,11 @@ namespace ultraverse::state::v2 {
         
         std::vector<CandidateColumn>
         buildCandidateColumnList(std::shared_ptr<Transaction> transaction) const;
+    
+        std::shared_ptr<Transaction> loadUserQuery(const std::string &path);
+        std::shared_ptr<Transaction> parseUserQuery(const std::vector<std::string> &queries);
         
+        void loadBackup(const std::string &dbName, const std::string &fileName);
         
         /**
          * creates intermediate database.

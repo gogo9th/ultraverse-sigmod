@@ -21,7 +21,7 @@ namespace ultraverse {
         
         int main() override;
         
-        void preparePlan(StateChangePlan &changePlan);
+        void preparePlan(const std::string &action, StateChangePlan &changePlan);
         bool confirm(std::string message);
         
         std::vector<std::string> buildKeyColumnList(std::string expression);

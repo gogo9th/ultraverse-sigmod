@@ -19,6 +19,30 @@ namespace ultraverse::state::v2 {
         _operationMode = mode;
     }
     
+    const std::string &StateChangePlan::dbHost() const {
+        return _dbHost;
+    }
+    
+    void StateChangePlan::setDBHost(const std::string &dbHost) {
+        _dbHost = dbHost;
+    }
+    
+    const std::string &StateChangePlan::dbUsername() const {
+        return _dbUsername;
+    }
+    
+    void StateChangePlan::setDBUsername(const std::string &dbUsername) {
+        _dbUsername = dbUsername;
+    }
+    
+    const std::string &StateChangePlan::dbPassword() const {
+        return _dbPassword;
+    }
+    
+    void StateChangePlan::setDBPassword(const std::string &dbPassword) {
+        _dbPassword = dbPassword;
+    }
+    
     const std::string &StateChangePlan::dbName() const {
         return _dbName;
     }
