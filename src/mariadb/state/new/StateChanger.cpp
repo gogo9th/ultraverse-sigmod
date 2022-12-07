@@ -912,7 +912,11 @@ namespace ultraverse::state::v2 {
                     (!_plan.isDBDumpAvailable() && transaction->gid() < _plan.rollbackGid()) ||
                     (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
                 
-                const bool skipQuery = isTargetTransaction || !(needsForceExecution || isDDL || (isRelatedWithCluster && isRelatedWithColumnGraph));
+                const bool skipQuery =
+                    (_plan.mode() == ROLLBACK && isTargetTransaction)   ||
+                    !(needsForceExecution                               ||
+                    isDDL                                               ||
+                    (isRelatedWithCluster && isRelatedWithColumnGraph));
                 
                 if (skipQuery) {
                     if (isRelatedWithColumnGraph && query->type() == Query::INSERT) {
@@ -976,7 +980,7 @@ namespace ultraverse::state::v2 {
         dbHandle.executeQuery("COMMIT");
         // _logger->debug("[#{}->#{}] releasing dbHandle", rootNodeId, nodeId);
     
-        if (!isTargetTransaction && isTransactionRelatedToCluster(transaction)) {
+        if (!(_plan.mode() == ROLLBACK && isTargetTransaction) && isTransactionRelatedToCluster(transaction)) {
             expandClusterMap(_rowCluster2, *transaction, CLUSTER_EXPAND_FLAG_INCLUDE_FK | CLUSTER_EXPAND_FLAG_DONT_EXPAND);
         }
         
