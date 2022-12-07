@@ -255,7 +255,7 @@ namespace ultraverse::state::v2 {
         // 각 keyRange에 대한 AND 연산을 행한다.
         for (auto &pair: keyRanges) {
             for (auto &keyRange: pair.second) {
-                if (isQueryRelated(pair.first, keyRange, query, foreignKeys, aliases)) {
+                if (!isQueryRelated(pair.first, keyRange, query, foreignKeys, aliases)) {
                     return false;
                 }
             }
