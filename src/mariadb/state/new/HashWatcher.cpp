@@ -155,12 +155,7 @@ namespace ultraverse::state::v2 {
         if (hash == expectedHash) {
             _logger->trace("hash matched");
             _matchState[table->table()] = true;
-        } else {
-            _logger->trace("== current ==");
-            hash.hexdump();
-            _logger->trace("== expected ==");
-            expectedHash.hexdump();
-        };
+        }
         _mutex.unlock();
     }
 }

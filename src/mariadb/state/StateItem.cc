@@ -445,7 +445,8 @@ StateData &StateData::operator=(const StateData &c)
 }
 
 StateRange::StateRange():
-    range(std::make_shared<std::vector<ST_RANGE>>())
+    range(std::make_shared<std::vector<ST_RANGE>>()),
+    _wildcard(false)
 {
 }
 
@@ -534,6 +535,14 @@ bool StateRange::operator==(const StateRange &c) const
   }
 
   return true;
+}
+
+bool StateRange::wildcard() const {
+    return _wildcard;
+}
+
+void StateRange::setWildcard(bool wildcard) {
+    _wildcard = wildcard;
 }
 
 std::string StateRange::MakeWhereQuery() {
@@ -643,9 +652,11 @@ const std::vector<StateRange::ST_RANGE> *StateRange::GetRange() const
 std::shared_ptr<std::vector<StateRange>> StateRange::OR_ARRANGE(const std::vector<StateRange> &a)
 {
   StateRange range;
+  
   for (auto &i : a)
   {
     range.range->insert(range.range->end(), i.range->begin(), i.range->end());
+    range._wildcard |= i.wildcard();
   }
   range.range = OR_ARRANGE(range.range);
 
@@ -664,7 +675,11 @@ std::shared_ptr<std::vector<StateRange>> StateRange::OR_ARRANGE(const std::vecto
 
 bool StateRange::AND_FAST(const StateRange &a, const StateRange &b) {
   auto ret = IsValid(a, b);
-
+  
+  if (a.wildcard() || b.wildcard()) {
+      return true;
+  }
+  
   if (ret == EN_VALID_RANGE) {
       // vector<RANGE>에서 각 range를 머지가 불가능해질때까지 병합함
       auto &range1 = *a.range;
@@ -685,6 +700,10 @@ std::shared_ptr<StateRange> StateRange::AND(const StateRange &a, const StateRang
   auto range = std::make_shared<StateRange>();
 
   auto ret = IsValid(a, b);
+  
+  if (a.wildcard() || b.wildcard()) {
+      return StateRange::OR(a, b);
+  }
 
   if (ret == EN_VALID_RANGE)
   {

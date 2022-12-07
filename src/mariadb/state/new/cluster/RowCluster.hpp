@@ -32,9 +32,10 @@ namespace ultraverse::state::v2 {
         RowCluster();
         
         bool hasKey(const std::string &columnName) const;
-        void addKey(const std::string &columnName) const;
+        void addKey(const std::string &columnName);
         
         void addKeyRange(const std::string &columnName, std::shared_ptr<StateRange> range);
+        void setWildcard(const std::string &columnName, bool wildcard);
     
         void addAlias(StateItem alias, StateItem real);
         static StateItem resolveAlias(const std::vector<RowAlias> &aliases, StateItem alias);
@@ -45,11 +46,6 @@ namespace ultraverse::state::v2 {
         static std::string resolveAliasName(const std::vector<RowAlias> &aliases, std::string alias);
         
         const std::vector<RowAlias> &aliasSet();
-        
-        /**
-         * @throws std::runtime_error when given key was not found
-         */
-        StateRange &getKeyRange(const std::string &columnName);
     
         std::unordered_map<std::string, std::vector<std::shared_ptr<StateRange>>> &keyMap();
     
@@ -61,7 +57,7 @@ namespace ultraverse::state::v2 {
         RowCluster operator&(const RowCluster &other) const;
         RowCluster operator|(const RowCluster &other) const;
     
-        void mergeCluster(const std::string &columnName, bool force);
+        void mergeCluster(const std::string &columnName);
     
         template <typename Archive>
         void serialize(Archive &archive);
@@ -70,8 +66,11 @@ namespace ultraverse::state::v2 {
         using ClusterGraph =
             boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, std::pair<int, bool>>;
         
-        
         static bool isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem expr, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases);
+        
+        void mergeClusterUsingGraph(const std::string &columnName);
+        void mergeClusterAll(const std::string &columnName);
+        
         
         /**
          * FIXME: 이거 std::string에서 std::pair<NamingHistory, std::string> 같은걸로 바꿔야 할듯
@@ -79,6 +78,8 @@ namespace ultraverse::state::v2 {
          */
         std::unordered_map<std::string, std::vector<std::shared_ptr<StateRange>>> _clusterMap;
         std::unordered_map<std::string, ClusterGraph> _clusterGraph;
+        std::unordered_map<std::string, bool> _wildcardMap;
+        
         std::vector<RowAlias> _aliases;
     };
 }

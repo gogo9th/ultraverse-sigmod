@@ -85,7 +85,7 @@ set(ULTRAVERSE_SRCS
     mariadb/state/new/cluster/CandidateColumn.hpp
     
     mariadb/state/new/cluster/RowCluster.hpp mariadb/state/new/cluster/RowCluster.cpp mariadb/state/new/cluster/NamingHistory.cpp mariadb/state/new/cluster/NamingHistory.hpp mariadb/state/new/ColumnDependencyGraph.cpp mariadb/state/new/ColumnDependencyGraph.hpp
-    mariadb/state/new/StateChangePlan.cpp mariadb/state/new/StateChangePlan.hpp mariadb/state/new/HashWatcher.cpp mariadb/state/new/HashWatcher.hpp)
+    mariadb/state/new/StateChangePlan.cpp mariadb/state/new/StateChangePlan.hpp mariadb/state/new/HashWatcher.cpp mariadb/state/new/HashWatcher.hpp mariadb/state/new/TableDependencyGraph.cpp mariadb/state/new/TableDependencyGraph.hpp)
 
 include_directories(../dependencies/sql-parser/src)
 include_directories(../dependencies/sql-parser/src/parser)

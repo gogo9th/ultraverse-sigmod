@@ -5,7 +5,9 @@
 #include "StateChangePlan.hpp"
 
 namespace ultraverse::state::v2 {
-    StateChangePlan::StateChangePlan() {
+    StateChangePlan::StateChangePlan():
+        _startGid(0)
+    {
     
     }
     
@@ -15,6 +17,14 @@ namespace ultraverse::state::v2 {
     
     void StateChangePlan::setDBName(const std::string &dbName) {
         _dbName = dbName;
+    }
+    
+    gid_t StateChangePlan::startGid() const {
+        return _startGid;
+    }
+    
+    void StateChangePlan::setStartGid(gid_t startGid) {
+        _startGid = startGid;
     }
     
     gid_t StateChangePlan::rollbackGid() const {

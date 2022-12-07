@@ -16,6 +16,9 @@ namespace ultraverse::state::v2 {
         
         const std::string &dbName() const;
         void setDBName(const std::string &dbName);
+    
+        gid_t startGid() const;
+        void setStartGid(gid_t startGid);
         
         gid_t rollbackGid() const;
         void setRollbackGid(gid_t rollbackGid);
@@ -48,6 +51,7 @@ namespace ultraverse::state::v2 {
     
     private:
         std::string _dbName;
+        gid_t _startGid;
         gid_t _rollbackGid;
         std::string _userQueryPath;
         

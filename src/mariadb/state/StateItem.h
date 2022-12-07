@@ -152,6 +152,9 @@ public:
   ~StateRange();
 
   bool operator==(const StateRange &c) const;
+  
+  bool wildcard() const;
+  void setWildcard(bool wildcard);
 
   std::string MakeWhereQuery();
   std::string MakeWhereQuery(std::string columnName);
@@ -189,6 +192,7 @@ private:
   static int MAX(const StateData &a, const StateData &b);
 
   std::shared_ptr<std::vector<ST_RANGE>> range;
+  bool _wildcard;
 };
 
 class StateItem

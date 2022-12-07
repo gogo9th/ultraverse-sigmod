@@ -39,7 +39,8 @@ namespace ultraverse {
             "statechange - rollback database state\n"
             "\n"
             "Options: \n"
-            "    -s file        database backup (.sql)\n"
+            "    -s gid         gid to start from\n"
+            "    -b file        database backup (.sql)\n"
             "    -i file        ultraverse state log (.ultstatelog)\n"
             "    -d database    database name\n"
             "    -g gid         gid to rollback\n"
@@ -105,7 +106,11 @@ namespace ultraverse {
         );
         
         if (isArgSet('s')) {
-            changePlan.setDBDumpPath(getArg('s'));
+            changePlan.setStartGid(std::stoi(getArg('s')));
+        }
+        
+        if (isArgSet('b')) {
+            changePlan.setDBDumpPath(getArg('b'));
         } else {
             _logger->warn("database dump file is not specified!");
             _logger->warn("- this may leads to unexpected result");

@@ -28,6 +28,7 @@ namespace ultraverse::state::v2 {
         _intermediateDBName(fmt::format("ult_intermediate_{}", (int) time(nullptr))), // FIXME
         _reader(plan.stateLogPath(), plan.stateLogName()),
         _columnGraph(std::make_unique<ColumnDependencyGraph>()),
+        _tableGraph(std::make_unique<TableDependencyGraph>()),
         _keyRanges(std::make_shared<std::map<std::string, std::vector<std::shared_ptr<StateRange>>>>()),
         _columnSetHashes(std::make_shared<std::vector<size_t>>()),
         _context(new StateChangeContext),
@@ -174,6 +175,11 @@ namespace ultraverse::state::v2 {
             auto gid = transactionHeader->gid;
             auto flags = transactionHeader->flags;
             _logger->trace("read gid {}; flags {}", gid, flags);
+            
+            if (gid < _plan.startGid()) {
+                _logger->trace("skipping gid {} until reach {}", gid, _plan.startGid());
+                continue;
+            }
     
             auto task = taskExecutor.post<int>([this, &mutex, &stateLogWriter, transaction, gid, flags]() {
                 if (!isTransactionRelatedToPlan(transaction)) {
@@ -198,6 +204,14 @@ namespace ultraverse::state::v2 {
                         
                         updatePrimaryKeys(dbHandle, query->timestamp());
                         updateForeignKeys(dbHandle, query->timestamp());
+    
+                        bool isTableGraphChanged =
+                            _tableGraph->addRelationship(_context->foreignKeys);
+                        
+                        if (isTableGraphChanged) {
+                            _logger->info("updating table dependency graph");
+                            stateLogWriter << *_tableGraph;
+                        }
                     }
                     dbHandle.executeQuery("COMMIT");
                 } else {
@@ -206,17 +220,26 @@ namespace ultraverse::state::v2 {
                         bool isColumnGraphChanged =
                             _columnGraph->add(query->readSet(), READ, _context->foreignKeys) ||
                             _columnGraph->add(query->writeSet(), WRITE, _context->foreignKeys);
+                        
+                        bool isTableGraphChanged =
+                            _tableGraph->addRelationship(query->readSet(), query->writeSet());
                 
                         if (isColumnGraphChanged) {
                             _logger->info("updating column dependency graph");
                             stateLogWriter << *_columnGraph;
                         }
+                        
+                        if (isTableGraphChanged) {
+                            _logger->info("updating table dependency graph");
+                            stateLogWriter << *_tableGraph;
+                        }
+                    }
+    
+                    if (isTransactionRelatedToCluster(transaction)) {
+                        expandClusterMap(_rowCluster, *transaction, CLUSTER_EXPAND_FLAG_STRICT | CLUSTER_EXPAND_FLAG_WILDCARD);
                     }
                 }
     
-                if (isTransactionRelatedToCluster(transaction)) {
-                    expandClusterMap(_rowCluster, *transaction, false, false);
-                }
                 return 0;
             });
             
@@ -232,7 +255,7 @@ namespace ultraverse::state::v2 {
         
         for (auto &pair: _rowCluster.keyMap()) {
             _logger->info("MERGING CLUSTER: {}", pair.first);
-            _rowCluster.mergeCluster(pair.first, false);
+            _rowCluster.mergeCluster(pair.first);
         }
         
         for (auto &pair: _rowCluster.keyMap()) {
@@ -249,7 +272,8 @@ namespace ultraverse::state::v2 {
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
         _logger->info("loading column dependency graph");
         _reader >> *_columnGraph;
-    
+        _reader >> *_tableGraph;
+        
         _logger->info("loading row cluster");
         _reader >> _rowCluster;
         
@@ -282,6 +306,11 @@ namespace ultraverse::state::v2 {
                 
                 for (auto &query: _rollbackTarget->queries()) {
                     _columnSetHashes->push_back(std::hash<ColumnSet>{}(query->writeSet()));
+                    
+                    // FIXME
+                    if (query->type() == Query::INSERT || query->type() == Query::DELETE) {
+                        _tableGraph->addRelationship(query->writeSet(), query->writeSet());
+                    }
                 }
                 
                 _isClusterReady = true;
@@ -324,10 +353,10 @@ namespace ultraverse::state::v2 {
             future.wait();
             taskQueue.pop();
         }
-    
+        
         for (auto &pair: _rowCluster2.keyMap()) {
             _logger->info("MERGING CLUSTER: {}", pair.first);
-            _rowCluster2.mergeCluster(pair.first, false);
+            _rowCluster2.mergeCluster(pair.first);
         }
         
         if (_hashWatcher != nullptr) {
@@ -342,24 +371,82 @@ namespace ultraverse::state::v2 {
         
         queryBuilder << "BEGIN;\n";
         
+        std::map<std::string, std::vector<std::string>> result;
+        
         for (auto it: _rowCluster2.keyMap()) {
             auto vec = StateUserQuery::SplitDBNameAndTableName(it.first);
             auto tableName = vec[0];
             auto columnName = vec[1];
-            
+            auto fkName = RowCluster::resolveForeignKey(it.first, _context->foreignKeys);
+    
             if (_hashWatcher != nullptr && _hashWatcher->isHashMatched(tableName)) {
                 continue;
             }
             
-            auto rangeIt = _keyRanges->find(it.first);
-            
-            if (rangeIt != _keyRanges->end()) {
-                for (auto &x: rangeIt->second) {
-                    queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n",
-                                                tableName, _intermediateDBName, tableName, x->MakeWhereQuery(it.first));
-                }
+            if (fkName != it.first) {
+                auto vec2 = StateUserQuery::SplitDBNameAndTableName(fkName);
+                auto fkTableName = vec2[0];
+                auto fkColumnName = vec2[1];
+    
+                auto &keyRange = (*_keyRanges)[fkName][0];
+                result[tableName].push_back(keyRange->MakeWhereQuery(columnName));
+            } else {
+                // TODO: alias
+                auto &keyRange = (*_keyRanges)[it.first][0];
+                result[tableName].push_back(keyRange->MakeWhereQuery(columnName));
             }
     
+            
+            /*
+            std::string where;
+            
+            auto keyRangeIt = std::find_if(_keyRanges->begin(), _keyRanges->end(), [this, &tableName](const auto &pair) {
+                auto vec2 = StateUserQuery::SplitDBNameAndTableName(pair.first);
+                auto keyTableName = vec2[0];
+                
+                return _tableGraph->isRelated(tableName, keyTableName);
+            });
+            
+            for (; keyRangeIt != _keyRanges->end(); keyRangeIt++) {
+                auto &keyRange = keyRangeIt->second[0];
+                where += keyRange->MakeWhereQuery(columnName);
+                where += " AND ";
+            }
+           
+            if (where.empty()) {
+                continue;
+            }
+            
+            where = where.substr(0, where.size() - 5);
+            queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, _intermediateDBName, tableName, where);
+            */
+            
+            /*
+            auto keyRangeIt = _keyRanges->find(fkName);
+            
+            if (keyRangeIt != _keyRanges->end()) {
+                /*
+                auto iterator = std::find_if(it.second.begin(), it.second.end(), [&keyRangeIt](auto &cluster) {
+                    return std::find_if(keyRangeIt->second.begin(), keyRangeIt->second.end(), [&cluster](auto &cluster2) {
+                        return !(StateRange::AND(*cluster, *cluster2)->GetRange()->empty());
+                    }) != keyRangeIt->second.end();
+                });
+                
+                while (iterator != it.second.end()) {
+                    queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n",
+                                                tableName, _intermediateDBName, tableName, (*iterator)->MakeWhereQuery(it.first));
+                    iterator++;
+                }
+    
+                for (auto &cluster: keyRangeIt->second) {
+                    queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n",
+                                                tableName, _intermediateDBName, tableName,
+                                                cluster->MakeWhereQuery(it.first));
+                }
+            }
+             
+                 */
+            
             /*
         for (auto &cluster: it.second) {
             auto where = cluster->MakeWhereQuery(it.first);
@@ -398,7 +485,27 @@ namespace ultraverse::state::v2 {
              */
         }
         
+        
+        for (auto &pair: result) {
+            auto &table = pair.first;
+            auto &ranges = pair.second;
+            
+            if (_changedTables.find(table) == _changedTables.end() || ranges.empty()) {
+                continue;
+            }
+            
+            std::string where;
+            for (auto &range: ranges) {
+                where += range;
+                where += " AND ";
+            }
+            
+            where = where.substr(0, where.size() - 5);
+            
+            queryBuilder << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", table, _intermediateDBName, table, where);
+        }
     
+        
         queryBuilder << "COMMIT;\n";
         
         queryBuilder << fmt::format("SET FOREIGN_KEY_CHECKS = TRUE;\n\n");
@@ -407,10 +514,107 @@ namespace ultraverse::state::v2 {
         
     }
     
-    void StateChanger::expandClusterMap(RowCluster &rowCluster, Transaction &transaction, bool includeFK, bool merge) {
-        std::unordered_map<std::string, std::shared_ptr<StateRange>> clusterMap;
+    bool StateChanger::isQueryRelatedWithKeyColumns(Query &query) {
+        const auto &keyColumns = _plan.keyColumns();
+        const std::string tableName = StateUserQuery::SplitDBNameAndTableName(
+            *(query.writeSet().begin())
+        )[0];
         
-        std::function<void(StateItem &)> walkStateItem = [this, includeFK, &walkStateItem, &clusterMap, &rowCluster](StateItem &stateItem) {
+        bool hasKeyColumn = std::find_if(keyColumns.begin(), keyColumns.end(), [&tableName](const auto &column) {
+            return StateUserQuery::SplitDBNameAndTableName(column)[0] == tableName;
+        }) == keyColumns.end();
+        
+        auto resolveFKAlias = [this](const std::string &column) {
+            return RowCluster::resolveForeignKey(
+                RowCluster::resolveAliasName(_rowCluster.aliasSet(), column),
+                _context->foreignKeys
+            );
+        };
+        
+        // TODO: foreign key / alias 해결해야 함
+        auto isRWSetContains = [&resolveFKAlias, &query](const std::string &column) {
+            auto findFn = [&resolveFKAlias, &column] (const std::string &column2) {
+                return resolveFKAlias(column2) == column;
+            };
+            
+            return (
+                std::find_if(query.readSet().begin(), query.readSet().end(), findFn) == query.readSet().end() ||
+                std::find_if(query.writeSet().begin(), query.writeSet().end(), findFn) == query.writeSet().end()
+            );
+        };
+        
+        bool usingEntireKeyColumn = std::find_if_not(keyColumns.begin(), keyColumns.end(), isRWSetContains) == keyColumns.end();
+        
+        auto tableDependencies = _tableGraph->getDependencies(tableName);
+        std::set<std::string> keyColumnDependencies;
+    
+        {
+            decltype(keyColumnDependencies) tmp;
+            std::copy_if(
+                keyColumns.begin(), keyColumns.end(),
+                std::inserter(tmp, tmp.begin()),
+                [&tableDependencies](const auto &column) {
+                    return std::find(tableDependencies.begin(), tableDependencies.end(),
+                                     StateUserQuery::SplitDBNameAndTableName(column)[0]) != tableDependencies.end();
+                }
+            );
+            
+            std::transform(
+                tmp.begin(), tmp.end(),
+                std::inserter(keyColumnDependencies, keyColumnDependencies.begin()),
+                [](const auto &column) {
+                    return StateUserQuery::SplitDBNameAndTableName(column)[0];
+                }
+            );
+        }
+    
+        if (keyColumnDependencies.empty()) {
+            if (hasKeyColumn) {
+                // 1) 테이블이 클러스터컬럼을 보유하고 있으면서, 자신 이외의 그 어떤 클러스터컬럼 테이블에 대해서도 의존하고 있지 않은 경우
+                return usingEntireKeyColumn;
+            } else {
+                // 2) 테이블이 클러스터컬럼을 보유하고 있지 않으면서, 자신 이외의 그 어떤 클러스터컬럼 테이블에 대해서도 의존하고 있지 않은 경우
+                // 만일 이 테이블을 Write Set으로 지니고 있는 쿼리가 있없 경우, 이 쿼리는 키값이 { } (empty set) 이다. 즉, 클러스터키값을 가지고 있지 않아도 되는 쿼리다.
+                // (왜냐면 이 테이블은 변화가 없으므로 이 테이블은 마치 constant 상수 취급을 해도 되기 때문이다).
+                //
+                // 이 테이블을 Write Set으로 지니고 있는 쿼리가 있을 경우, 이 쿼리의 키값은 * (wild card)가 된다.
+                // (왜냐면 그러한 쿼리가 상태전환쿼리로 선택될 경우, 그 쿼리가 변경하는 테이블 row에 대한 클러스터 배정이 불가능하기 때문이다)
+        
+                return _tableGraph->hasPeerDependencies(tableName);
+            }
+        } else if (keyColumnDependencies.size() <= 1) {
+            // 3) 외부 1개의 클러스터컬럼 테이블에 대한 의존 테이블일 경우
+            // 이 쿼리는 자신이 의존하고 있는 source 테이블의 클러스터컬럼에 대한 키값을 사용해야 한다. 만약 사용하지 않을 경우, 이 쿼리의 키값은 * (wild card)가 된다.
+    
+            const auto &dependencyTable = *keyColumnDependencies.begin();
+            std::vector<std::string> filteredKeyColumns;
+            std::copy_if(
+                keyColumns.begin(), keyColumns.end(),
+                std::back_inserter(filteredKeyColumns),
+                [&dependencyTable](const std::string &column) {
+                    return column.rfind(dependencyTable, 0) == 0;
+                }
+            );
+            
+            return std::find_if_not(
+                filteredKeyColumns.begin(), filteredKeyColumns.end(),
+                isRWSetContains
+            ) != keyColumns.end();
+        } else {
+            // 이 쿼리는 모든 다중 클러스터컬럼들에 대한 키값을 사용해야 한다
+            // (구체적으로, INSERT 절에서 이 모든 다중클러스터컬럼들에 대하여 상수값을 집어넣거나, 또는 WHERE절에서 각 클러스터키에 대해 정하는 구문들이 AND로 연속해서 묶여야 한다).
+            // 만일 단 한개의 클러스터컬럼이라도 키값을 사용하지 않는다면, 이 쿼리의 키값은 * (wild card)가 된다.
+            return usingEntireKeyColumn;
+        }
+        
+        return false;
+    }
+    
+    void StateChanger::expandClusterMap(RowCluster &rowCluster, Transaction &transaction, int flags) {
+        std::unordered_map<std::string, std::shared_ptr<StateRange>> clusterMap;
+        bool containsUnrelatedQuery = false;
+        
+        std::function<void(StateItem &)> walkStateItem = [this, flags, &walkStateItem, &clusterMap, &rowCluster](StateItem &stateItem) {
             if (!stateItem.name.empty()) {
                 auto &keyColumns = _plan.keyColumns();
                 
@@ -422,6 +626,7 @@ namespace ultraverse::state::v2 {
                 if (std::find(keyColumns.begin(), keyColumns.end(), resolvedAlias.name) != keyColumns.end()) {
                     assert(resolvedAlias.condition_type == EN_CONDITION_NONE);
                     assert(resolvedAlias.function_type != FUNCTION_NONE);
+                    
                     auto stateRange = std::make_shared<StateRange>();
         
                     switch (resolvedAlias.function_type) {
@@ -464,7 +669,7 @@ namespace ultraverse::state::v2 {
                     clusterMap[resolvedAlias.name] = StateRange::OR(*clusterMap[resolvedAlias.name], *stateRange);
                     // FK
                     
-                    if (includeFK) {
+                    if (flags & CLUSTER_EXPAND_FLAG_INCLUDE_FK) {
                         auto stateRange2 = std::make_shared<StateRange>();
         
                         switch (stateItem.function_type) {
@@ -509,6 +714,7 @@ namespace ultraverse::state::v2 {
         
         if (!_plan.keyColumns().empty()) {
             for (auto &query: transaction.queries()) {
+                
                 for (auto &stateItem: query->whereSet()) {
                     walkStateItem(stateItem);
                 }
@@ -533,30 +739,47 @@ namespace ultraverse::state::v2 {
                         }
                     }
                 }
+                
+                if (!isQueryRelatedWithKeyColumns(*query)) {
+                    containsUnrelatedQuery = true;
+                }
             }
         } else {
             // FIXME
+            return;
         }
     
-        {
+        const auto &keyColumns = _plan.keyColumns();
+        
+        if (flags & CLUSTER_EXPAND_FLAG_WILDCARD && containsUnrelatedQuery) {
+            for (const auto &keyColumn: keyColumns) {
+                rowCluster.setWildcard(keyColumn, true);
+            }
+        }
+        
+        if (flags & CLUSTER_EXPAND_FLAG_STRICT) {
+            if (clusterMap.size() != keyColumns.size() ||
+                std::find_if(clusterMap.begin(), clusterMap.end(), [&keyColumns](const auto &pair) {
+                    return std::find(keyColumns.begin(), keyColumns.end(), pair.first) != keyColumns.end();
+                }) == clusterMap.end()
+            ) {
+                return;
+            }
+        }
+        
+        
+        if ((flags & CLUSTER_EXPAND_FLAG_DONT_EXPAND)) {
             std::scoped_lock scopedLock(_clusterMutex2);
             
-            std::unordered_set<std::string> keySet;
+            for (auto &pair: clusterMap) {
+                rowCluster.addKey(pair.first);
+            }
+        } else {
+            std::scoped_lock scopedLock(_clusterMutex2);
             
             for (auto &pair: clusterMap) {
-                _logger->trace("adding keyRange");
                 rowCluster.addKeyRange(pair.first, pair.second);
-                keySet.insert(pair.first);
             }
-    
-            /*
-            if (merge) {
-                for (const auto &key: keySet) {
-                    _logger->trace("merging cluster {}", key);
-                    rowCluster.mergeCluster(key, merge);
-                }
-            }
-             */
         }
     }
     
@@ -789,6 +1012,14 @@ namespace ultraverse::state::v2 {
                 }
                 
                 __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
+                
+                if (!isDDL && transaction->gid() > _plan.rollbackGid()) {
+                    std::scoped_lock lock(_changedTablesMutex);
+                    const std::string tableName = StateUserQuery::SplitDBNameAndTableName(
+                        *query->writeSet().begin())[0];
+                    
+                    _changedTables.insert(tableName);
+                }
             }
         
             NEXT_QUERY: ;
@@ -799,7 +1030,7 @@ namespace ultraverse::state::v2 {
         // _logger->debug("[#{}->#{}] releasing dbHandle", rootNodeId, nodeId);
     
         if (!isTargetTransaction && isTransactionRelatedToCluster(transaction)) {
-            expandClusterMap(_rowCluster2, *transaction, true, false);
+            expandClusterMap(_rowCluster2, *transaction, CLUSTER_EXPAND_FLAG_INCLUDE_FK | CLUSTER_EXPAND_FLAG_DONT_EXPAND);
         }
         
         if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {

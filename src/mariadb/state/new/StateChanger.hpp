@@ -36,7 +36,13 @@ namespace ultraverse::state::v2 {
         void start();
         
     private:
-        void expandClusterMap(RowCluster &rowCluster, Transaction &transaction, bool includeFK, bool merge);
+        constexpr static int CLUSTER_EXPAND_FLAG_NO_FLAGS    = 0;
+        constexpr static int CLUSTER_EXPAND_FLAG_STRICT      = 0b01;
+        constexpr static int CLUSTER_EXPAND_FLAG_INCLUDE_FK  = 0b10;
+        constexpr static int CLUSTER_EXPAND_FLAG_WILDCARD    = 0b100;
+        constexpr static int CLUSTER_EXPAND_FLAG_DONT_EXPAND = 0b1000;
+        
+        void expandClusterMap(RowCluster &rowCluster, Transaction &transaction, int flags);
         
         void processDDLTransaction(std::shared_ptr<Transaction> transaction);
         void processNode(uint64_t nodeIdx);
@@ -83,6 +89,8 @@ namespace ultraverse::state::v2 {
          */
         void updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp);
         
+        bool isQueryRelatedWithKeyColumns(Query &query);
+        
         int64_t getAutoIncrement(mariadb::DBHandle &dbHandle, std::string table);
         void setAutoIncrement(mariadb::DBHandle &dbHandle, std::string table, int64_t value);
         
@@ -107,9 +115,8 @@ namespace ultraverse::state::v2 {
         std::vector<std::thread> _executorThreads;
     
     
-        std::mutex _stateHashMutex;
         std::unordered_map<std::string, state::StateHash> _stateHashMap;
-    
+        
         std::mutex _clusterMutex;
         std::condition_variable _clusterCondvar;
         bool _isClusterReady;
@@ -121,7 +128,11 @@ namespace ultraverse::state::v2 {
         std::mutex _clusterMutex2;
         
         std::unique_ptr<ColumnDependencyGraph> _columnGraph;
+        std::unique_ptr<TableDependencyGraph> _tableGraph;
         std::unique_ptr<HashWatcher> _hashWatcher;
+    
+        std::mutex _changedTablesMutex;
+        std::unordered_set<std::string> _changedTables;
         
         gid_t _ddlTxnId;
         gid_t _ddlTxnProcessedId;
