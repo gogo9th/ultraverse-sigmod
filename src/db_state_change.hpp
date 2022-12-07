@@ -8,7 +8,11 @@
 #include "utils/log.hpp"
 #include "Application.hpp"
 
+#include "mariadb/state/new/StateChanger.hpp"
+
 namespace ultraverse {
+    using namespace ultraverse::state::v2;
+    
     class DBStateChangeApp: public Application {
     public:
         DBStateChangeApp();
@@ -17,9 +21,11 @@ namespace ultraverse {
         
         int main() override;
         
+        void preparePlan(StateChangePlan &changePlan);
         bool confirm(std::string message);
         
         std::vector<std::string> buildKeyColumnList(std::string expression);
+        std::set<std::pair<std::string, std::string>> buildColumnAliasesList(std::string expression);
         std::vector<uint64_t> buildSkipGidList(std::string gidsStr);
         
     private:

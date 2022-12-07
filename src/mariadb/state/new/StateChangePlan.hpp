@@ -10,18 +10,30 @@
 #include "Transaction.hpp"
 
 namespace ultraverse::state::v2 {
+    
+    enum OperationMode {
+        ROLLBACK,
+        APPEND_ONLY
+    };
+    
     class StateChangePlan {
     public:
         explicit StateChangePlan();
         
+        OperationMode mode() const;
+        void setMode(OperationMode mode);
+        
         const std::string &dbName() const;
         void setDBName(const std::string &dbName);
-    
+        
         gid_t startGid() const;
         void setStartGid(gid_t startGid);
         
         gid_t rollbackGid() const;
         void setRollbackGid(gid_t rollbackGid);
+        
+        gid_t endGid() const;
+        void setEndGid(gid_t endGid);
         
         const std::string &userQueryPath() const;
         void setUserQueryPath(const std::string &userQueryPath);
@@ -50,9 +62,12 @@ namespace ultraverse::state::v2 {
         const std::vector<uint64_t> &skipGids() const;
     
     private:
+        OperationMode _operationMode;
+        
         std::string _dbName;
         gid_t _startGid;
         gid_t _rollbackGid;
+        gid_t _endGid;
         std::string _userQueryPath;
         
         std::string _dbdumpPath;
@@ -65,6 +80,7 @@ namespace ultraverse::state::v2 {
     
         std::vector<uint64_t> _skipGids;
         bool _isDryRun;
+        
     };
     
 }

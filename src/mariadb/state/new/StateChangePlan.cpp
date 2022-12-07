@@ -11,6 +11,14 @@ namespace ultraverse::state::v2 {
     
     }
     
+    OperationMode StateChangePlan::mode() const {
+        return _operationMode;
+    }
+    
+    void StateChangePlan::setMode(OperationMode mode) {
+        _operationMode = mode;
+    }
+    
     const std::string &StateChangePlan::dbName() const {
         return _dbName;
     }
@@ -33,6 +41,14 @@ namespace ultraverse::state::v2 {
     
     void StateChangePlan::setRollbackGid(gid_t rollbackGid) {
         _rollbackGid = rollbackGid;
+    }
+    
+    gid_t StateChangePlan::endGid() const {
+        return _endGid;
+    }
+    
+    void StateChangePlan::setEndGid(gid_t endGid) {
+        _endGid = endGid;
     }
     
     const std::string &StateChangePlan::userQueryPath() const {

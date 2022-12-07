@@ -177,8 +177,12 @@ namespace ultraverse::state::v2 {
             _logger->trace("read gid {}; flags {}", gid, flags);
             
             if (gid < _plan.startGid()) {
-                _logger->trace("skipping gid {} until reach {}", gid, _plan.startGid());
+                _logger->trace("skipping gid {} / {}", gid, _plan.startGid());
                 continue;
+            }
+            
+            if (_plan.endGid() != 0 && gid > _plan.endGid()) {
+                break;
             }
     
             auto task = taskExecutor.post<int>([this, &mutex, &stateLogWriter, transaction, gid, flags]() {
