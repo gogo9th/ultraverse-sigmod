@@ -60,6 +60,10 @@ namespace ultraverse::state::v2 {
         writeColumnDependencyGraph(graph);
     }
     
+    void StateLogWriter::operator<<(TableDependencyGraph &graph) {
+        writeTableDependencyGraph(graph);
+    }
+    
     void StateLogWriter::writeRowCluster(RowCluster &rowCluster) {
         std::string fileName = _logPath + "/" + _logName + ".ultcluster";
         std::ofstream stream(fileName, std::ios::binary);
@@ -73,6 +77,17 @@ namespace ultraverse::state::v2 {
     
     void StateLogWriter::writeColumnDependencyGraph(ColumnDependencyGraph &graph) {
         std::string fileName = _logPath + "/" + _logName + ".ultcolumns";
+        std::ofstream stream(fileName, std::ios::binary);
+        
+        cereal::BinaryOutputArchive archive(stream);
+        archive(graph);
+        
+        stream.flush();
+        stream.close();
+    }
+    
+    void StateLogWriter::writeTableDependencyGraph(TableDependencyGraph &graph) {
+        std::string fileName = _logPath + "/" + _logName + ".ulttables";
         std::ofstream stream(fileName, std::ios::binary);
         
         cereal::BinaryOutputArchive archive(stream);

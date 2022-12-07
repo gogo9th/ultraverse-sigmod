@@ -61,6 +61,10 @@ namespace ultraverse::state::v2 {
         loadColumnDependencyGraph(graph);
     }
     
+    void StateLogReader::operator>>(TableDependencyGraph &graph) {
+        loadTableDependencyGraph(graph);
+    }
+    
     void StateLogReader::loadRowCluster(RowCluster &rowCluster) {
         std::string fileName = _logPath + "/" + _logName + ".ultcluster";
         std::ifstream stream(fileName, std::ios::binary);
@@ -73,6 +77,16 @@ namespace ultraverse::state::v2 {
     
     void StateLogReader::loadColumnDependencyGraph(ColumnDependencyGraph &graph) {
         std::string fileName = _logPath + "/" + _logName + ".ultcolumns";
+        std::ifstream stream(fileName, std::ios::binary);
+    
+        cereal::BinaryInputArchive archive(stream);
+        archive(graph);
+    
+        stream.close();
+    }
+    
+    void StateLogReader::loadTableDependencyGraph(TableDependencyGraph &graph) {
+        std::string fileName = _logPath + "/" + _logName + ".ulttables";
         std::ifstream stream(fileName, std::ios::binary);
     
         cereal::BinaryInputArchive archive(stream);

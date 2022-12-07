@@ -10,6 +10,7 @@
 
 #include "Transaction.hpp"
 #include "ColumnDependencyGraph.hpp"
+#include "TableDependencyGraph.hpp"
 #include "cluster/RowCluster.hpp"
 
 namespace ultraverse::state::v2 {
@@ -27,9 +28,11 @@ namespace ultraverse::state::v2 {
         
         void operator<<(RowCluster &rowCluster);
         void operator<<(ColumnDependencyGraph &graph);
+        void operator<<(TableDependencyGraph &graph);
     
         void writeRowCluster(RowCluster &rowCluster);
         void writeColumnDependencyGraph(ColumnDependencyGraph &graph);
+        void writeTableDependencyGraph(TableDependencyGraph &graph);
         void writeCheckpoint();
     private:
         std::string _logPath;

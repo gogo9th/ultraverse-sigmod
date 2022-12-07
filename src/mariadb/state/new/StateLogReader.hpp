@@ -11,6 +11,7 @@
 #include "Transaction.hpp"
 
 #include "ColumnDependencyGraph.hpp"
+#include "TableDependencyGraph.hpp"
 #include "cluster/RowCluster.hpp"
 
 namespace ultraverse::state::v2 {
@@ -29,9 +30,11 @@ namespace ultraverse::state::v2 {
     
         void operator>>(RowCluster &rowCluster);
         void operator>>(ColumnDependencyGraph &graph);
+        void operator>>(TableDependencyGraph &graph);
         
         void loadRowCluster(RowCluster &rowCluster);
         void loadColumnDependencyGraph(ColumnDependencyGraph &graph);
+        void loadTableDependencyGraph(TableDependencyGraph &graph);
     private:
         std::string _logPath;
         std::string _logName;

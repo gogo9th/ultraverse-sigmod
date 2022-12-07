@@ -15,6 +15,14 @@ namespace ultraverse::state::v2 {
         return _clusterMap.find(columnName) != _clusterMap.end();
     }
     
+    void RowCluster::addKey(const std::string &columnName) {
+        if (hasKey(columnName)) {
+            return;
+        }
+        
+        _clusterMap.insert({ columnName, std::vector<std::shared_ptr<StateRange>>() });
+    }
+    
     void RowCluster::addKeyRange(const std::string &columnName, std::shared_ptr<StateRange> range) {
         auto &cluster = _clusterMap[columnName];
         
@@ -36,6 +44,10 @@ namespace ultraverse::state::v2 {
                 break;
             }
         }
+    }
+    
+    void RowCluster::setWildcard(const std::string &columnName, bool wildcard) {
+        _wildcardMap[columnName] = wildcard;
     }
     
     void RowCluster::addAlias(StateItem alias, StateItem real) {
@@ -101,7 +113,15 @@ namespace ultraverse::state::v2 {
         return _aliases;
     }
     
-    void RowCluster::mergeCluster(const std::string &columnName, bool force) {
+    void RowCluster::mergeCluster(const std::string &columnName) {
+        if (_wildcardMap[columnName]) {
+            mergeClusterAll(columnName);
+        } else {
+            mergeClusterUsingGraph(columnName);
+        }
+    }
+    
+    void RowCluster::mergeClusterUsingGraph(const std::string &columnName) {
         using VertexIterator = boost::graph_traits<ClusterGraph>::vertex_descriptor;
         auto &cluster = _clusterMap[columnName];
         std::vector<std::shared_ptr<StateRange>> newCluster;
@@ -188,45 +208,30 @@ namespace ultraverse::state::v2 {
         }
         
         if (rerun) {
-            mergeCluster(columnName, force);
+            mergeClusterUsingGraph(columnName);
         }
         
+    }
+    
+    void RowCluster::mergeClusterAll(const std::string &columnName) {
+        auto &cluster = _clusterMap[columnName];
+        if (cluster.size() < 2) {
+            return;
+        }
         
-        /*
-        // TODO: 이중 루프 제거해야 해
         auto it = cluster.begin();
+        auto first = *it++;
+        
         while (it != cluster.end()) {
-            MERGE_LOOP:
-            for (auto it2 = it; it2 != cluster.end(); it2++) {
-                if (it == it2) {
-                    continue;
-                }
-        
-                if (force || StateRange::AND_FAST(**it, **it2)) {
-                    _logger->trace("merging cluster: {} ({})", columnName, cluster.size());
-                    (*it)->OR_FAST(**it2);
-                    cluster.erase(it2++);
-                    _logger->trace("cluster merged: {} ({})", columnName, cluster.size());
-                }
-            }
-    
-            it++;
+            first->OR_FAST(**it++);
         }
-         */
-    }
-    
-    StateRange &RowCluster::getKeyRange(const std::string &columnName) {
-        // if (!hasKey(columnName)) {
-            throw std::runtime_error(fmt::format(
-                "{} is not in keyMap",
-                columnName
-            ));
-        // }
         
-        // return _clusterMap.at(columnName);
+        cluster.clear();
+        cluster.push_back(first);
+        
+        _clusterGraph[columnName].clear();
     }
-    
-    
+   
     std::unordered_map<std::string, std::vector<std::shared_ptr<StateRange>>> &RowCluster::keyMap() {
         return _clusterMap;
     }
@@ -247,15 +252,16 @@ namespace ultraverse::state::v2 {
     
     bool RowCluster::isQueryRelated(std::map<std::string, std::vector<std::shared_ptr<StateRange>>> &keyRanges, Query &query,
                                     const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
+        // 각 keyRange에 대한 AND 연산을 행한다.
         for (auto &pair: keyRanges) {
             for (auto &keyRange: pair.second) {
                 if (isQueryRelated(pair.first, keyRange, query, foreignKeys, aliases)) {
-                    return true;
+                    return false;
                 }
             }
         }
         
-        return false;
+        return true;
     }
     
     bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
