@@ -46,6 +46,8 @@ namespace ultraverse::state::v2 {
         std::unordered_set<std::string> primaryKeys;
         std::vector<ForeignKey> foreignKeys;
         
+        std::unordered_map<std::string, int64_t> autoIncrements;
+        
         // fixme;
         std::mutex contextLock;
     };

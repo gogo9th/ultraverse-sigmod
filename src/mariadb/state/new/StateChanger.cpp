@@ -917,16 +917,25 @@ namespace ultraverse::state::v2 {
                     !(needsForceExecution                               ||
                     isDDL                                               ||
                     (isRelatedWithCluster && isRelatedWithColumnGraph));
-                
-                if (skipQuery) {
-                    if (isRelatedWithColumnGraph && query->type() == Query::INSERT) {
-                        auto tableName = StateUserQuery::SplitDBNameAndTableName(*query->writeSet().begin())[0];
-                        auto autoIncrement = getAutoIncrement(dbHandle, tableName);
-                        
-                        _logger->info("{}: increasing AUTO_INCREMENT ({})", tableName, autoIncrement, autoIncrement + 1);
-                        setAutoIncrement(dbHandle, tableName, autoIncrement + 1);
+    
+    
+                if (isRelatedWithColumnGraph && query->type() == Query::INSERT) {
+                    auto tableName = StateUserQuery::SplitDBNameAndTableName(*query->writeSet().begin())[0];
+                    if (_context->autoIncrements.find(tableName) == _context->autoIncrements.end()) {
+                        _context->autoIncrements.insert({ tableName, getAutoIncrement(dbHandle, tableName) });
                     }
                     
+                    if (!skipQuery) {
+                        int64_t autoIncrement = _context->autoIncrements[tableName];
+                        
+                        _logger->trace("{}: setting AUTO_INCREMENT to {}", tableName, autoIncrement);
+                        setAutoIncrement(dbHandle, tableName, autoIncrement);
+                    }
+    
+                    _context->autoIncrements[tableName]++;
+                }
+                
+                if (skipQuery) {
                     if (!isRelatedWithCluster) {
                         _logger->trace("query skipped: not related with cluster: {}", query->statement());
                     }
