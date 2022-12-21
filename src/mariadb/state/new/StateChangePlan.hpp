@@ -10,18 +10,10 @@
 #include "Transaction.hpp"
 
 namespace ultraverse::state::v2 {
-    
-    enum OperationMode {
-        ROLLBACK,
-        APPEND_ONLY
-    };
-    
+
     class StateChangePlan {
     public:
         explicit StateChangePlan();
-        
-        OperationMode mode() const;
-        void setMode(OperationMode mode);
         
         const std::string &dbHost() const;
         void setDBHost(const std::string &dbHost);
@@ -38,14 +30,14 @@ namespace ultraverse::state::v2 {
         gid_t startGid() const;
         void setStartGid(gid_t startGid);
         
-        gid_t rollbackGid() const;
-        void setRollbackGid(gid_t rollbackGid);
-        
         gid_t endGid() const;
         void setEndGid(gid_t endGid);
+    
+        std::vector<gid_t> &rollbackGids();
+        std::map<gid_t, std::string> &userQueries();
         
-        const std::string &userQueryPath() const;
-        void setUserQueryPath(const std::string &userQueryPath);
+        bool isRollbackGid(gid_t gid) const;
+        bool hasUserQuery(gid_t gid) const;
         
         bool isDBDumpAvailable() const;
         const std::string &dbDumpPath() const;
@@ -71,17 +63,16 @@ namespace ultraverse::state::v2 {
         const std::vector<uint64_t> &skipGids() const;
     
     private:
-        OperationMode _operationMode;
-        
         std::string _dbHost;
         std::string _dbUsername;
         std::string _dbPassword;
         std::string _dbName;
         
         gid_t _startGid;
-        gid_t _rollbackGid;
         gid_t _endGid;
-        std::string _userQueryPath;
+        
+        std::vector<gid_t> _rollbackGids;
+        std::map<gid_t, std::string> _userQueries;
         
         std::string _dbdumpPath;
         std::string _binlogPath;

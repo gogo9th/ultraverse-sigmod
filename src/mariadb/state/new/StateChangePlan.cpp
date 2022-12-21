@@ -11,14 +11,6 @@ namespace ultraverse::state::v2 {
     
     }
     
-    OperationMode StateChangePlan::mode() const {
-        return _operationMode;
-    }
-    
-    void StateChangePlan::setMode(OperationMode mode) {
-        _operationMode = mode;
-    }
-    
     const std::string &StateChangePlan::dbHost() const {
         return _dbHost;
     }
@@ -59,14 +51,6 @@ namespace ultraverse::state::v2 {
         _startGid = startGid;
     }
     
-    gid_t StateChangePlan::rollbackGid() const {
-        return _rollbackGid;
-    }
-    
-    void StateChangePlan::setRollbackGid(gid_t rollbackGid) {
-        _rollbackGid = rollbackGid;
-    }
-    
     gid_t StateChangePlan::endGid() const {
         return _endGid;
     }
@@ -75,12 +59,21 @@ namespace ultraverse::state::v2 {
         _endGid = endGid;
     }
     
-    const std::string &StateChangePlan::userQueryPath() const {
-        return _userQueryPath;
+    std::vector<gid_t> &StateChangePlan::rollbackGids() {
+        return _rollbackGids;
     }
     
-    void StateChangePlan::setUserQueryPath(const std::string &userQueryPath) {
-        _userQueryPath = userQueryPath;
+    
+    std::map<gid_t, std::string> &StateChangePlan::userQueries() {
+        return _userQueries;
+    }
+    
+    bool StateChangePlan::isRollbackGid(gid_t gid) const {
+        return std::find(_rollbackGids.begin(), _rollbackGids.end(), gid) != _rollbackGids.end();
+    }
+    
+    bool StateChangePlan::hasUserQuery(gid_t gid) const {
+        return _userQueries.find(gid) != _userQueries.end();
     }
     
     bool StateChangePlan::isDBDumpAvailable() const {

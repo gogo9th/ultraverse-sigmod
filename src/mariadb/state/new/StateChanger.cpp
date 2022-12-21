@@ -281,7 +281,6 @@ namespace ultraverse::state::v2 {
     void StateChanger::start() {
         TaskExecutor taskExecutor(8);
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
-        std::shared_ptr<Transaction> userQuery;
         
         _logger->info("loading column dependency graph");
         _reader >> *_columnGraph;
@@ -298,9 +297,7 @@ namespace ultraverse::state::v2 {
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
         }
     
-        if (!_plan.userQueryPath().empty()) {
-            userQuery = std::move(loadUserQuery(_plan.userQueryPath()));
-        }
+        
         
         _logger->info("opening state log");
         _reader.open();
@@ -330,8 +327,7 @@ namespace ultraverse::state::v2 {
             auto transaction = _reader.txnBody();
             _logger->trace("read gid {}; flags {}", gid, flags);
             
-            
-            if (transactionHeader->gid == _plan.rollbackGid()) {
+            if (_plan.isRollbackGid(transactionHeader->gid)) {
                 _logger->info("rollback target found");
                 _rollbackTarget = _reader.txnBody();
                 
@@ -348,7 +344,9 @@ namespace ultraverse::state::v2 {
                         _tableGraph->addRelationship(query->writeSet(), query->writeSet());
                     }
                 }
-                
+            }
+            
+            if (_plan.isRollbackGid(transactionHeader->gid) || _plan.hasUserQuery(transactionHeader->gid)) {
                 _isClusterReady = true;
                 _clusterCondvar.notify_all();
             }
@@ -368,12 +366,13 @@ namespace ultraverse::state::v2 {
                 std::this_thread::sleep_for(100ms);
             }
     
-            addTransaction(transaction);
-            
-            if (transactionHeader->gid == _plan.rollbackGid() && userQuery != nullptr) {
+            if (_plan.hasUserQuery(transactionHeader->gid)) {
+                auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transactionHeader->gid]));
                 _logger->info("executing user-provided query");
                 addTransaction(userQuery);
             }
+            
+            addTransaction(transaction);
         }
         
         while (!taskQueue.empty()) {
