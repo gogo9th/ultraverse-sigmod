@@ -36,6 +36,8 @@ namespace ultraverse::state::v2 {
         std::vector<gid_t> &rollbackGids();
         std::map<gid_t, std::string> &userQueries();
         
+        gid_t lowestGidAvailable() const;
+        
         bool isRollbackGid(gid_t gid) const;
         bool hasUserQuery(gid_t gid) const;
         

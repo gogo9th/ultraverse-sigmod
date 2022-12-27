@@ -63,9 +63,23 @@ namespace ultraverse::state::v2 {
         return _rollbackGids;
     }
     
-    
     std::map<gid_t, std::string> &StateChangePlan::userQueries() {
         return _userQueries;
+    }
+    
+    gid_t StateChangePlan::lowestGidAvailable() const {
+        if (_rollbackGids.empty()) {
+            return _userQueries.begin()->first;
+        }
+        
+        if (_userQueries.empty()) {
+            return _rollbackGids[0];
+        }
+        
+        return std::min(
+            _rollbackGids[0],
+            _userQueries.begin()->first
+        );
     }
     
     bool StateChangePlan::isRollbackGid(gid_t gid) const {
