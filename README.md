@@ -1,30 +1,52 @@
 # ULTRAVERSE
 
-# REQUIREMENTS
+# SYNOPSIS
 
-- build-essential
-- cmake (3.0+; tested on 3.23.2)
-- mariadb (tested on 15.1)
-- libmariadb-dev
+```shell
+$ sudo apt install build-essential cmake mariadb libmariadb-dev
 
-# USAGE
+# ...
+
+$ vim /etc/my.cnf.d/server.cnf
+
+[mariadb]
+log-bin=myserver-binlog
+binlog_format=ROW
+binlog_row_image=FULL
+binlog_row_metadata=FULL
+binlog-checksum=NONE
+max_binlog_size=100M
+
+$ systemctl restart mariadbd
+
+```
 
 ```shell
 # Reads MySQL-variant binary logs and writes state log into 'myserver.ultstatelog'
 # (see ./statelogd -h for more information)
-./statelogd -b /var/lib/mysql/myserver-binlog.index -o myserver
+$ ./statelogd -b /var/lib/mysql/myserver-binlog.index -o myserver
 
 # Make cluster map & table map before performing change state. 
-./db_state_change -i cheese-binlog -d benchbase -k "item2.i_id,useracct.u_id" make_clustermap
+$ ./db_state_change -i cheese-binlog -d benchbase -k "item2.i_id,useracct.u_id" make_clustermap
 
 # Performs change state. (see ./db_state_change -h for more information)
-./db_state_change \
+$ ./db_state_change \
     -i cheese-binlog \
     -d benchbase \
     -S 11101,11102,11103,11104,11105,11106,11107,11108,11109,11110,11111,11112 \
     -k "item2.i_id,useracct.u_id" \
     rollback=33049:prepend=33049,migration-33049.sql:rollback=33050
 ```
+
+
+# REQUIREMENTS
+
+- build-essential
+- cmake (3.0+; tested on 3.23.2)
+- mariadb (tested on 15.1)
+  - requires FULL ROW IMAGE/METADATA in binary log (see synopsis section)
+- libmariadb-dev
+
 
 # NOTE
 
