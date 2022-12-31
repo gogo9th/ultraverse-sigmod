@@ -22,6 +22,14 @@ $ systemctl restart mariadbd
 ```
 
 ```shell
+$ git clone $ULTRAVERSE_GIT
+$ cd ultraverse
+$ mkdir build && cd build 
+$ cmake ..
+$ make -j8 
+```
+
+```shell
 # Reads MySQL-variant binary logs and writes state log into 'myserver.ultstatelog'
 # (see ./statelogd -h for more information)
 $ ./statelogd -b /var/lib/mysql/myserver-binlog.index -o myserver
