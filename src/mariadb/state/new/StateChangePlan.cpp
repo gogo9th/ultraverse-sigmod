@@ -126,6 +126,14 @@ namespace ultraverse::state::v2 {
         _stateLogName = stateLogName;
     }
     
+    bool StateChangePlan::writeStateLog() const {
+        return _writeStateLog;
+    }
+    
+    void StateChangePlan::setWriteStateLog(bool writeStateLog) {
+        _writeStateLog = writeStateLog;
+    }
+    
     bool StateChangePlan::isDryRun() const {
         return _isDryRun;
     }

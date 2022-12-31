@@ -54,6 +54,9 @@ namespace ultraverse::state::v2 {
         const std::string &stateLogName() const;
         void setStateLogName(const std::string &stateLogName);
         
+        bool writeStateLog() const;
+        void setWriteStateLog(bool writeStateLog);
+        
         bool isDryRun() const;
         void setDryRun(bool isDryRun);
         
@@ -80,6 +83,8 @@ namespace ultraverse::state::v2 {
         std::string _binlogPath;
         std::string _stateLogPath;
         std::string _stateLogName;
+        
+        bool _writeStateLog;
         
         std::vector<std::string> _keyColumns;
         std::vector<std::pair<std::string, std::string>> _columnAliases;
