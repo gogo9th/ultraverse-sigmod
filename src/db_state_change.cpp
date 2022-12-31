@@ -23,7 +23,7 @@ namespace ultraverse {
     }
     
     std::string DBStateChangeApp::optString() {
-        return "b:i:d:s:g:e:k:a:C:S:DvVh";
+        return "b:i:d:s:g:e:k:a:C:S:wDvVh";
     }
     
     int DBStateChangeApp::main() {
@@ -51,6 +51,7 @@ namespace ultraverse {
             "    -a colA=colB   column aliases (eg. user.name=user.id,...)\n"
             "    -C threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -S gid,gid,... list of gids to skip processing\n"
+            "    -w             write state log which contains state changed\n"
             "    -D             dry-run\n"
             "    -v             set logger level to DEBUG\n"
             "    -V             set logger level to TRACE\n"
@@ -203,6 +204,12 @@ namespace ultraverse {
                 );
             }
         } // @end(skipProcessing)
+    
+        { // @start(writeStateLog)
+            if (isArgSet('w')) {
+                changePlan.setWriteStateLog(true);
+            }
+        } // @end(writeStateLog)
     
         { // @start(BINLOG_PATH)
             std::string binlogPath = getEnv("BINLOG_PATH");

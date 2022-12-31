@@ -283,6 +283,23 @@ namespace ultraverse::state::v2 {
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
         std::shared_ptr<Transaction> userQuery;
         
+        auto stateLogWriter = _plan.writeStateLog() ?
+            std::make_unique<StateLogWriter>(_plan.stateLogPath(), fmt::format("{}_statechange_{}", _plan.stateLogName(), (int) time(nullptr))) :
+            nullptr;
+        gid_t outGid = 0;
+        
+        auto writeStateLog = [&stateLogWriter, &outGid](std::shared_ptr<Transaction> &source) {
+            if (stateLogWriter == nullptr) {
+                return;
+            }
+            
+            Transaction dst(*source);
+            dst.setGid(outGid++);
+            
+            *stateLogWriter << dst;
+        };
+        
+        
         _logger->info("loading column dependency graph");
         _reader >> *_columnGraph;
         _reader >> *_tableGraph;
@@ -352,6 +369,9 @@ namespace ultraverse::state::v2 {
                 _isClusterReady = true;
                 _clusterCondvar.notify_all();
             }
+    
+            // FIXME: gid == rollbackGid시 스킵
+            writeStateLog(transaction);
             
             if (!isTransactionRelatedToPlan(transaction)) {
                 _logger->trace("skipping transaction #{}", gid);
@@ -373,6 +393,7 @@ namespace ultraverse::state::v2 {
             if (transactionHeader->gid == _plan.rollbackGid() && userQuery != nullptr) {
                 _logger->info("executing user-provided query");
                 addTransaction(userQuery);
+                writeStateLog(userQuery);
             }
         }
         
