@@ -24,6 +24,13 @@
 
 
 namespace ultraverse::state::v2 {
+    namespace OperationMode {
+        enum Value {
+            NORMAL,
+            PREPARE
+        };
+    }
+    
     class StateChanger {
     public:
         static const std::string QUERY_TAG_STATECHANGE;
@@ -103,6 +110,8 @@ namespace ultraverse::state::v2 {
         DBHandlePool<mariadb::DBHandle> &_dbHandlePool;
         
         StateChangePlan _plan;
+        OperationMode::Value _mode;
+        
         std::string _intermediateDBName;
         
         StateLogReader _reader;

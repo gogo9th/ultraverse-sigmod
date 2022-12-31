@@ -24,6 +24,7 @@ namespace ultraverse::state::v2 {
     StateChanger::StateChanger(DBHandlePool<mariadb::DBHandle> &dbHandlePool, const StateChangePlan &plan):
         _logger(createLogger("StateChanger")),
         _dbHandlePool(dbHandlePool),
+        _mode(OperationMode::NORMAL),
         _plan(plan),
         _intermediateDBName(fmt::format("ult_intermediate_{}", (int) time(nullptr))), // FIXME
         _reader(plan.stateLogPath(), plan.stateLogName()),
@@ -160,6 +161,8 @@ namespace ultraverse::state::v2 {
     
     
     void StateChanger::prepare() {
+        _mode = OperationMode::PREPARE;
+        
         std::mutex mutex;
         TaskExecutor taskExecutor(1);
         StateLogWriter stateLogWriter(_plan.stateLogPath(), _plan.stateLogName());
@@ -279,9 +282,10 @@ namespace ultraverse::state::v2 {
     }
 
     void StateChanger::start() {
+        _mode = OperationMode::NORMAL;
+        
         TaskExecutor taskExecutor(8);
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
-        std::shared_ptr<Transaction> userQuery;
         
         auto stateLogWriter = _plan.writeStateLog() ?
             std::make_unique<StateLogWriter>(_plan.stateLogPath(), fmt::format("{}_statechange_{}", _plan.stateLogName(), (int) time(nullptr))) :
@@ -315,10 +319,6 @@ namespace ultraverse::state::v2 {
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
         }
     
-        if (!_plan.userQueryPath().empty()) {
-            userQuery = std::move(loadUserQuery(_plan.userQueryPath()));
-        }
-        
         _logger->info("opening state log");
         _reader.open();
         
@@ -347,8 +347,7 @@ namespace ultraverse::state::v2 {
             auto transaction = _reader.txnBody();
             _logger->trace("read gid {}; flags {}", gid, flags);
             
-            
-            if (transactionHeader->gid == _plan.rollbackGid()) {
+            if (_plan.isRollbackGid(transactionHeader->gid)) {
                 _logger->info("rollback target found");
                 _rollbackTarget = _reader.txnBody();
                 
@@ -365,7 +364,9 @@ namespace ultraverse::state::v2 {
                         _tableGraph->addRelationship(query->writeSet(), query->writeSet());
                     }
                 }
-                
+            }
+            
+            if (_plan.isRollbackGid(transactionHeader->gid) || _plan.hasUserQuery(transactionHeader->gid)) {
                 _isClusterReady = true;
                 _clusterCondvar.notify_all();
             }
@@ -388,13 +389,14 @@ namespace ultraverse::state::v2 {
                 std::this_thread::sleep_for(100ms);
             }
     
-            addTransaction(transaction);
-            
-            if (transactionHeader->gid == _plan.rollbackGid() && userQuery != nullptr) {
+            if (_plan.hasUserQuery(transactionHeader->gid)) {
+                auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transactionHeader->gid]));
                 _logger->info("executing user-provided query");
                 addTransaction(userQuery);
                 writeStateLog(userQuery);
             }
+            
+            addTransaction(transaction);
         }
         
         while (!taskQueue.empty()) {
@@ -866,7 +868,7 @@ namespace ultraverse::state::v2 {
             {
                 std::unique_lock clusterLock(_clusterMutex);
         
-                if (node->transaction->gid() > _plan.rollbackGid() && !_isClusterReady) {
+                if (node->transaction->gid() > _plan.lowestGidAvailable() && !_isClusterReady) {
                     _clusterCondvar.wait(clusterLock, [this]() { return _isClusterReady; });
                 }
         
@@ -901,7 +903,7 @@ namespace ultraverse::state::v2 {
         std::shared_ptr<Transaction> transaction,
         mariadb::DBHandle &dbHandle
     ) {
-        const bool isTargetTransaction = transaction->gid() == _plan.rollbackGid();
+        const bool isTargetTransaction = _plan.isRollbackGid(transaction->gid());
         
         if (_hashWatcher != nullptr && isTargetTransaction) {
             dbHandle.executeQuery("use " + _intermediateDBName);
@@ -930,11 +932,11 @@ namespace ultraverse::state::v2 {
                     return _columnGraph->isRelated(hashA, readSetHash) || _columnGraph->isRelated(hashA, writeSetHash);
                 });
                 const bool needsForceExecution =
-                    (!_plan.isDBDumpAvailable() && transaction->gid() < _plan.rollbackGid()) ||
+                    (!_plan.isDBDumpAvailable() && transaction->gid() < _plan.lowestGidAvailable()) ||
                     (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
                 
                 const bool skipQuery =
-                    (_plan.mode() == ROLLBACK && isTargetTransaction)   ||
+                    (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
                     !(needsForceExecution                               ||
                     isDDL                                               ||
                     (isRelatedWithCluster && isRelatedWithColumnGraph));
@@ -968,11 +970,11 @@ namespace ultraverse::state::v2 {
                     const std::string tableName = StateUserQuery::SplitDBNameAndTableName(
                         *query->writeSet().begin())[0];
 
-                    if (transaction->gid() <= _plan.rollbackGid()) {
+                    if (transaction->gid() <= _plan.lowestGidAvailable()) {
                         if (query->isAfterHashPresent(tableName)) {
                             _hashWatcher->setHash(tableName, query->afterHash(tableName));
                         }
-                    } else if (transaction->gid() > _plan.rollbackGid()) {
+                    } else if (transaction->gid() > _plan.lowestGidAvailable()) {
                         const bool isHashMatched = _hashWatcher->isHashMatched(tableName);
     
                         if (isHashMatched) {
@@ -994,7 +996,7 @@ namespace ultraverse::state::v2 {
                 
                 __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
                 
-                if (!isDDL && transaction->gid() > _plan.rollbackGid()) {
+                if (!isDDL && transaction->gid() > _plan.lowestGidAvailable()) {
                     std::scoped_lock lock(_changedTablesMutex);
                     const std::string tableName = StateUserQuery::SplitDBNameAndTableName(
                         *query->writeSet().begin())[0];
@@ -1010,7 +1012,7 @@ namespace ultraverse::state::v2 {
         dbHandle.executeQuery("COMMIT");
         // _logger->debug("[#{}->#{}] releasing dbHandle", rootNodeId, nodeId);
     
-        if (!(_plan.mode() == ROLLBACK && isTargetTransaction) && isTransactionRelatedToCluster(transaction)) {
+        if (!(_mode == OperationMode::NORMAL && isTargetTransaction) && isTransactionRelatedToCluster(transaction)) {
             expandClusterMap(_rowCluster2, *transaction, CLUSTER_EXPAND_FLAG_INCLUDE_FK | CLUSTER_EXPAND_FLAG_DONT_EXPAND);
         }
         

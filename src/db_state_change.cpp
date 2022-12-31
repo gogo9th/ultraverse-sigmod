@@ -15,6 +15,47 @@ using namespace ultraverse::state;
 namespace ultraverse {
     using namespace ultraverse::state::v2;
     
+    MakeClusterAction::MakeClusterAction() {
+    
+    }
+    
+    ActionType::Value MakeClusterAction::type() {
+        return ActionType::MAKE_CLUSTER;
+    }
+    
+    RollbackAction::RollbackAction(gid_t gid):
+        _gid(gid)
+    {
+    
+    }
+    
+    ActionType::Value RollbackAction::type() {
+        return ActionType::ROLLBACK;
+    }
+    
+    gid_t RollbackAction::gid() const {
+        return _gid;
+    }
+    
+    PrependAction::PrependAction(gid_t gid, std::string sqlFile):
+        _gid(gid),
+        _sqlFile(sqlFile)
+    {
+    
+    }
+    
+    ActionType::Value PrependAction::type() {
+        return ActionType::PREPEND;
+    }
+    
+    gid_t PrependAction::gid() const {
+        return _gid;
+    }
+    
+    std::string PrependAction::sqlFile() const {
+        return _sqlFile;
+    }
+    
     DBStateChangeApp::DBStateChangeApp():
         _logger(createLogger("statechange"))
     {
@@ -32,20 +73,18 @@ namespace ultraverse {
             "statechange - rollback database state\n"
             "\n"
             "Usage:\n"
-            "    statechange [options] action"
+            "    statechange [options] action1:action2:..."
             "\n"
             "Available Actions:\n"
-            "    make_cluster   creates row cluster file\n"
-            "    rollback       rollbacks specified transaction and appends query (if provided)\n"
-            "    append-only    appends query after specified transaction\n"
+            "    make_cluster           creates row cluster file\n"
+            "    rollback=gid           rollbacks specified transaction\n"
+            "    prepend=gid,sqlfile    appends query before specified transaction\n"
             "\n"
             "Options: \n"
             "    -b sqlfile     database backup\n"
-            "    -A sqlfile     additional query to append\n"
             "    -i file        ultraverse state log (.ultstatelog)\n"
             "    -d database    database name\n"
             "    -s gid         start gid\n"
-            "    -g gid         target gid\n"
             "    -e gid         end gid\n"
             "    -k columns     key columns (eg. user.id,article.id)\n"
             "    -a colA=colB   column aliases (eg. user.name=user.id,...)\n"
@@ -81,11 +120,23 @@ namespace ultraverse {
             getEnv("DB_PASS")
         );
     
-        std::string action(argv()[argc() - 1]);
+        auto actions = parseActions(argv()[argc() - 1]);
+        if (actions.empty()) {
+            throw std::runtime_error("");
+        }
+        
+        bool makeClusterMap = std::find_if(actions.begin(), actions.end(), [](auto &action) {
+            return std::dynamic_pointer_cast<MakeClusterAction>(action) != nullptr;
+        }) != actions.end();
+        
+        if (makeClusterMap && actions.size() > 1) {
+            throw std::runtime_error("make_clustermap cannot be executed with other actions.");
+        }
+        
         StateChangePlan changePlan;
         
         try {
-            preparePlan(action, changePlan);
+            preparePlan(actions, changePlan);
         } catch (std::exception &e) {
             std::cout << e.what() << std::endl;
             return 1;
@@ -93,27 +144,20 @@ namespace ultraverse {
     
         StateChanger stateChanger(dbHandlePool, changePlan);
         
-        if (action == "make_clustermap") {
+        if (makeClusterMap) {
             stateChanger.prepare();
-        } else if (action == "rollback") {
+        } else {
             if (!confirm("Proceed?")) {
                 return 2;
             }
             
-            changePlan.setMode(state::v2::ROLLBACK);
             stateChanger.start();
-            
-        } else if (action == "append-only") {
-            changePlan.setMode(state::v2::APPEND_ONLY);
-            stateChanger.start();
-        } else {
-            return 1;
         }
        
         return 0;
     }
     
-    void DBStateChangeApp::preparePlan(const std::string &action, StateChangePlan &changePlan) {
+    void DBStateChangeApp::preparePlan(std::vector<std::shared_ptr<Action>> &actions, StateChangePlan &changePlan) {
         auto fail = [this] (std::string reason) {
             _logger->error("requirements not satisfied: {}", reason);
             throw std::runtime_error("requirements not satisfied");
@@ -129,11 +173,13 @@ namespace ultraverse {
             }
         } // @end(dbdump)
     
+        /*
         { // @start(appendQuery)
             if (isArgSet('A')) {
                 changePlan.setUserQueryPath(getArg('A'));
             }
         } // @end(appendQuery)
+         */
         
         { // @start(statelog)
             if (!isArgSet('i')) {
@@ -157,14 +203,6 @@ namespace ultraverse {
             }
         } // @end(startGid)
     
-        if (action != "make_clustermap") { // @start(targetGid)
-            if (!isArgSet('g')) {
-                fail("target gid must be specified");
-            }
-            
-            changePlan.setRollbackGid(std::stoi(getArg('g')));
-        } // @end(targetGid)
-        
         { // @start(endGid)
             if (isArgSet('e')) {
                 changePlan.setEndGid(std::stoi(getArg('e')));
@@ -219,6 +257,24 @@ namespace ultraverse {
         
         // FIXME
         changePlan.setStateLogPath(".");
+        
+        for (auto &action: actions) {
+            {
+                auto rollbackAction = std::dynamic_pointer_cast<RollbackAction>(action);
+                if (rollbackAction != nullptr) {
+                    changePlan.rollbackGids().push_back(rollbackAction->gid());
+                }
+            }
+    
+            {
+                auto prependAction = std::dynamic_pointer_cast<PrependAction>(action);
+                if (prependAction != nullptr) {
+                    changePlan.userQueries().insert({ prependAction->gid(), prependAction->sqlFile() });
+                }
+            }
+        }
+    
+        std::sort(changePlan.rollbackGids().begin(), changePlan.rollbackGids().end());
     }
     
     bool DBStateChangeApp::confirm(std::string message) {
@@ -227,6 +283,47 @@ namespace ultraverse {
         std::cin >> input;
         
         return input == "Y";
+    }
+    
+    std::vector<std::string> DBStateChangeApp::split(const std::string &inputStr, char character) {
+        std::vector<std::string> list;
+        
+        std::stringstream sstream(inputStr);
+        std::string string;
+        
+        while (std::getline(sstream, string, character)) {
+            list.push_back(string);
+        }
+        
+        return std::move(list);
+    }
+    
+    std::vector<std::shared_ptr<Action>> DBStateChangeApp::parseActions(std::string expression) {
+        std::vector<std::shared_ptr<Action>> actions;
+        auto exprs = split(expression, ':');
+        
+        for (auto &actionExpr: exprs) {
+            auto pair = split(actionExpr, '=');
+            auto action = pair[0];
+            auto strArgs = pair.size() > 1 ? pair[1] : "";
+            
+            if (action == "make_cluster") {
+                actions.emplace_back(std::make_shared<MakeClusterAction>());
+            } else if (action == "rollback") {
+                gid_t gid = std::stoll(strArgs);
+                actions.emplace_back(std::make_shared<RollbackAction>(gid));
+            } else if (action == "prepend") {
+                auto args = split(strArgs, ',');
+                if (args.size() != 2) {
+                    throw std::runtime_error("invalid arguments");
+                }
+    
+                gid_t gid = std::stoll(args[0]);
+                actions.emplace_back(std::make_shared<PrependAction>(gid, args[1]));
+            }
+        }
+        
+        return std::move(actions);
     }
     
     std::vector<std::string> DBStateChangeApp::buildKeyColumnList(std::string expression) {
