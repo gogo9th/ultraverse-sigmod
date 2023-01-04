@@ -3,11 +3,11 @@
 # SYNOPSIS
 
 ```shell
-$ sudo apt install build-essential cmake mariadb libmariadb-dev
+$ sudo apt install build-essential cmake mariadb libmariadb-dev pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev
 
 # ...
 
-$ vim /etc/my.cnf.d/server.cnf
+$ vim /etc/mysql/my.cnf.d/server.cnf
 
 [mariadb]
 log-bin=myserver-binlog
@@ -17,7 +17,7 @@ binlog_row_metadata=FULL
 binlog-checksum=NONE
 max_binlog_size=100M
 
-$ systemctl restart mariadbd
+$ systemctl restart mariadb
 
 ```
 
