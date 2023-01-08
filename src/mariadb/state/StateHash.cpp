@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <algorithm>
+#include <sstream>
 
 #include "StateHash.hpp"
 
@@ -83,6 +84,21 @@ namespace ultraverse::state {
             std::printf("StateHash::hexdump(%d): %s\n", index++, hexstr);
             OPENSSL_free(hexstr);
         }
+    }
+    
+    std::string StateHash::stringify() const {
+        std::stringstream sstream;
+        
+        for (const auto &hash: _hashList) {
+            auto hexstr = BN_bn2hex(hash.get());
+            
+            sstream << hexstr;
+            sstream << " ";
+            
+            OPENSSL_free(hexstr);
+        }
+        
+        return sstream.str();
     }
     
     StateHash::HashValue StateHash::calculateHash(StateHash::Record &record) {

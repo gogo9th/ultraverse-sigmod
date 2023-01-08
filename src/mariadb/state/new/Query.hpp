@@ -56,9 +56,11 @@ namespace ultraverse::state::v2 {
         void setAffectedRows(uint32_t affectedRows);
         
         StateHash &beforeHash(std::string tableName);
+        const std::unordered_map<std::string, StateHash> &beforeHash() const;
         void setBeforeHash(std::string tableName, StateHash hash);
         
         StateHash &afterHash(std::string tableName);
+        const std::unordered_map<std::string, StateHash> &afterHash() const;
         void setAfterHash(std::string tableName, StateHash hash);
         bool isAfterHashPresent(std::string tableName);
         

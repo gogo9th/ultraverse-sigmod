@@ -62,12 +62,20 @@ namespace ultraverse::state::v2 {
         return _beforeHash[tableName];
     }
     
+    const std::unordered_map<std::string, StateHash> &Query::beforeHash() const {
+        return _beforeHash;
+    }
+    
     void Query::setBeforeHash(std::string tableName, StateHash hash) {
         _beforeHash[tableName] = hash;
     }
     
     StateHash &Query::afterHash(std::string tableName) {
         return _afterHash[tableName];
+    }
+    
+    const std::unordered_map<std::string, StateHash> &Query::afterHash() const {
+        return _afterHash;
     }
     
     void Query::setAfterHash(std::string tableName, StateHash hash) {

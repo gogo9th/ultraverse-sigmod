@@ -63,6 +63,7 @@ namespace ultraverse::state {
         
         void compute(Record &record, EventType type);
         void hexdump();
+        std::string stringify() const;
         
         StateHash& operator+=(Record record);
         StateHash& operator-=(Record record);
