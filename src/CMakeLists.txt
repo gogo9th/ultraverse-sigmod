@@ -36,6 +36,8 @@ set(LIBULTRAVERSE_BASE_SRCS
     
     utils/log.cpp
     utils/log.hpp
+    utils/StringUtil.cpp
+    utils/StringUtil.hpp
 )
 
 set(LIBULTRAVERSE_STATE_SRCS

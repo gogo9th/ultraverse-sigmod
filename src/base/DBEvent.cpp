@@ -11,6 +11,8 @@
 #include "mariadb/BinaryLog.hpp"
 #include "util/sqlhelper.h"
 
+#include "utils/StringUtil.hpp"
+
 namespace ultraverse::base {
     
     QueryEventBase::QueryEventBase():
@@ -62,13 +64,7 @@ namespace ultraverse::base {
                     value = statement().substr(tokenPos[i], tokenPos[i + 1] - tokenPos[i]);
                 }
     
-                value.erase(std::remove_if(
-                    value.begin(), value.end(),
-                    [](auto c) { return c == ' '; }
-                ), value.end());
-                
-                _writeSet.insert(value + ".*");
-                std::cout << value << std::endl;
+                _writeSet.insert(utility::normalizeColumnName(value) + ".*");
                 j++;
             }
             i++;
@@ -82,7 +78,7 @@ namespace ultraverse::base {
     }
     
     void QueryEventBase::extractReadWriteSet(const hsql::InsertStatement *insert) {
-        std::string tableName(insert->tableName);
+        std::string tableName = utility::normalizeColumnName(insert->tableName);
         
         _writeSet.insert(tableName + ".*");
         
@@ -92,7 +88,7 @@ namespace ultraverse::base {
     }
     
     void QueryEventBase::extractReadWriteSet(const hsql::DeleteStatement *del) {
-        std::string tableName(del->tableName);
+        std::string tableName = utility::normalizeColumnName(del->tableName);
     
         _writeSet.insert(tableName + ".*");
         
@@ -105,7 +101,7 @@ namespace ultraverse::base {
     }
     
     void QueryEventBase::extractReadWriteSet(const hsql::UpdateStatement *update) {
-        std::string tableName(update->table->name);
+        std::string tableName = utility::normalizeColumnName(update->table->name);
         
         std::vector<std::string> readSet;
         StateItem whereExpr;
@@ -117,9 +113,9 @@ namespace ultraverse::base {
         for (auto &clause: *update->updates) {
             StateItem updateExpr;
             
-            _writeSet.insert(tableName + "." + clause->column);
+            _writeSet.insert(tableName + "." + utility::normalizeColumnName(clause->column));
             
-            updateExpr.name = tableName + "." + clause->column;
+            updateExpr.name = tableName + "." + utility::normalizeColumnName(clause->column);
             
             if (clause->value->isType(hsql::kExprLiteralString)) {
                 StateData value;
@@ -143,7 +139,7 @@ namespace ultraverse::base {
     }
     
     void QueryEventBase::extractReadWriteSet(const hsql::SelectStatement *select) {
-        std::string tableName(select->fromTable->getName());
+        std::string tableName = utility::normalizeColumnName(select->fromTable->getName());
         
         std::vector<std::string> readSet;
         if (select->selectList != nullptr) {
@@ -169,7 +165,7 @@ namespace ultraverse::base {
             StateItem stateItem;
     
             if (expr->name != nullptr) {
-                stateItem.name = std::string(expr->name);
+                stateItem.name = utility::normalizeColumnName(std::string(expr->name));
             }
             
             stateItem.condition_type = EN_CONDITION_NONE;
@@ -222,8 +218,8 @@ namespace ultraverse::base {
         
         if (expr->isType(hsql::kExprColumnRef)) {
             auto column = expr->table == nullptr ?
-                rootTable + "." + std::string(expr->name) :
-                std::string(expr->table) + "." + std::string(expr->name);
+                rootTable + "." + utility::normalizeColumnName(std::string(expr->name)) :
+                utility::normalizeColumnName(std::string(expr->table)) + "." + utility::normalizeColumnName(std::string(expr->name));
             
             readSet.push_back(column);
             parent.name = column;
