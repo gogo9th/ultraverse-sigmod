@@ -58,7 +58,15 @@ public:
         
         while (true) {
             StateItem &item = *it;
-            sstream << item.MakeRange()->MakeWhereQuery(item.name);
+            
+            if (item.condition_type != EN_CONDITION_NONE) {
+                sstream << "(" << joinItemSet(item.arg_list.begin(), item.arg_list.end(),
+                                       item.condition_type == EN_CONDITION_AND ? " AND " : " OR ")
+                        << ")";
+            } else {
+                sstream << item.MakeRange()->MakeWhereQuery(item.name);
+            }
+            
             it++;
             
             if (it != end) {
