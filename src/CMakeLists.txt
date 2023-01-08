@@ -117,8 +117,8 @@ set(ULTRAVERSE_APP_BASE_SRCS
 
 include_directories(../dependencies/sql-parser/src)
 include_directories(../dependencies/sql-parser/src/parser)
+include_directories(../dependencies/nlohmann-json/include)
 include_directories(../dependencies/cereal/include)
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/../dependencies/)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../dependencies/sql-parser)
 include_directories(${Boost_INCLUDE_DIRS})
 
