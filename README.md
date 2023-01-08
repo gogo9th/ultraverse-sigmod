@@ -42,6 +42,7 @@ $ ./db_state_change -i cheese-binlog -d benchbase -k "item2.i_id,useracct.u_id" 
 # Performs change state. (see ./db_state_change -h for more information)
 $ ./db_state_change \
     -i cheese-binlog \
+    -b checkpoint-230106.sql \
     -d benchbase \
     -S 11101,11102,11103,11104,11105,11106,11107,11108,11109,11110,11111,11112 \
     -k "item2.i_id,useracct.u_id" \
