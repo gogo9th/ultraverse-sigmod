@@ -3,7 +3,7 @@
 # SYNOPSIS
 
 ```shell
-$ sudo apt install build-essential cmake mariadb libmariadb-dev pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev
+$ sudo apt install build-essential cmake mariadb libmariadb-dev libmariadb-dev-compat pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev
 
 # ...
 
