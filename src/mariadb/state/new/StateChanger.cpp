@@ -434,8 +434,14 @@ namespace ultraverse::state::v2 {
             auto tableName = vec[0];
             auto columnName = vec[1];
             auto fkName = RowCluster::resolveForeignKey(it.first, _context->foreignKeys);
+            
+            auto &ranges = (*_keyRanges)[fkName];
     
             if (_hashWatcher != nullptr && _hashWatcher->isHashMatched(tableName)) {
+                continue;
+            }
+            
+            if (ranges.empty()) {
                 continue;
             }
             
