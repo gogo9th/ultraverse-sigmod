@@ -111,6 +111,16 @@ namespace ultraverse {
         if (isArgSet('C')) {
             threadNum = std::stoi(getArg('C'));
         }
+        
+        if (
+            getEnv("DB_HOST").empty() ||
+            getEnv("DB_PORT").empty() ||
+            getEnv("DB_USER").empty() ||
+            getEnv("DB_PASS").empty()
+        ) {
+            _logger->error("Database credential not provided - see \"Environment Variables\" section in ./db_state_change -h");
+            return 1;
+        }
     
         DBHandlePool<mariadb::DBHandle> dbHandlePool(
             threadNum,
