@@ -37,7 +37,7 @@ $ make -j8
 $ ./statelogd -b /var/lib/mysql/myserver-binlog.index -o myserver
 
 # Make cluster map & table map before performing change state. 
-$ ./db_state_change -i cheese-binlog -d benchbase -k "item2.i_id,useracct.u_id" make_clustermap
+$ ./db_state_change -i cheese-binlog -d benchbase -k "item2.i_id,useracct.u_id" make_cluster
 
 # Performs change state. (see ./db_state_change -h for more information)
 $ ./db_state_change \
