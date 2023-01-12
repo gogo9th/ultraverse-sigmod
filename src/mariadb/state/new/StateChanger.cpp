@@ -396,6 +396,16 @@ namespace ultraverse::state::v2 {
             if (_plan.hasUserQuery(transactionHeader->gid)) {
                 auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transactionHeader->gid]));
                 _logger->info("executing user-provided query");
+    
+                for (const auto &keyColumn: _plan.keyColumns()) {
+                    auto &ranges = (*_keyRanges)[keyColumn];
+                    auto newRanges = _rowCluster.getKeyRangeOf(*userQuery, keyColumn, _context->foreignKeys);
+                    ranges.insert(
+                        ranges.end(),
+                        newRanges.begin(), newRanges.end()
+                    );
+                }
+                
                 addTransaction(userQuery);
                 writeStateLog(userQuery);
             }
@@ -971,6 +981,8 @@ namespace ultraverse::state::v2 {
                 if (skipQuery) {
                     if (!isRelatedWithCluster) {
                         _logger->trace("query skipped: not related with cluster: {}", query->statement());
+                    } else if (!isRelatedWithColumnGraph) {
+                        _logger->trace("query skipped: not related with column graph: {}", query->statement());
                     }
                 
                     goto NEXT_QUERY;
@@ -1038,7 +1050,7 @@ namespace ultraverse::state::v2 {
         mariadb::DBHandle &dbHandle
     ) {
         auto statement = QUERY_TAG_STATECHANGE + query->statement();
-        // _logger->trace("[#{}->#{}] executing query: (timestamp={}) {}", rootNodeId, nodeId, query->timestamp(), query->statement());
+        _logger->trace("[#{}->#{}] executing query: (timestamp={}) {}", rootNodeId, nodeId, query->timestamp(), query->statement());
         // TODO: 제거하기로 함
         if (dbHandle.executeQuery("SET foreign_key_checks=0") != 0) {
             _logger->warn("[#{}->#{}] failed to turn off foreign key constraint", rootNodeId, nodeId);
