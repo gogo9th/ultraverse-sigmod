@@ -352,8 +352,12 @@ namespace ultraverse::state::v2 {
                 _rollbackTarget = _reader.txnBody();
                 
                 for (const auto &keyColumn: _plan.keyColumns()) {
-                    (*_keyRanges)[keyColumn] =
-                        _rowCluster.getKeyRangeOf(*_rollbackTarget, keyColumn, _context->foreignKeys);
+                    auto &ranges = (*_keyRanges)[keyColumn];
+                    auto newRanges = _rowCluster.getKeyRangeOf(*_rollbackTarget, keyColumn, _context->foreignKeys);
+                    ranges.insert(
+                        ranges.end(),
+                        newRanges.begin(), newRanges.end()
+                    );
                 }
                 
                 for (auto &query: _rollbackTarget->queries()) {
@@ -440,11 +444,11 @@ namespace ultraverse::state::v2 {
                 auto fkTableName = vec2[0];
                 auto fkColumnName = vec2[1];
     
-                auto &keyRange = (*_keyRanges)[fkName][0];
+                auto &keyRange = ranges[0];
                 result[tableName].push_back(keyRange->MakeWhereQuery(columnName));
             } else {
                 // TODO: alias
-                auto &keyRange = (*_keyRanges)[it.first][0];
+                auto &keyRange = ranges[0];
                 result[tableName].push_back(keyRange->MakeWhereQuery(columnName));
             }
         }
