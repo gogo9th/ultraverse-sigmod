@@ -144,7 +144,9 @@ namespace ultraverse::state::v2 {
         std::unique_ptr<TableDependencyGraph> _tableGraph;
         std::unique_ptr<HashWatcher> _hashWatcher;
     
+        /** @deprecated */
         std::mutex _changedTablesMutex;
+        /** @deprecated */
         std::unordered_set<std::string> _changedTables;
         
         gid_t _ddlTxnId;
