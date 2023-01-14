@@ -244,20 +244,22 @@ namespace ultraverse::mariadb {
                 }
                     break;
     
+                case MYSQL_TYPE_BIT:
+                case MYSQL_TYPE_ENUM:
+                case MYSQL_TYPE_SET:
                 case MYSQL_TYPE_NEWDECIMAL:
-                case MYSQL_TYPE_BIT: {
+                case MYSQL_TYPE_DECIMAL:
+                {
                     metadataPos += 2;
     
                     columnTypeDef2.emplace_back(column_type::STRING, -1);
                 }
                     break;
                 
-                case MYSQL_TYPE_ENUM:
-                case MYSQL_TYPE_SET:
                 case MYSQL_TYPE_LONG_BLOB:
                 case MYSQL_TYPE_MEDIUM_BLOB:
                 case MYSQL_TYPE_TINY_BLOB:
-                case MYSQL_TYPE_DECIMAL:
+                    metadataPos += 1;
                     columnTypeDef2.emplace_back(column_type::STRING, -1);
                     break;
                     
@@ -266,15 +268,17 @@ namespace ultraverse::mariadb {
                     break;
                     
                 case MYSQL_TYPE_LONG:
-                case MYSQL_TYPE_INT24:
                     columnTypeDef2.emplace_back(column_type::INTEGER, 4);
                     break;
+    
+                case MYSQL_TYPE_INT24:
+                    columnTypeDef2.emplace_back(column_type::INTEGER, 3);
                     
                 case MYSQL_TYPE_SHORT:
-                case MYSQL_TYPE_YEAR:
                     columnTypeDef2.emplace_back(column_type::INTEGER, 2);
                     break;
-                    
+    
+                case MYSQL_TYPE_YEAR:
                 case MYSQL_TYPE_TINY:
                     columnTypeDef2.emplace_back(column_type::INTEGER, 1);
                     break;
