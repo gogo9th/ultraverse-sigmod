@@ -397,8 +397,6 @@ namespace ultraverse::state::v2 {
                 auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transactionHeader->gid]));
                 _logger->info("executing user-provided query");
     
-                userQuery->setGid(transactionHeader->gid);
-    
                 for (const auto &keyColumn: _plan.keyColumns()) {
                     auto &ranges = (*_keyRanges)[keyColumn];
                     auto newRanges = _rowCluster.getKeyRangeOf(*userQuery, keyColumn, _context->foreignKeys);
@@ -1051,7 +1049,7 @@ namespace ultraverse::state::v2 {
                 
                 __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
                 
-                if (!isDDL && transaction->gid() >= _plan.lowestGidAvailable()) {
+                if (!isDDL && transaction->gid() > _plan.lowestGidAvailable() || transaction->flags() & Transaction::FLAG_FORCE_EXECUTE) {
                     std::scoped_lock lock(_changedTablesMutex);
                     const std::string tableName = StateUserQuery::SplitDBNameAndTableName(
                         *query->writeSet().begin())[0];
