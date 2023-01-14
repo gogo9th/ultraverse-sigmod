@@ -311,7 +311,7 @@ namespace ultraverse::state::v2 {
         _logger->info("loading row cluster");
         _reader >> _rowCluster;
         
-        // _hashWatcher = std::make_unique<HashWatcher>(_plan.binlogPath(), _plan.stateLogName() + ".index", _intermediateDBName);
+        _hashWatcher = std::make_unique<HashWatcher>(_plan.binlogPath(), _plan.stateLogName() + ".index", _intermediateDBName);
         
         createIntermediateDB();
     
@@ -474,10 +474,10 @@ namespace ultraverse::state::v2 {
             auto &table = pair.first;
             auto &ranges = pair.second;
             
-            if (ranges.empty()) {
+            if (_changedTables.find(table) == _changedTables.end() || ranges.empty()) {
                 continue;
             }
-           
+            
             std::string where;
             for (auto &range: ranges) {
                 where += range;
