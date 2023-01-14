@@ -252,16 +252,16 @@ namespace ultraverse::state::v2 {
     
     bool RowCluster::isQueryRelated(std::map<std::string, std::vector<std::shared_ptr<StateRange>>> &keyRanges, Query &query,
                                     const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
-        // 각 keyRange에 대한 AND 연산을 행한다.
+        // 각 keyRange에 대해 하나만 매칭되어도 재실행 대상이 된다.
         for (auto &pair: keyRanges) {
             for (auto &keyRange: pair.second) {
-                if (!isQueryRelated(pair.first, keyRange, query, foreignKeys, aliases)) {
-                    return false;
+                if (isQueryRelated(pair.first, keyRange, query, foreignKeys, aliases)) {
+                    return true;
                 }
             }
         }
         
-        return true;
+        return false;
     }
     
     bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
