@@ -118,12 +118,29 @@ namespace ultraverse::base {
             updateExpr.name = tableName + "." + utility::normalizeColumnName(clause->column);
             
             if (clause->value->isType(hsql::kExprLiteralString)) {
-                StateData value;
-                value.Set(clause->value->name, strlen(clause->value->name));
-                updateExpr.data_list.push_back(value);
+                std::string strValue(clause->value->name);
+                
+                if (strValue.find("__ULTRAVERSE_SQLVAR__")) {
+                    auto *stateItem = findStateItem(clause->column);
+                    
+                    if (stateItem == nullptr) {
+                        _logger->warn("SQLVAR {} referenced but not found", strValue);
+    
+                        StateData value;
+                        value.Set(clause->value->name, strlen(clause->value->name));
+                        updateExpr.data_list.push_back(value);
+                    } else {
+                        updateExpr.data_list.push_back(stateItem->data_list[0]);
+                    }
+                } else {
+                    StateData value;
+                    value.Set(clause->value->name, strlen(clause->value->name));
+                    updateExpr.data_list.push_back(value);
+                }
             } else if (clause->value->isType(hsql::kExprLiteralInt)) {
                 StateData value;
                 value.Set(clause->value->ival);
+                
                 updateExpr.data_list.push_back(value);
             } else if (clause->value->isType(hsql::kExprLiteralFloat)) {
                 StateData value;
@@ -227,10 +244,23 @@ namespace ultraverse::base {
         }
         
         if (expr->isType(hsql::kExprLiteralString)) {
-            StateData value;
-            value.Set(expr->name, strlen(expr->name));
-            parent.data_list.push_back(value);
-            return;
+            std::string strValue(expr->name);
+            if (strValue.find("__ULTRAVERSE_SQLVAR__") != std::string::npos) {
+                auto stateItem = findStateItem(parent.name);
+                if (stateItem == nullptr) {
+                    _logger->warn("SQLVAR {} referenced but not found", strValue);
+    
+                    StateData value;
+                    value.Set(expr->name, strlen(expr->name));
+                    parent.data_list.push_back(value);
+                } else {
+                    parent.data_list.push_back(stateItem->data_list[0]);
+                }
+            } else {
+                StateData value;
+                value.Set(expr->name, strlen(expr->name));
+                parent.data_list.push_back(value);
+            }
         } else if (expr->isType(hsql::kExprLiteralInt)) {
             StateData value;
             value.Set(expr->ival);
@@ -243,6 +273,18 @@ namespace ultraverse::base {
             StateData value;
             parent.data_list.push_back(value);
         }
+    }
+    
+    StateItem *QueryEventBase::findStateItem(const std::string &name) {
+        auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&name](StateItem &item) {
+            return item.name == name;
+        });
+        
+        if (it != _itemSet.end()) {
+            return &(*it);
+        }
+        
+        return nullptr;
     }
     
     std::unordered_set<std::string> &QueryEventBase::readSet() {

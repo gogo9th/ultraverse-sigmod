@@ -19,6 +19,7 @@
 
 #include "base/TaskExecutor.hpp"
 #include "utils/log.hpp"
+#include "utils/StringUtil.hpp"
 #include "Application.hpp"
 
 using namespace ultraverse;
@@ -367,21 +368,35 @@ public:
 
         mariadb::QueryEvent dummyEvent(pendingQuery->database(), event->statement(), 0);
         
+        dummyEvent.itemSet().insert(
+            dummyEvent.itemSet().begin(),
+            pendingQuery->itemSet().begin(), pendingQuery->itemSet().end()
+        );
+        
+        /*
+        dummyEvent.whereSet().insert(
+            dummyEvent.whereSet().begin(),
+            pendingQuery->whereSet().begin(), pendingQuery->whereSet().end()
+        );
+         */
+        
         if (!dummyEvent.parse()) {
             dummyEvent.parseDDL(1);
         }
-    
+
         pendingQuery->readSet().insert(
             dummyEvent.readSet().begin(), dummyEvent.readSet().end()
         );
         pendingQuery->writeSet().insert(
             dummyEvent.writeSet().begin(), dummyEvent.writeSet().end()
         );
-
+        
+        /*
         pendingQuery->itemSet().insert(
             pendingQuery->itemSet().begin(),
             dummyEvent.itemSet().begin(), dummyEvent.itemSet().end()
         );
+         */
         pendingQuery->whereSet().insert(
             pendingQuery->whereSet().begin(),
             dummyEvent.whereSet().begin(), dummyEvent.whereSet().end()

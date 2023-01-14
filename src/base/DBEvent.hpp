@@ -112,6 +112,8 @@ namespace ultraverse::base {
         
         void walkExpr(const hsql::Expr *expr, StateItem &parent, std::vector<std::string> &readSet, const std::string &rootTable, bool isRoot);
         
+        StateItem *findStateItem(const std::string &name);
+        
         std::vector<int16_t> _tokens;
         std::vector<size_t> _tokenPos;
     
