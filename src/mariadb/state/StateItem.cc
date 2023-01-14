@@ -29,6 +29,7 @@ void StateData::Clear()
   }
 
   memset(this, 0, sizeof(StateData));
+  str_len = 0;
   type = en_column_data_null;
 }
 
@@ -204,6 +205,7 @@ void StateData::Set(const char *val, size_t length)
   d.str = (char *)malloc(length + 1);
   memcpy(d.str, val, length);
   d.str[length] = 0;
+  str_len = length;
 }
 
 bool StateData::Get(int64_t &val) const
@@ -309,7 +311,7 @@ bool StateData::operator==(const StateData &c) const
     return d.fval == c.d.fval;
 
   case en_column_data_string:
-    return strcmp(d.str, c.d.str) == 0;
+    return str_len == c.str_len && strcmp(d.str, c.d.str) == 0;
 
   case en_column_data_null:
     return true;
@@ -335,7 +337,7 @@ bool StateData::operator!=(const StateData &c) const
     return d.fval != c.d.fval;
 
   case en_column_data_string:
-    return strcmp(d.str, c.d.str) != 0;
+    return str_len != c.str_len || strcmp(d.str, c.d.str) != 0;
 
   case en_column_data_null:
     return false;
@@ -361,7 +363,7 @@ bool StateData::operator>(const StateData &c) const
     return d.fval > c.d.fval;
 
   case en_column_data_string:
-    return std::string(d.str) > c.d.str;
+    return strcmp(d.str, c.d.str) > 0;
 
   default:
     return false;
@@ -384,7 +386,8 @@ bool StateData::operator>=(const StateData &c) const
     return d.fval >= c.d.fval;
 
   case en_column_data_string:
-    return std::string(d.str) >= c.d.str;
+      return strcmp(d.str, c.d.str) >= 0;
+
 
   default:
     return false;
@@ -407,7 +410,8 @@ bool StateData::operator<(const StateData &c) const
     return d.fval < c.d.fval;
 
   case en_column_data_string:
-    return std::string(d.str) < c.d.str;
+      return strcmp(d.str, c.d.str) < 0;
+
 
   default:
     return false;
@@ -430,7 +434,7 @@ bool StateData::operator<=(const StateData &c) const
     return d.fval <= c.d.fval;
 
   case en_column_data_string:
-    return std::string(d.str) <= c.d.str;
+      return strcmp(d.str, c.d.str) <= 0;
 
   default:
     return false;

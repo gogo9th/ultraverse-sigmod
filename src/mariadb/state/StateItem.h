@@ -80,6 +80,8 @@ private:
     double fval;
     char *str;
   };
+  
+  size_t str_len;
 
   bool is_subselect;
   bool is_equal;
