@@ -6,8 +6,11 @@
 #define ULTRAVERSE_STRINGUTIL_HPP
 
 #include <string>
+#include <vector>
 
 namespace ultraverse::utility {
+    std::vector<std::string> split(const std::string &inputStr, char character);
+    
     std::string replaceAll(const std::string &source, const std::string from, const std::string to);
     
     std::string normalizeColumnName(const std::string &columnName);

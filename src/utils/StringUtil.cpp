@@ -4,10 +4,24 @@
 
 #include "StringUtil.hpp"
 
+#include <sstream>
 #include <vector>
 #include <utility>
 
 namespace ultraverse::utility {
+    std::vector<std::string> split(const std::string &inputStr, char character) {
+        std::vector<std::string> list;
+    
+        std::stringstream sstream(inputStr);
+        std::string string;
+    
+        while (std::getline(sstream, string, character)) {
+            list.push_back(string);
+        }
+    
+        return std::move(list);
+    }
+    
     std::string replaceAll(const std::string &source, const std::string from, const std::string to) {
         auto value = source;
         
