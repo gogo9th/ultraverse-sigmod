@@ -311,7 +311,7 @@ namespace ultraverse::state::v2 {
         _logger->info("loading row cluster");
         _reader >> _rowCluster;
         
-        _hashWatcher = std::make_unique<HashWatcher>(_plan.binlogPath(), _plan.stateLogName() + ".index", _intermediateDBName);
+        // _hashWatcher = std::make_unique<HashWatcher>(_plan.binlogPath(), _plan.stateLogName() + ".index", _intermediateDBName);
         
         createIntermediateDB();
     
@@ -397,6 +397,8 @@ namespace ultraverse::state::v2 {
                 auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transactionHeader->gid]));
                 _logger->info("executing user-provided query");
     
+                userQuery->setGid(transactionHeader->gid);
+    
                 for (const auto &keyColumn: _plan.keyColumns()) {
                     auto &ranges = (*_keyRanges)[keyColumn];
                     auto newRanges = _rowCluster.getKeyRangeOf(*userQuery, keyColumn, _context->foreignKeys);
@@ -437,7 +439,13 @@ namespace ultraverse::state::v2 {
         
         queryBuilder << "BEGIN;\n";
         
-        std::map<std::string, std::vector<std::string>> result;
+        std::map<
+            std::string,                    // table name
+            std::map<
+                std::string,                // fk name (OR로 묶음)
+                std::vector<std::string>    // WHERE
+            >
+        > result;
         
         for (auto it: _rowCluster2.keyMap()) {
             auto vec = StateUserQuery::SplitDBNameAndTableName(it.first);
@@ -460,27 +468,52 @@ namespace ultraverse::state::v2 {
                 auto fkTableName = vec2[0];
                 auto fkColumnName = vec2[1];
     
-                auto &keyRange = ranges[0];
-                result[tableName].push_back(keyRange->MakeWhereQuery(columnName));
+                std::string where;
+                where += "(";
+                for (auto &keyRange: ranges) {
+                    where += keyRange->MakeWhereQuery(columnName);
+                    where += " OR ";
+                }
+                where = where.substr(0, where.size() - 4);
+                where += ")";
+                
+                result[tableName][fkName].push_back(where);
             } else {
                 // TODO: alias
-                auto &keyRange = ranges[0];
-                result[tableName].push_back(keyRange->MakeWhereQuery(columnName));
+                std::string where;
+                where += "(";
+                for (auto &keyRange: ranges) {
+                    where += keyRange->MakeWhereQuery(columnName);
+                    where += " OR ";
+                }
+                where = where.substr(0, where.size() - 4);
+                where += ")";
+                
+                result[tableName][fkName].push_back(where);
             }
         }
         
         
         for (auto &pair: result) {
             auto &table = pair.first;
-            auto &ranges = pair.second;
+            auto &foreignKeys = pair.second;
             
-            if (_changedTables.find(table) == _changedTables.end() || ranges.empty()) {
+            if (_changedTables.find(table) == _changedTables.end() || foreignKeys.empty()) {
                 continue;
             }
             
             std::string where;
-            for (auto &range: ranges) {
-                where += range;
+            
+            for (auto &foreignKey: foreignKeys) {
+                where += "(";
+                for (const auto &range: foreignKey.second) {
+                    where += range;
+                    where += " OR ";
+                }
+                
+                where = where.substr(0, where.size() - 4);
+                
+                where += ")";
                 where += " AND ";
             }
             
@@ -1018,7 +1051,7 @@ namespace ultraverse::state::v2 {
                 
                 __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
                 
-                if (!isDDL && transaction->gid() > _plan.lowestGidAvailable()) {
+                if (!isDDL && transaction->gid() >= _plan.lowestGidAvailable()) {
                     std::scoped_lock lock(_changedTablesMutex);
                     const std::string tableName = StateUserQuery::SplitDBNameAndTableName(
                         *query->writeSet().begin())[0];
