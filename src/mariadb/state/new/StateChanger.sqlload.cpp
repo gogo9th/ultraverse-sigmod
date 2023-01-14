@@ -106,7 +106,8 @@ namespace ultraverse::state::v2 {
         if (pid == 0) {
             dup2(fd, STDIN_FILENO);
             std::string password = "-p" + _plan.dbPassword();
-            execl(
+            int retval = execl(
+                "/usr/bin/mysql",
                 "mysql",
                 "-h", _plan.dbHost().c_str(),
                 "-u", _plan.dbUsername().c_str(),
@@ -116,7 +117,10 @@ namespace ultraverse::state::v2 {
             );
             
             close(fd);
-            throw std::runtime_error("failed to execute mysql");
+    
+            if (retval == -1) {
+                throw std::runtime_error(fmt::format("failed to execute mysql: {}", strerror(errno)));
+            }
         } else {
             close(fd);
             

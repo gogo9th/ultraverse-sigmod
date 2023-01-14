@@ -151,6 +151,11 @@ namespace ultraverse {
             std::cout << e.what() << std::endl;
             return 1;
         }
+        
+        changePlan.setDBHost(getEnv("DB_HOST"));
+        changePlan.setDBUsername(getEnv("DB_USER"));
+        changePlan.setDBPassword(getEnv("DB_PASS"));
+        
     
         StateChanger stateChanger(dbHandlePool, changePlan);
         
