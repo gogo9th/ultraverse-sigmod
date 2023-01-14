@@ -283,6 +283,9 @@ namespace ultraverse::mariadb {
                             value = readValue<int32_t>(offset);
                             sstream << columnName << "=" << "I32!" << value;
                             break;
+                        case 3:
+                            throw std::runtime_error("unsupported format");
+                            break;
                         case 2:
                             value = readValue<int16_t>(offset);
                             sstream << columnName << "=" << "I16!" << value;

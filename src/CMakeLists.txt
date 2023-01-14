@@ -12,6 +12,7 @@ pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
+# add_compile_options(-msse4.2 -O2)
 
 set(ULTRAVERSE_DEPENDENCIES
     ${BOOST_LIBRARIES}

@@ -164,7 +164,7 @@ namespace ultraverse::state::v2 {
         _mode = OperationMode::PREPARE;
         
         std::mutex mutex;
-        TaskExecutor taskExecutor(1);
+        TaskExecutor taskExecutor(8);
         StateLogWriter stateLogWriter(_plan.stateLogPath(), _plan.stateLogName());
         createIntermediateDB();
         
@@ -258,6 +258,7 @@ namespace ultraverse::state::v2 {
         }
         
         while (!taskQueue.empty()) {
+            _logger->trace("{} task(s) left", taskQueue.size());
             auto task = std::move(taskQueue.front());
             auto future = task->get_future();
             future.wait();
@@ -983,7 +984,7 @@ namespace ultraverse::state::v2 {
                     return _columnGraph->isRelated(hashA, readSetHash) || _columnGraph->isRelated(hashA, writeSetHash);
                 });
                 const bool needsForceExecution =
-                    (!_plan.isDBDumpAvailable() && transaction->gid() < _plan.lowestGidAvailable()) ||
+                    (transaction->gid() < _plan.lowestGidAvailable()) ||
                     (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
                 
                 const bool skipQuery =
