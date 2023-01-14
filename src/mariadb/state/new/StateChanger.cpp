@@ -543,7 +543,7 @@ namespace ultraverse::state::v2 {
         
         auto resolveFKAlias = [this](const std::string &column) {
             return RowCluster::resolveForeignKey(
-                RowCluster::resolveAliasName(_rowCluster.aliasSet(), column),
+                RowCluster::resolveAliasName(_rowCluster.aliasMap(), column),
                 _context->foreignKeys
             );
         };
@@ -638,7 +638,10 @@ namespace ultraverse::state::v2 {
                 auto resolvedName = RowCluster::resolveForeignKey(stateItem.name, _context->foreignKeys);
                 auto tmp = stateItem;
                 tmp.name = resolvedName;
-                auto resolvedAlias = RowCluster::resolveAlias(rowCluster.aliasSet(), tmp);
+    
+                _clusterMutex3.lock();
+                auto resolvedAlias = RowCluster::resolveAlias(tmp, rowCluster.aliasMap());
+                _clusterMutex3.unlock();
                 
                 if (std::find(keyColumns.begin(), keyColumns.end(), resolvedAlias.name) != keyColumns.end()) {
                     assert(resolvedAlias.condition_type == EN_CONDITION_NONE);
@@ -744,25 +747,38 @@ namespace ultraverse::state::v2 {
                     walkStateItem(stateItem);
                 }
                 
-                if (query->type() == Query::INSERT) {
+                if (true) {
                     // TODO: UPDATE 지원해야 하나?
                     for (auto &aliasPair: _plan.columnAliases()) {
                         auto alias = std::find_if(query->itemSet().begin(), query->itemSet().end(), [&aliasPair](auto &item) {
                             return item.name == aliasPair.first;
                         });
+                        
+                        if (alias == query->itemSet().end()) {
+                            continue;
+                        }
+                        
                         auto real = std::find_if(query->itemSet().begin(), query->itemSet().end(), [&aliasPair](auto &item) {
                             return item.name == aliasPair.second;
                         });
-                        
-                        if (alias != query->itemSet().end() && real != query->itemSet().end()) {
-                            _logger->trace("adding alias: {} ({}) => {} ({})", alias->name, alias->MakeRange()->MakeWhereQuery(alias->name), real->name, real->MakeRange()->MakeWhereQuery(real->name));
-                            rowCluster.addAlias(*alias, *real);
+    
+                        if (real == query->itemSet().end()) {
+                            continue;
+                        }
+    
+                        _logger->trace("adding alias: {} ({}) => {} ({})", alias->name, alias->MakeRange()->MakeWhereQuery(alias->name), real->name, real->MakeRange()->MakeWhereQuery(real->name));
+                        {
+                            std::scoped_lock scopedLock(_clusterMutex3);
+                            rowCluster.addAlias(aliasPair.first, *alias, *real);
                         }
                     }
                 }
-                
-                if (!isQueryRelatedWithKeyColumns(*query)) {
-                    containsUnrelatedQuery = true;
+    
+                {
+                    std::scoped_lock scopedLock(_clusterMutex3);
+                    if (!isQueryRelatedWithKeyColumns(*query)) {
+                        containsUnrelatedQuery = true;
+                    }
                 }
             }
         } else {
@@ -979,7 +995,7 @@ namespace ultraverse::state::v2 {
                 const auto writeSetHash = std::hash<ColumnSet>{}(query->writeSet());
                 
                 const bool isDDL = query->flags() & Query::FLAG_IS_DDL;
-                const bool isRelatedWithCluster = RowCluster::isQueryRelated(*_keyRanges, *query, _context->foreignKeys, _rowCluster.aliasSet());
+                const bool isRelatedWithCluster = RowCluster::isQueryRelated(*_keyRanges, *query, _context->foreignKeys, _rowCluster.aliasMap());
                 const bool isRelatedWithColumnGraph = std::any_of(_columnSetHashes->begin(), _columnSetHashes->end(), [this, &readSetHash, &writeSetHash](size_t hashA) {
                     return _columnGraph->isRelated(hashA, readSetHash) || _columnGraph->isRelated(hashA, writeSetHash);
                 });

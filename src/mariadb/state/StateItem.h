@@ -230,5 +230,6 @@ public:
 };
 
 #include "StateItem.cereal.cpp"
+#include "StateItem.template.cpp"
 
 #endif /* STATE_ITEM_INCLUDED */

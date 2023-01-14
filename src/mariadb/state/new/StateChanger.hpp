@@ -139,6 +139,7 @@ namespace ultraverse::state::v2 {
         RowCluster _rowCluster2;
         
         std::mutex _clusterMutex2;
+        std::mutex _clusterMutex3;
         
         std::unique_ptr<ColumnDependencyGraph> _columnGraph;
         std::unique_ptr<TableDependencyGraph> _tableGraph;

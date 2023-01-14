@@ -51,26 +51,23 @@ namespace ultraverse::state::v2 {
         _wildcardMap[columnName] = wildcard;
     }
     
-    void RowCluster::addAlias(StateItem alias, StateItem real) {
-        _aliases.emplace_back(RowAlias { alias, real });
+    void RowCluster::addAlias(const std::string &elementName, const StateItem &alias, const StateItem &real) {
+        _aliases[elementName][alias.data_list[0]] = RowAlias { alias, real };
+        
     }
     
-    StateItem RowCluster::resolveAlias(const std::vector<RowAlias> &aliases, StateItem alias) {
-        auto it = std::find_if(aliases.begin(), aliases.end(), [&alias](auto item) {
-            auto range1 = alias.MakeRange();
-            auto range2 = item.alias.MakeRange();
-            
-            auto range = StateRange::AND(
-                *range1, *range2
-            )->GetRange();
-            return item.alias.name == alias.name && !range->empty();
-        });
-        
-        if (it != aliases.end()) {
-            return it->real;
+    StateItem RowCluster::resolveAlias(const StateItem &alias, const AliasMap &aliasMap) {
+        auto container = aliasMap.find(alias.name);
+        if (container == aliasMap.end()) {
+            return alias;
         }
         
-        return alias;
+        auto real = container->second.find(alias.data_list[0]);
+        if (real == container->second.end()) {
+            return alias;
+        }
+       
+        return real->second.real;
     }
     
     std::vector<std::unique_ptr<std::pair<std::string, std::shared_ptr<StateRange>>>>
@@ -98,19 +95,15 @@ namespace ultraverse::state::v2 {
     }
     
     
-    std::string RowCluster::resolveAliasName(const std::vector<RowAlias> &aliases, std::string alias) {
-        auto it = std::find_if(aliases.begin(), aliases.end(), [&alias](auto item) {
-            return item.alias.name == alias;
-        });
-    
-        if (it != aliases.end()) {
-            return it->real.name;
+    std::string RowCluster::resolveAliasName(const AliasMap &aliases, std::string alias) {
+        if (aliases.find(alias) == aliases.end() || aliases.at(alias).empty()) {
+            return alias;
         }
-    
-        return alias;
+        
+        return aliases.at(alias).begin()->second.real.name;
     }
     
-    const std::vector<RowAlias> &RowCluster::aliasSet() {
+    const RowCluster::AliasMap &RowCluster::aliasMap() const {
         return _aliases;
     }
     
@@ -252,7 +245,7 @@ namespace ultraverse::state::v2 {
     }
     
     bool RowCluster::isQueryRelated(std::map<std::string, std::vector<std::shared_ptr<StateRange>>> &keyRanges, Query &query,
-                                    const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
+                                    const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
         // 각 keyRange에 대해 하나만 매칭되어도 재실행 대상이 된다.
         for (auto &pair: keyRanges) {
             for (auto &keyRange: pair.second) {
@@ -265,7 +258,7 @@ namespace ultraverse::state::v2 {
         return false;
     }
     
-    bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
+    bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
         for (auto expr: query.whereSet()) {
             if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases)) {
                 return true;
@@ -281,10 +274,10 @@ namespace ultraverse::state::v2 {
         return false;
     }
     
-    bool RowCluster::isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem expr, const std::vector<ForeignKey> &foreignKeys, const std::vector<RowAlias> &aliases) {
+    bool RowCluster::isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
         if (!expr.name.empty()) {
             expr.name = resolveForeignKey(expr.name, foreignKeys);
-            auto alias = resolveAlias(aliases, expr);
+            auto alias = resolveAlias(expr, aliases);
             if (alias.name != expr.name) {
                 return isExprRelated(keyColumn, keyRange, alias, foreignKeys, aliases);
             }
