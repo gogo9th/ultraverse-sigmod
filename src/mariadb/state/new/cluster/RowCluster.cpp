@@ -25,22 +25,23 @@ namespace ultraverse::state::v2 {
     
     void RowCluster::addKeyRange(const std::string &columnName, std::shared_ptr<StateRange> range) {
         auto &cluster = _clusterMap[columnName];
+        auto &graph = _clusterGraph[columnName];
         
         cluster.emplace_back(range);
         auto size = cluster.size();
-        auto nodeIdx = add_vertex({ size - 1, false }, _clusterGraph[columnName]);
+        auto nodeIdx = add_vertex({ size - 1, false }, graph);
     
     
         boost::graph_traits<ClusterGraph>::vertex_iterator vi, viEnd, next;
-        boost::tie(vi, viEnd) = vertices(_clusterGraph[columnName]);
+        boost::tie(vi, viEnd) = vertices(graph);
         
         for (next = vi; vi != viEnd; vi = next) {
             ++next;
             
-            const auto &pair = _clusterGraph[columnName][*vi];
+            const auto &pair = graph[*vi];
             int index = pair.first;
             if (StateRange::AND_FAST(*range, *(cluster[index]))) {
-                add_edge(*vi, nodeIdx, _clusterGraph[columnName]);
+                add_edge(*vi, nodeIdx, graph);
                 break;
             }
         }
@@ -290,7 +291,7 @@ namespace ultraverse::state::v2 {
             
             if (keyColumn == expr.name) {
                 auto range = StateItem::MakeRange(expr);
-                if (!StateRange::AND(*range, keyRange)->GetRange()->empty()) {
+                if (StateRange::AND_FAST(*range, keyRange)) {
                     return true;
                 }
             }
