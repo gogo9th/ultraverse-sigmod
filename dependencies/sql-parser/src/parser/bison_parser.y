@@ -1543,6 +1543,7 @@ operand:
 scalar_expr:
 		column_name
 	|	literal
+	|       '@' x_compat_ident { std::string var($2); var = "__ULTRAVERSE_SQLVAR__" + var; $$ = Expr::makeLiteral(strdup(var.c_str())); }
 	;
 
 unary_expr:
