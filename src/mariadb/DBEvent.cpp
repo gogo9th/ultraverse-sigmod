@@ -209,6 +209,7 @@ namespace ultraverse::mariadb {
             if ((nullFields & (1 << i)) != 0) {
                 // NULL
                 sstream << columnName << "=";
+                rowSize += columnSize;
             } else if (columnType == column_type::STRING) {
                 // length + [string content]
                 uint64_t strLength = 0;
