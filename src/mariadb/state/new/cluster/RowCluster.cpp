@@ -3,6 +3,7 @@
 
 #include "RowCluster.hpp"
 #include "mariadb/state/StateUserQuery.h"
+#include "utils/StringUtil.hpp"
 
 namespace ultraverse::state::v2 {
     RowCluster::RowCluster():
@@ -56,7 +57,7 @@ namespace ultraverse::state::v2 {
         
     }
     
-    StateItem RowCluster::resolveAlias(const StateItem &alias, const AliasMap &aliasMap) {
+    const StateItem &RowCluster::resolveAlias(const StateItem &alias, const AliasMap &aliasMap) {
         auto container = aliasMap.find(alias.name);
         if (container == aliasMap.end()) {
             return alias;
@@ -259,13 +260,13 @@ namespace ultraverse::state::v2 {
     }
     
     bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
-        for (auto expr: query.whereSet()) {
+        for (auto &expr: query.whereSet()) {
             if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases)) {
                 return true;
             }
         }
         
-        for (auto expr: query.itemSet()) {
+        for (auto &expr: query.itemSet()) {
             if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases)) {
                 return true;
             }
@@ -274,7 +275,7 @@ namespace ultraverse::state::v2 {
         return false;
     }
     
-    bool RowCluster::isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
+    bool RowCluster::isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
         if (!expr.name.empty()) {
             expr.name = resolveForeignKey(expr.name, foreignKeys);
             auto alias = resolveAlias(expr, aliases);
@@ -300,9 +301,9 @@ namespace ultraverse::state::v2 {
     }
     
     std::string RowCluster::resolveForeignKey(std::string exprName, const std::vector<ForeignKey> &foreignKeys) {
-        auto vec = StateUserQuery::SplitDBNameAndTableName(exprName);
-        auto tableName = vec[0];
-        auto columnName = vec[1];
+        auto vec = utility::splitTableName(exprName);
+        const auto &tableName = vec.first;
+        const auto &columnName = vec.second;
         
         auto it = std::find_if(foreignKeys.cbegin(), foreignKeys.cend(), [&tableName, &columnName](auto &foreignKey) {
             if (foreignKey.fromTable->getCurrentName() == tableName && columnName == foreignKey.fromColumn) {

@@ -84,7 +84,7 @@ namespace ultraverse::mariadb {
 
     }
     
-    int DBHandle::executeQuery(const std::string query) {
+    int DBHandle::executeQuery(const std::string &query) {
         // _logger->trace("executing query: {}", query);
         
         if (mysql_real_query(_handle.get(), query.c_str(), query.size()) != 0) {

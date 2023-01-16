@@ -407,7 +407,7 @@ namespace ultraverse::state {
         if (s_pos != in_fullname.size())
             vec.push_back(in_fullname.substr(s_pos));
         
-        return vec;
+        return std::move(vec);
     }
     
     bool StateUserQuery::SplitDBNameAndTableName(const std::string &in_fullname, std::string &out_dbname,

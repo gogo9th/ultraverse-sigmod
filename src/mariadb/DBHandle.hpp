@@ -23,7 +23,7 @@ namespace ultraverse::mariadb {
         void connect(const std::string &host, int port, const std::string &user, const std::string &password) override;
         void disconnect() override;
     
-        int executeQuery(const std::string query) override;
+        int executeQuery(const std::string &query) override;
     
         std::shared_ptr<MYSQL> handle();
         operator MYSQL *();

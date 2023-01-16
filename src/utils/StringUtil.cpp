@@ -9,6 +9,21 @@
 #include <utility>
 
 namespace ultraverse::utility {
+    std::pair<std::string, std::string> splitTableName(const std::string &input) {
+        std::string table;
+        std::string column;
+        
+        auto pos = input.find('.');
+        if (pos == std::string::npos) {
+            return std::make_pair(input, "");
+        }
+        
+        return std::make_pair(
+            input.substr(0, pos - 1),
+            input.substr(pos + 1, input.size() - (pos + 1))
+        );
+    }
+    
     std::vector<std::string> split(const std::string &inputStr, char character) {
         std::vector<std::string> list;
     

@@ -390,8 +390,7 @@ namespace ultraverse::state::v2 {
             
             while (_ddlTxnProcessedId < _ddlTxnId) {
                 using namespace std::chrono_literals;
-                _logger->debug("{} / {}", _ddlTxnProcessedId, _ddlTxnId);
-                std::this_thread::sleep_for(100ms);
+                std::this_thread::sleep_for(10ms);
             }
     
             if (_plan.hasUserQuery(transactionHeader->gid)) {
@@ -897,8 +896,6 @@ namespace ultraverse::state::v2 {
             
             _logger->trace("[processDDLTransaction] [{}] {} -> {}", query->timestamp(), prevTableName, newTableName);
             
-            bool isFound = false;
-            
             auto namingHistory = _context->findTable(prevTableName, when);
             if (namingHistory != nullptr) {
                 namingHistory->addRenameHistory(newTableName, when);
@@ -916,21 +913,26 @@ namespace ultraverse::state::v2 {
         auto node = _stateGraph->getTxnNode(nodeIdx);
     
         using namespace std::chrono_literals;
+    
+        _logger->trace("[#{}->#{}] leasing dbHandle", nodeIdx, node->nodeIdx);
+        auto dbHandleLease = _dbHandlePool.take();
+        auto &dbHandle = dbHandleLease.get();
         
         while (node != nullptr) {
+            if (node->isProcessed || !node->processLock.try_lock()) {
+                _logger->trace("[#{}->#{}] this node is already processed by another thread", nodeIdx, node->nodeIdx);
+                break;
+            }
+    
+    
             for (auto depIdx: node->dependencies) {
                 if (!_stateGraph->getTxnNode(depIdx)->isProcessed) {
                     _logger->info("[#{}->#{}] waiting for dependencies: #{}", nodeIdx, node->nodeIdx, depIdx);
                     
                     while (!_stateGraph->getTxnNode(depIdx)->isProcessed) {
-                        std::this_thread::sleep_for(100ms);
+                        std::this_thread::sleep_for(10ms);
                     }
                 }
-            }
-    
-            if (node->isProcessed || !node->processLock.try_lock()) {
-                _logger->trace("[#{}->#{}] this node is already processed by another thread", nodeIdx, node->nodeIdx);
-                break;
             }
     
             {
@@ -943,19 +945,11 @@ namespace ultraverse::state::v2 {
                 clusterLock.unlock();
             }
     
-    
-    
-            { // @with(dbHandleLease);
-                _logger->trace("[#{}->#{}] leasing dbHandle", nodeIdx, node->nodeIdx);
-                auto dbHandleLease = _dbHandlePool.take();
-                auto &dbHandle = dbHandleLease.get();
-    
-                __node__processTransaction(
-                    nodeIdx, node->nodeIdx,
-                    node->transaction,
-                    dbHandle
-                );
-            } // @release(dbHandleLease);
+            __node__processTransaction(
+                nodeIdx, node->nodeIdx,
+                node->transaction,
+                dbHandle
+            );
             
             NEXT_TRANSACTION:
             _stateGraph->removeTransaction(node->nodeIdx);
@@ -984,6 +978,7 @@ namespace ultraverse::state::v2 {
         _logger->info("[#{}->#{}] replaying transaction", rootNodeId, nodeId);
         dbHandle.executeQuery("use " + _intermediateDBName);
         dbHandle.executeQuery("BEGIN");
+        
     
         for (auto &query: transaction->queries()) {
             if (query->database() != _plan.dbName()) {
@@ -1108,7 +1103,7 @@ namespace ultraverse::state::v2 {
         }
         
         if (dbHandle.executeQuery(statement) != 0) {
-            // TODO: 계속 실행해 나가야함
+            // TODO: 오류 발생 시 transaction 자체를 abort하되, 다른 트랜잭션은 돌아가도록
             _logger->error("[#{}->#{}] query execution failed: {}", rootNodeId, nodeId,
                            mysql_error(dbHandle));
             dbHandle.executeQuery("ROLLBACK");
@@ -1238,11 +1233,19 @@ namespace ultraverse::state::v2 {
         
         MYSQL_ROW row = mysql_fetch_row(result);
         
+        if (row[0] == nullptr) {
+            return -1;
+        }
+        
         // TODO: support for 64-bit integer
         return std::atoi(row[0]);
     }
     
     void StateChanger::setAutoIncrement(mariadb::DBHandle &dbHandle, std::string table, int64_t value) {
+        if (value == -1) {
+            return;
+        }
+        
         const auto query =
             QUERY_TAG_STATECHANGE +
             fmt::format("ALTER TABLE {} AUTO_INCREMENT = {}", table, value);

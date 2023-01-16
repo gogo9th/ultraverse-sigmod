@@ -123,7 +123,7 @@ namespace ultraverse {
         }
     
         DBHandlePool<mariadb::DBHandle> dbHandlePool(
-            8,
+            threadNum,
             getEnv("DB_HOST"),
             std::stoi(getEnv("DB_PORT")),
             getEnv("DB_USER"),

@@ -42,7 +42,7 @@ namespace ultraverse::state::v2 {
         void setWildcard(const std::string &columnName, bool wildcard);
     
         void addAlias(const std::string &elementName, const StateItem &alias, const StateItem &real);
-        static StateItem resolveAlias(const StateItem &alias, const AliasMap &aliasMap);
+        static const StateItem& resolveAlias(const StateItem &alias, const AliasMap &aliasMap);
         
         static std::vector<std::unique_ptr<std::pair<std::string, std::shared_ptr<StateRange>>>>
         resolveInvertedAliasRange(const std::vector<RowAlias> &aliases, std::string alias, std::shared_ptr<StateRange> range);
@@ -71,7 +71,7 @@ namespace ultraverse::state::v2 {
             boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, std::pair<int, bool>>;
         
         
-        static bool isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases);
+        static bool isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases);
         
         void mergeClusterUsingGraph(const std::string &columnName);
         void mergeClusterAll(const std::string &columnName);
