@@ -35,12 +35,12 @@ namespace ultraverse::state::v2 {
             return false;
         }
         
-        _currentHeader = header;
+        _currentHeader = std::move(header);
         
         auto transaction = std::make_shared<Transaction>();
         cereal::BinaryInputArchive archive(_stream);
         archive(*transaction);
-        _currentBody = transaction;
+        _currentBody = std::move(transaction);
         
         return true;
     }
