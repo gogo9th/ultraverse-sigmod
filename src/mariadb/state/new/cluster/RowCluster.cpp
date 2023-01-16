@@ -52,7 +52,7 @@ namespace ultraverse::state::v2 {
     }
     
     void RowCluster::addAlias(const std::string &elementName, const StateItem &alias, const StateItem &real) {
-        _aliases[elementName][alias.data_list[0]] = RowAlias { alias, real };
+        _aliases[alias.name].insert(std::make_pair(alias.data_list[0], RowAlias { alias, real }));
         
     }
     
