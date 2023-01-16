@@ -162,6 +162,8 @@ namespace ultraverse {
         if (makeClusterMap) {
             stateChanger.prepare();
         } else {
+            describeActions(actions);
+            
             if (!confirm("Proceed?")) {
                 return 2;
             }
@@ -339,6 +341,23 @@ namespace ultraverse {
         }
         
         return std::move(actions);
+    }
+    
+    void DBStateChangeApp::describeActions(const std::vector<std::shared_ptr<Action>> &actions) {
+        _logger->info("== SUMMARY ==");
+        
+        int i = 1;
+        for (const auto &action: actions) {
+            if (action->type() == ActionType::ROLLBACK) {
+                const auto rollbackAction = std::dynamic_pointer_cast<RollbackAction>(action);
+                _logger->info("[#{}] rollback GID #{}", i++, rollbackAction->gid());
+            }
+            
+            if (action->type() == ActionType::PREPEND) {
+                const auto prependAction = std::dynamic_pointer_cast<PrependAction>(action);
+                _logger->info("[#{}] prepend {} to GID #{}", i++, prependAction->sqlFile(), prependAction->gid());
+            }
+        }
     }
     
     std::vector<std::string> DBStateChangeApp::buildKeyColumnList(std::string expression) {
