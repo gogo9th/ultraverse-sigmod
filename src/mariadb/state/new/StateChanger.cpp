@@ -367,9 +367,9 @@ namespace ultraverse::state::v2 {
             }
             
             if (header->gid < _plan.lowestGidAvailable()) {
-                gids.insert(header->gid);
             }
-            
+    
+            gids.insert(header->gid);
             _reader.skipTransaction();
         }
         
@@ -1026,11 +1026,7 @@ namespace ultraverse::state::v2 {
                 (transaction->gid() < _plan.lowestGidAvailable()) ||
                 (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
             
-            const bool skipQuery =
-                (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
-                !(needsForceExecution                               ||
-                isDDL                                               ||
-                (isRelatedWithCluster && isRelatedWithColumnGraph));
+            const bool skipQuery = false;
             
             return !skipQuery;
         })) {
@@ -1061,11 +1057,7 @@ namespace ultraverse::state::v2 {
                     (transaction->gid() < _plan.lowestGidAvailable()) ||
                     (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
                 
-                const bool skipQuery =
-                    (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
-                    !(needsForceExecution                               ||
-                    isDDL                                               ||
-                    (isRelatedWithCluster && isRelatedWithColumnGraph));
+                const bool skipQuery = false;
     
     
                 if (isRelatedWithColumnGraph && query->type() == Query::INSERT) {
@@ -1122,7 +1114,12 @@ namespace ultraverse::state::v2 {
                     goto NEXT_QUERY;
                 }
                 
-                __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
+                try {
+                    __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
+                } catch (std::exception &e) {
+                    dbHandle.executeQuery("ROLLBACK");
+                    goto END_TRANSACTION;
+                }
                 
                 if (!isDDL && transaction->gid() > _plan.lowestGidAvailable() || transaction->flags() & Transaction::FLAG_FORCE_EXECUTE) {
                     std::scoped_lock lock(_changedTablesMutex);
@@ -1139,6 +1136,8 @@ namespace ultraverse::state::v2 {
         // _logger->trace("[#{}->#{}] finalizing transaction", rootNodeId, nodeId);
         dbHandle.executeQuery("COMMIT");
         // _logger->debug("[#{}->#{}] releasing dbHandle", rootNodeId, nodeId);
+        
+        END_TRANSACTION: ;
     
         if (!(_mode == OperationMode::NORMAL && isTargetTransaction) && isTransactionRelatedToCluster(transaction)) {
             expandClusterMap(_rowCluster2, *transaction, CLUSTER_EXPAND_FLAG_INCLUDE_FK | CLUSTER_EXPAND_FLAG_DONT_EXPAND);
@@ -1164,12 +1163,20 @@ namespace ultraverse::state::v2 {
         if (dbHandle.executeQuery(fmt::format("SET TIMESTAMP={}", query->timestamp())) != 0) {
             _logger->warn("[#{}->#{}] failed to set timestamp", rootNodeId, nodeId);
         }
+    
+        for (auto &sqlvar: query->sqlVarMap()) {
+            std::string data;
+            sqlvar.second.Get(data);
+            
+            _logger->trace("setting SQLVAR: @{} => {}", sqlvar.first, data);
+            
+            dbHandle.executeQuery(fmt::format("SET @{} = {}", sqlvar.first, data));
+        }
         
         if (dbHandle.executeQuery(statement) != 0) {
             // TODO: 오류 발생 시 transaction 자체를 abort하되, 다른 트랜잭션은 돌아가도록
             _logger->error("[#{}->#{}] query execution failed: {}", rootNodeId, nodeId,
                            mysql_error(dbHandle));
-            dbHandle.executeQuery("ROLLBACK");
             throw std::runtime_error(mysql_error(dbHandle));
         }
         

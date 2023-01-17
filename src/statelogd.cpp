@@ -401,6 +401,8 @@ public:
             pendingQuery->whereSet().begin(),
             dummyEvent.whereSet().begin(), dummyEvent.whereSet().end()
         );
+        
+        pendingQuery->sqlVarMap() = dummyEvent.sqlVarMap();
     }
 
     void sigintHandler(int param) {

@@ -37,7 +37,9 @@ namespace ultraverse::state::v2 {
             
             _affectedRows,
             _rowSet,
-            _changeSet
+            _changeSet,
+            
+            _sqlVarMap
         );
     }
 }

@@ -77,6 +77,8 @@ namespace ultraverse::state::v2 {
         std::vector<std::string> &rowSet();
         std::vector<std::string> &changeSet();
         
+        std::unordered_map<std::string, StateData> &sqlVarMap();
+        
         
         template <typename Archive>
         void serialize(Archive &archive);
@@ -104,6 +106,7 @@ namespace ultraverse::state::v2 {
     
         std::vector<StateItem> _itemSet;
         std::vector<StateItem> _whereSet;
+        std::unordered_map<std::string, StateData> _sqlVarMap;
         
         uint32_t _affectedRows;
         std::vector<std::string> _rowSet;
