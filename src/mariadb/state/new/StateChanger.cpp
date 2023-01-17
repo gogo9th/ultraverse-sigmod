@@ -325,6 +325,55 @@ namespace ultraverse::state::v2 {
         
         _isRunning = true;
         
+        std::set<gid_t> gids;
+        
+        while (_reader.nextHeader()) {
+            auto header = std::move(_reader.txnHeader());
+            
+            if (_plan.isRollbackGid(header->gid)) {
+                _reader.nextTransaction();
+                auto transaction = std::move(_reader.txnBody());
+                
+                for (const auto &keyColumn: _plan.keyColumns()) {
+                    auto &ranges = _keyRanges[keyColumn];
+                    auto newRanges = _rowCluster.getKeyRangeOf(*transaction, keyColumn, _context->foreignKeys);
+                    ranges.insert(
+                        ranges.end(),
+                        newRanges.begin(), newRanges.end()
+                    );
+                }
+        
+                for (auto &query: transaction->queries()) {
+                    _columnSetHashes->push_back(std::hash<ColumnSet>{}(query->writeSet()));
+            
+                    // FIXME
+                    if (query->type() == Query::INSERT || query->type() == Query::DELETE) {
+                        _tableGraph->addRelationship(query->writeSet(), query->writeSet());
+                    }
+                }
+                
+                continue;
+            } else if (header->gid < _plan.lowestGidAvailable()) {
+                gids.insert(header->gid);
+            }
+            
+            _reader.skipTransaction();
+        }
+        
+        _reader.reset();
+        
+        for (const auto &pair: _keyRanges) {
+            for (auto &range: pair.second) {
+                gids.insert(
+                    range.second.begin(), range.second.end()
+                );
+            }
+        }
+        
+        for (auto gid: gids) {
+            _logger->info(gid);
+        }
+        
         auto addTransaction = [this, &taskExecutor, &taskQueue] (std::shared_ptr<Transaction> transaction) {
             auto node = _stateGraph->addTransaction(transaction);
             if (node.second) {
@@ -341,35 +390,20 @@ namespace ultraverse::state::v2 {
             }
         };
         
-        while (_reader.next()) {
+        while (_reader.nextHeader()) {
             auto transactionHeader = _reader.txnHeader();
             auto gid = transactionHeader->gid;
             auto flags = transactionHeader->flags;
+            
+            if (gids.find(transactionHeader->gid) == gids.end() && !_plan.hasUserQuery(transactionHeader->gid)) {
+                _reader.skipTransaction();
+                continue;
+            }
+            
+            _reader.nextTransaction();
+            
             auto transaction = _reader.txnBody();
             _logger->trace("read gid {}; flags {}", gid, flags);
-            
-            if (_plan.isRollbackGid(transactionHeader->gid)) {
-                _logger->info("rollback target found");
-                _rollbackTarget = _reader.txnBody();
-                
-                for (const auto &keyColumn: _plan.keyColumns()) {
-                    auto &ranges = _keyRanges[keyColumn];
-                    auto newRanges = _rowCluster.getKeyRangeOf(*_rollbackTarget, keyColumn, _context->foreignKeys);
-                    ranges.insert(
-                        ranges.end(),
-                        newRanges.begin(), newRanges.end()
-                    );
-                }
-                
-                for (auto &query: _rollbackTarget->queries()) {
-                    _columnSetHashes->push_back(std::hash<ColumnSet>{}(query->writeSet()));
-                    
-                    // FIXME
-                    if (query->type() == Query::INSERT || query->type() == Query::DELETE) {
-                        _tableGraph->addRelationship(query->writeSet(), query->writeSet());
-                    }
-                }
-            }
             
             if (_plan.isRollbackGid(transactionHeader->gid) || _plan.hasUserQuery(transactionHeader->gid)) {
                 _isClusterReady = true;
