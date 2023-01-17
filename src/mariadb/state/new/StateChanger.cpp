@@ -30,7 +30,7 @@ namespace ultraverse::state::v2 {
         _reader(plan.stateLogPath(), plan.stateLogName()),
         _columnGraph(std::make_unique<ColumnDependencyGraph>()),
         _tableGraph(std::make_unique<TableDependencyGraph>()),
-        _keyRanges(std::make_shared<std::map<std::string, std::vector<std::shared_ptr<StateRange>>>>()),
+        _keyRanges(),
         _columnSetHashes(std::make_shared<std::vector<size_t>>()),
         _context(new StateChangeContext),
         _ddlTxnId(0),
@@ -272,7 +272,7 @@ namespace ultraverse::state::v2 {
         
         for (auto &pair: _rowCluster.keyMap()) {
             for (auto &cluster: pair.second) {
-                _logger->info("{}: WHERE {}", pair.first, cluster->MakeWhereQuery(pair.first));
+                _logger->info("{}: WHERE {}", pair.first, cluster.first->MakeWhereQuery(pair.first));
             }
         }
         
@@ -353,7 +353,7 @@ namespace ultraverse::state::v2 {
                 _rollbackTarget = _reader.txnBody();
                 
                 for (const auto &keyColumn: _plan.keyColumns()) {
-                    auto &ranges = (*_keyRanges)[keyColumn];
+                    auto &ranges = _keyRanges[keyColumn];
                     auto newRanges = _rowCluster.getKeyRangeOf(*_rollbackTarget, keyColumn, _context->foreignKeys);
                     ranges.insert(
                         ranges.end(),
@@ -398,7 +398,7 @@ namespace ultraverse::state::v2 {
                 _logger->info("executing user-provided query");
     
                 for (const auto &keyColumn: _plan.keyColumns()) {
-                    auto &ranges = (*_keyRanges)[keyColumn];
+                    auto &ranges = _keyRanges[keyColumn];
                     auto newRanges = _rowCluster.getKeyRangeOf(*userQuery, keyColumn, _context->foreignKeys);
                     ranges.insert(
                         ranges.end(),
@@ -451,7 +451,7 @@ namespace ultraverse::state::v2 {
             auto columnName = vec[1];
             auto fkName = RowCluster::resolveForeignKey(it.first, _context->foreignKeys);
             
-            auto &ranges = (*_keyRanges)[fkName];
+            auto &ranges = _keyRanges[fkName];
     
             if (_hashWatcher != nullptr && _hashWatcher->isHashMatched(tableName)) {
                 continue;
@@ -469,7 +469,7 @@ namespace ultraverse::state::v2 {
                 std::string where;
                 where += "(";
                 for (auto &keyRange: ranges) {
-                    where += keyRange->MakeWhereQuery(columnName);
+                    where += keyRange.first->MakeWhereQuery(columnName);
                     where += " OR ";
                 }
                 where = where.substr(0, where.size() - 4);
@@ -481,7 +481,7 @@ namespace ultraverse::state::v2 {
                 std::string where;
                 where += "(";
                 for (auto &keyRange: ranges) {
-                    where += keyRange->MakeWhereQuery(columnName);
+                    where += keyRange.first->MakeWhereQuery(columnName);
                     where += " OR ";
                 }
                 where = where.substr(0, where.size() - 4);
@@ -746,7 +746,7 @@ namespace ultraverse::state::v2 {
                     walkStateItem(stateItem);
                 }
                 
-                if (true) {
+                if (!(flags & CLUSTER_EXPAND_FLAG_DONT_EXPAND)) {
                     // TODO: UPDATE 지원해야 하나?
                     for (auto &aliasPair: _plan.columnAliases()) {
                         auto alias = std::find_if(query->itemSet().begin(), query->itemSet().end(), [&aliasPair](auto &item) {
@@ -814,7 +814,7 @@ namespace ultraverse::state::v2 {
             std::scoped_lock scopedLock(_clusterMutex2);
             
             for (auto &pair: clusterMap) {
-                rowCluster.addKeyRange(pair.first, pair.second);
+                rowCluster.addKeyRange(pair.first, pair.second, transaction.gid());
             }
         }
     }
@@ -975,6 +975,31 @@ namespace ultraverse::state::v2 {
             _hashWatcher->start();
         }
         
+        if (!std::any_of(transaction->queries().begin(), transaction->queries().end(), [&](auto &query) {
+            const auto readSetHash = std::hash<ColumnSet>{}(query->readSet());
+            const auto writeSetHash = std::hash<ColumnSet>{}(query->writeSet());
+            
+            const bool isDDL = query->flags() & Query::FLAG_IS_DDL;
+            const bool isRelatedWithCluster = _rowCluster.isTransactionRelated(*transaction, _keyRanges);
+            const bool isRelatedWithColumnGraph = std::any_of(_columnSetHashes->begin(), _columnSetHashes->end(), [this, &readSetHash, &writeSetHash](size_t hashA) {
+                return _columnGraph->isRelated(hashA, readSetHash) || _columnGraph->isRelated(hashA, writeSetHash);
+            });
+            const bool needsForceExecution =
+                (transaction->gid() < _plan.lowestGidAvailable()) ||
+                (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
+            
+            const bool skipQuery =
+                (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
+                !(needsForceExecution                               ||
+                isDDL                                               ||
+                (isRelatedWithCluster && isRelatedWithColumnGraph));
+            
+            return !skipQuery;
+        })) {
+            _logger->trace("transaction #{} skipped", transaction->gid());
+            return;
+        }
+        
         _logger->info("[#{}->#{}] replaying transaction", rootNodeId, nodeId);
         dbHandle.executeQuery("use " + _intermediateDBName);
         dbHandle.executeQuery("BEGIN");
@@ -990,7 +1015,7 @@ namespace ultraverse::state::v2 {
                 const auto writeSetHash = std::hash<ColumnSet>{}(query->writeSet());
                 
                 const bool isDDL = query->flags() & Query::FLAG_IS_DDL;
-                const bool isRelatedWithCluster = RowCluster::isQueryRelated(*_keyRanges, *query, _context->foreignKeys, _rowCluster.aliasMap());
+                const bool isRelatedWithCluster = _rowCluster.isTransactionRelated(*transaction, _keyRanges);
                 const bool isRelatedWithColumnGraph = std::any_of(_columnSetHashes->begin(), _columnSetHashes->end(), [this, &readSetHash, &writeSetHash](size_t hashA) {
                     return _columnGraph->isRelated(hashA, readSetHash) || _columnGraph->isRelated(hashA, writeSetHash);
                 });

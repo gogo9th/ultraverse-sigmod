@@ -13,7 +13,7 @@ namespace ultraverse::base {
         virtual void connect(const std::string &host, int port, const std::string &user, const std::string &password) = 0;
         virtual void disconnect() = 0;
         
-        virtual int executeQuery(const std::string query) = 0;
+        virtual int executeQuery(const std::string &query) = 0;
     };
 }
 

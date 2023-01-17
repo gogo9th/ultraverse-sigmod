@@ -27,7 +27,7 @@ namespace ultraverse::state {
         _graph[nodeIdx]->nodeIdx = nodeIdx;
         
         bool isEntrypoint = CreateEdge(nodeIdx);
-        _logger->info("inserted node #{}", nodeIdx);
+        // _logger->info("inserted node #{}", nodeIdx);
         return std::make_pair(nodeIdx, isEntrypoint);
     }
     
@@ -43,7 +43,7 @@ namespace ultraverse::state {
         
         
         if (node->transaction != nullptr) {
-            node->transaction.reset();
+            // node->transaction.reset();
             node->isProcessed = true;
         }
     
@@ -123,6 +123,7 @@ namespace ultraverse::state {
         auto &curr = _graph[node_idx];
         
         bool isEntrypoint = false;
+        bool isEntrypointSet = false;
         
         std::vector<std::string> table_list;
         table_list.insert(table_list.begin(), curr->transaction->writeSet().begin(), curr->transaction->writeSet().end());
@@ -151,14 +152,22 @@ namespace ultraverse::state {
         
         if (table_list.empty()) {
             isEntrypoint = true;
+            isEntrypointSet = true;
         }
         
         for (auto &i: table_list) {
             auto iter = write_node_idx_map.find(i);
             if (iter != write_node_idx_map.end() && !_graph[iter->second]->isProcessed) {
+                if (!isEntrypointSet) {
+                    isEntrypoint = false;
+                    isEntrypointSet = true;
+                }
                 prior_map.insert(std::pair<int, std::string>(iter->second, i));
             } else {
-                isEntrypoint = true;
+                if (!isEntrypointSet) {
+                    isEntrypointSet = true;
+                    isEntrypoint = true;
+                }
             }
         }
         
@@ -169,8 +178,10 @@ namespace ultraverse::state {
             
             if (_graph[i.first]->next() == nullptr) {
                 _graph[i.first]->setNext(_graph[node_idx]);
+                break;
             } else {
                 isEntrypoint = true;
+                break;
             }
             
         }
