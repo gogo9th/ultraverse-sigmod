@@ -216,8 +216,7 @@ namespace ultraverse::mariadb {
         for (int i = 0; i < columns; i++) {
             using namespace internal;
             switch (columnTypeDef.get()[i]) {
-                case MYSQL_TYPE_STRING:
-                case MYSQL_TYPE_VAR_STRING: {
+                case MYSQL_TYPE_STRING: {
                     uint8_t size = metadata.get()[metadataPos + 1];
                     metadataPos += 2;
                     
@@ -232,7 +231,8 @@ namespace ultraverse::mariadb {
                     columnTypeDef2.emplace_back(column_type::STRING, size);
                 }
                     break;
-    
+                
+                case MYSQL_TYPE_VAR_STRING:
                 case MYSQL_TYPE_VARCHAR: {
                     uint16_t maximumLength = *reinterpret_cast<uint16_t *>(metadata.get() + metadataPos);
                     metadataPos += 2;
@@ -282,17 +282,16 @@ namespace ultraverse::mariadb {
                 case MYSQL_TYPE_TINY:
                     columnTypeDef2.emplace_back(column_type::INTEGER, 1);
                     break;
-                    
-                case MYSQL_TYPE_DOUBLE:
-                    metadataPos += 1;
-                    columnTypeDef2.emplace_back(column_type::FLOAT, 8);
-                    break;
-                    
+    
                 case MYSQL_TYPE_FLOAT:
+                case MYSQL_TYPE_DOUBLE: {
+                    uint8_t size = metadata.get()[metadataPos];
                     metadataPos += 1;
-                    columnTypeDef2.emplace_back(column_type::FLOAT, 4);
-                    break;
                     
+                    columnTypeDef2.emplace_back(column_type::FLOAT, size);
+                    break;
+                }
+                
                 // TODO: https://mariadb.com/kb/en/rows_event_v1v2/
                 case MYSQL_TYPE_DATE:
                     columnTypeDef2.emplace_back(column_type::DATETIME, 3);
@@ -309,13 +308,13 @@ namespace ultraverse::mariadb {
                 case MYSQL_TYPE_DATETIME2: {
                     uint8_t fractionalLength = *reinterpret_cast<uint8_t *>(metadata.get() + metadataPos);
                     metadataPos += 1;
-                    columnTypeDef2.emplace_back(column_type::DATETIME, 5 + ((fractionalLength + 1) / 2));
+                    columnTypeDef2.emplace_back(column_type::DATETIME, 5);
                 }
                     break;
                 case MYSQL_TYPE_TIME2: {
                     uint8_t fractionalLength = *reinterpret_cast<uint8_t *>(metadata.get() + metadataPos);
                     metadataPos += 1;
-                    columnTypeDef2.emplace_back(column_type::DATETIME, 3 + ((fractionalLength + 1) / 2));
+                    columnTypeDef2.emplace_back(column_type::DATETIME, 3);
                 }
                     break;
                 case MYSQL_TYPE_TIMESTAMP2: {
