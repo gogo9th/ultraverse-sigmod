@@ -244,14 +244,28 @@ namespace ultraverse::state::v2 {
         return _clusterMap;
     }
     
-    std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> RowCluster::getKeyRangeOf(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys) {
+    std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>>
+    RowCluster::getKeyRangeOf(Transaction &transaction, const std::string &keyColumn,
+                              const std::vector<ForeignKey> &foreignKeys) {
         std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> keyRanges;
         
         for (auto &query: transaction.queries()) {
             for (auto &range: _clusterMap.at(keyColumn)) {
-                if (isTransactionRelated(transaction.gid(), range.second)) {
+                if (isQueryRelated(keyColumn, range.first, *query, foreignKeys, _aliases)) {
                     keyRanges.push_back(range);
                 }
+            }
+        }
+        
+        return keyRanges;
+    }
+    
+    std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> RowCluster::getKeyRangeOf2(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys) {
+        std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> keyRanges;
+        
+        for (auto &range: _clusterMap.at(keyColumn)) {
+            if (isTransactionRelated(transaction.gid(), range.second)) {
+                keyRanges.push_back(range);
             }
         }
         

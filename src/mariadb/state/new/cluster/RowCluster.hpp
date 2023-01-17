@@ -60,6 +60,7 @@ namespace ultraverse::state::v2 {
         static bool isTransactionRelated(gid_t gid, const std::vector<gid_t> &gidList);
         
         std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> getKeyRangeOf(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys);
+        std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> getKeyRangeOf2(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys);
         
         RowCluster operator&(const RowCluster &other) const;
         RowCluster operator|(const RowCluster &other) const;

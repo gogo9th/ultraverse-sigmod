@@ -336,7 +336,7 @@ namespace ultraverse::state::v2 {
                 
                 for (const auto &keyColumn: _plan.keyColumns()) {
                     auto &ranges = _keyRanges[keyColumn];
-                    auto newRanges = _rowCluster.getKeyRangeOf(*transaction, keyColumn, _context->foreignKeys);
+                    auto newRanges = _rowCluster.getKeyRangeOf2(*transaction, keyColumn, _context->foreignKeys);
                     ranges.insert(
                         ranges.end(),
                         newRanges.begin(), newRanges.end()
@@ -353,7 +353,20 @@ namespace ultraverse::state::v2 {
                 }
                 
                 continue;
-            } else if (header->gid < _plan.lowestGidAvailable()) {
+            } else if (_plan.hasUserQuery(header->gid)) {
+                auto userQuery = std::move(loadUserQuery(_plan.userQueries()[header->gid]));
+    
+                for (const auto &keyColumn: _plan.keyColumns()) {
+                    auto &ranges = _keyRanges[keyColumn];
+                    auto newRanges = _rowCluster.getKeyRangeOf(*userQuery, keyColumn, _context->foreignKeys);
+                    ranges.insert(
+                        ranges.end(),
+                        newRanges.begin(), newRanges.end()
+                    );
+                }
+            }
+            
+            if (header->gid < _plan.lowestGidAvailable()) {
                 gids.insert(header->gid);
             }
             
@@ -431,15 +444,6 @@ namespace ultraverse::state::v2 {
                 auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transactionHeader->gid]));
                 _logger->info("executing user-provided query");
     
-                for (const auto &keyColumn: _plan.keyColumns()) {
-                    auto &ranges = _keyRanges[keyColumn];
-                    auto newRanges = _rowCluster.getKeyRangeOf(*userQuery, keyColumn, _context->foreignKeys);
-                    ranges.insert(
-                        ranges.end(),
-                        newRanges.begin(), newRanges.end()
-                    );
-                }
-                
                 addTransaction(userQuery);
                 writeStateLog(userQuery);
             }
