@@ -32,6 +32,7 @@ namespace ultraverse::state::v2 {
         auto size = cluster.size();
         auto nodeIdx = add_vertex({ size - 1, false }, graph);
     
+        /*
     
         boost::graph_traits<ClusterGraph>::vertex_iterator vi, viEnd, next;
         boost::tie(vi, viEnd) = vertices(graph);
@@ -46,6 +47,7 @@ namespace ultraverse::state::v2 {
                 break;
             }
         }
+         */
     }
     
     void RowCluster::setWildcard(const std::string &columnName, bool wildcard) {
@@ -192,6 +194,8 @@ namespace ultraverse::state::v2 {
         
         for (int i = 0; i < cluster.size(); i++) {
             auto nodeIdx = add_vertex({i, false}, _clusterGraph[columnName]);
+            
+            _logger->trace("reconstructing graph.. {} / {}", i, cluster.size());
             
             boost::graph_traits<ClusterGraph>::vertex_iterator vi, viEnd, next;
             boost::tie(vi, viEnd) = vertices(_clusterGraph[columnName]);

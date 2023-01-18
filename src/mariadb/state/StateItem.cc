@@ -40,6 +40,7 @@ void StateData::Copy(const StateData &c)
   if (type == en_column_data_string)
   {
     d.str = strdup(c.d.str);
+    str_len = c.str_len;
   }
   else
   {

@@ -164,17 +164,36 @@ namespace ultraverse::state::v2 {
         _mode = OperationMode::PREPARE;
         
         std::mutex mutex;
+        std::mutex queueMutex;
         TaskExecutor taskExecutor(8);
         StateLogWriter stateLogWriter(_plan.stateLogPath(), _plan.stateLogName());
         createIntermediateDB();
         
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
+        std::atomic_bool isRunning = true;
         
         if (!_plan.dbDumpPath().empty()) {
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
         }
         
         _reader.open();
+        
+        std::atomic_int64_t count = 0;
+        
+        std::thread queueConsumerThread([this, &queueMutex, &taskQueue, &isRunning]() {
+            while (!taskQueue.empty() || isRunning) {
+                while (!taskQueue.empty()) {
+                    // _logger->trace("{} task(s) left", taskQueue.size());
+                    std::scoped_lock lock(queueMutex);
+                    auto task = std::move(taskQueue.front());
+                    auto future = task->get_future();
+                    future.wait();
+                    taskQueue.pop();
+                }
+                using namespace std::chrono_literals;
+                std::this_thread::sleep_for(100ms);
+            }
+        });
         
         while (_reader.next()) {
             auto transactionHeader = _reader.txnHeader();
@@ -192,7 +211,7 @@ namespace ultraverse::state::v2 {
                 break;
             }
     
-            auto task = taskExecutor.post<int>([this, &mutex, &stateLogWriter, transaction, gid, flags]() {
+            auto task = taskExecutor.post<int>([this, &mutex, &stateLogWriter, &count, transaction, gid, flags]() {
                 if (!isTransactionRelatedToPlan(transaction)) {
                     _logger->trace("skipping transaction #{}", gid);
                     return 0;
@@ -247,23 +266,21 @@ namespace ultraverse::state::v2 {
                     }
     
                     if (isTransactionRelatedToCluster(transaction)) {
-                        expandClusterMap(_rowCluster, *transaction, CLUSTER_EXPAND_FLAG_STRICT | CLUSTER_EXPAND_FLAG_WILDCARD);
+                        expandClusterMap(_rowCluster, *transaction, CLUSTER_EXPAND_FLAG_WILDCARD);
                     }
                 }
     
                 return 0;
             });
-            
-            taskQueue.emplace(std::move(task));
+    
+            {
+                std::scoped_lock lock(queueMutex);
+                taskQueue.emplace(std::move(task));
+            }
         }
         
-        while (!taskQueue.empty()) {
-            _logger->trace("{} task(s) left", taskQueue.size());
-            auto task = std::move(taskQueue.front());
-            auto future = task->get_future();
-            future.wait();
-            taskQueue.pop();
-        }
+        isRunning = false;
+        queueConsumerThread.join();
         
         for (auto &pair: _rowCluster.keyMap()) {
             _logger->info("MERGING CLUSTER: {}", pair.first);
@@ -313,11 +330,15 @@ namespace ultraverse::state::v2 {
         _reader >> _rowCluster;
         
         // _hashWatcher = std::make_unique<HashWatcher>(_plan.binlogPath(), _plan.stateLogName() + ".index", _intermediateDBName);
-        
+    
         createIntermediateDB();
     
         if (!_plan.dbDumpPath().empty()) {
+            auto load_backup_start = std::chrono::steady_clock::now();
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
+            auto load_backup_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = load_backup_end - load_backup_start;
+            _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
         }
     
         _logger->info("opening state log");
@@ -326,6 +347,8 @@ namespace ultraverse::state::v2 {
         _isRunning = true;
         
         std::set<gid_t> gids;
+    
+        auto time_start = std::chrono::steady_clock::now();
         
         while (_reader.nextHeader()) {
             auto header = std::move(_reader.txnHeader());
@@ -367,9 +390,9 @@ namespace ultraverse::state::v2 {
             }
             
             if (header->gid < _plan.lowestGidAvailable()) {
+                gids.insert(header->gid);
             }
     
-            gids.insert(header->gid);
             _reader.skipTransaction();
         }
         
@@ -402,6 +425,8 @@ namespace ultraverse::state::v2 {
                 taskQueue.push(std::move(task));
             }
         };
+    
+        auto txn_replay_start = std::chrono::steady_clock::now();
         
         while (_reader.nextHeader()) {
             auto transactionHeader = _reader.txnHeader();
@@ -450,6 +475,12 @@ namespace ultraverse::state::v2 {
             
             addTransaction(transaction);
         }
+    
+        {
+            auto txn_reader_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = txn_reader_end - time_start;
+            _logger->info("TXN READER END: {}s elapsed", time.count());
+        }
         
         while (!taskQueue.empty()) {
             auto task = std::move(taskQueue.front());
@@ -465,6 +496,12 @@ namespace ultraverse::state::v2 {
         
         if (_hashWatcher != nullptr) {
             _hashWatcher->stop();
+        }
+        
+        {
+            auto txn_replay_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = txn_replay_end - txn_replay_start;
+            _logger->info("TXN REPLAY END: {}s elapsed", time.count());
         }
         
         _logger->trace("== REPLAY FINISHED ==");
@@ -1026,7 +1063,11 @@ namespace ultraverse::state::v2 {
                 (transaction->gid() < _plan.lowestGidAvailable()) ||
                 (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
             
-            const bool skipQuery = false;
+            const bool skipQuery =
+                    (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
+                    !(needsForceExecution                               ||
+                    isDDL                                               ||
+                    (isRelatedWithCluster && isRelatedWithColumnGraph));
             
             return !skipQuery;
         })) {
@@ -1057,7 +1098,11 @@ namespace ultraverse::state::v2 {
                     (transaction->gid() < _plan.lowestGidAvailable()) ||
                     (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
                 
-                const bool skipQuery = false;
+                const bool skipQuery =
+                      (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
+                      !(needsForceExecution                               ||
+                      isDDL                                               ||
+                      (isRelatedWithCluster && isRelatedWithColumnGraph));
     
     
                 if (isRelatedWithColumnGraph && query->type() == Query::INSERT) {
