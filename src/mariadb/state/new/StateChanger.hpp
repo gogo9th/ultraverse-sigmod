@@ -150,6 +150,12 @@ namespace ultraverse::state::v2 {
         
         gid_t _ddlTxnId;
         gid_t _ddlTxnProcessedId;
+        
+        std::atomic_uint64_t _replayedQueries;
+        std::atomic<double> _phase2WorkerTime;
+        
+        double _phase1Time;
+        double _phase2MainTime;
     };
 }
 

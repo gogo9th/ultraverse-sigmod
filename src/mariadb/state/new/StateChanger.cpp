@@ -359,7 +359,7 @@ namespace ultraverse::state::v2 {
         
         std::set<gid_t> gids;
     
-        auto time_start = std::chrono::steady_clock::now();
+        auto phase1_start = std::chrono::steady_clock::now();
         
         for (const auto gid: _plan.rollbackGids()) {
             auto pos = gidIndexReader.offsetOf(gid);
@@ -417,6 +417,12 @@ namespace ultraverse::state::v2 {
                 );
             }
         }
+    
+        {
+            auto phase1_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = phase1_end - phase1_start;
+            _phase1Time = time.count();
+        }
         
         auto addTransaction = [this, &taskExecutor, &taskQueue] (std::shared_ptr<Transaction> transaction) {
             auto node = _stateGraph->addTransaction(transaction);
@@ -434,7 +440,7 @@ namespace ultraverse::state::v2 {
             }
         };
     
-        auto txn_replay_start = std::chrono::steady_clock::now();
+        auto phase2_main_start = std::chrono::steady_clock::now();
         
         for (const auto gid: gids) {
             auto pos = gidIndexReader.offsetOf(gid);
@@ -481,13 +487,13 @@ namespace ultraverse::state::v2 {
             
             addTransaction(transaction);
         }
-    
-        {
-            auto txn_reader_end = std::chrono::steady_clock::now();
-            std::chrono::duration<double> time = txn_reader_end - time_start;
-            _logger->info("TXN READER END: {}s elapsed", time.count());
-        }
         
+        {
+            auto phase2_main_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = phase2_main_end - phase2_main_start;
+            _phase2MainTime = time.count();
+        }
+    
         while (!taskQueue.empty()) {
             auto task = std::move(taskQueue.front());
             auto future = task->get_future();
@@ -502,12 +508,6 @@ namespace ultraverse::state::v2 {
         
         if (_hashWatcher != nullptr) {
             _hashWatcher->stop();
-        }
-        
-        {
-            auto txn_replay_end = std::chrono::steady_clock::now();
-            std::chrono::duration<double> time = txn_replay_end - txn_replay_start;
-            _logger->info("TXN REPLAY END: {}s elapsed", time.count());
         }
         
         _logger->trace("== REPLAY FINISHED ==");
@@ -607,6 +607,11 @@ namespace ultraverse::state::v2 {
         queryBuilder << fmt::format("SET FOREIGN_KEY_CHECKS = TRUE;\n\n");
     
         _logger->info("TODO: EXECUTE QUERY:\n{}", queryBuilder.str());
+        
+        _logger->info("total {} queries replayed", _replayedQueries);
+        _logger->info("phase1 {}s", _phase1Time);
+        _logger->info("phase2_main {}s, phase2_worker {}s", _phase2MainTime, _phase2WorkerTime);
+        _logger->info("phase2_total {}s", _phase2MainTime + _phase2WorkerTime);
     
         taskExecutor.shutdown();
     }
@@ -990,6 +995,8 @@ namespace ultraverse::state::v2 {
     }
     
     void StateChanger::processNode(uint64_t nodeIdx) {
+        auto workerTimeStart = std::chrono::steady_clock::now();
+        
         _logger->trace("[#{}] thread created", nodeIdx);
         auto node = _stateGraph->getTxnNode(nodeIdx);
     
@@ -1038,6 +1045,15 @@ namespace ultraverse::state::v2 {
         }
     
         _logger->trace("[#{}] thread end", nodeIdx);
+        
+        {
+            auto workerTimeEnd = std::chrono::steady_clock::now();
+            double time = std::chrono::duration<double>(workerTimeEnd - workerTimeStart).count();
+            
+            // https://stackoverflow.com/questions/47886129/add-atomicdouble-and-double
+            for (double x = _phase2WorkerTime; !_phase2WorkerTime.compare_exchange_strong(x, x + time);) {
+            }
+        }
     }
     
     void StateChanger::__node__processTransaction(
@@ -1167,6 +1183,7 @@ namespace ultraverse::state::v2 {
                 
                 try {
                     __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
+                    _replayedQueries++;
                 } catch (std::exception &e) {
                     dbHandle.executeQuery("ROLLBACK");
                     goto END_TRANSACTION;
