@@ -606,7 +606,7 @@ namespace ultraverse::state::v2 {
         
         queryBuilder << fmt::format("SET FOREIGN_KEY_CHECKS = TRUE;\n\n");
     
-        _logger->trace("TODO: EXECUTE QUERY:\n{}", queryBuilder.str());
+        _logger->info("TODO: EXECUTE QUERY:\n{}", queryBuilder.str());
     
         taskExecutor.shutdown();
     }

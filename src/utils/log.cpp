@@ -4,21 +4,36 @@
 
 #include "log.hpp"
 
-#include <cstdarg>
+#include <map>
+
+using LoggerPtr = std::shared_ptr<spdlog::logger>;
 
 inline auto initLoggerSink() {
     auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_st>();
-    sink->set_level(spdlog::level::trace);
+    sink->set_level(spdlog::level::info);
     
     return sink;
 }
 
-static auto loggerSink = initLoggerSink();
+std::shared_ptr<spdlog::sinks::stdout_color_sink_st> loggerSink = initLoggerSink();
+std::map<std::string, LoggerPtr> loggerMap;
+
 LoggerPtr createLogger(const std::string &name) {
-    auto logger = std::make_shared<spdlog::logger>(name, loggerSink);
-    logger->set_level(spdlog::level::trace);
+    if (loggerMap.find(name) == loggerMap.end()) {
+        auto logger = std::make_shared<spdlog::logger>(name, loggerSink);
+        logger->set_level(loggerSink->level());
+        loggerMap.emplace(name, std::move(logger));
+    }
     
-    return logger;
+    return loggerMap[name];
+}
+
+void setLogLevel(spdlog::level::level_enum level) {
+    loggerSink->set_level(level);
+    
+    for (auto &pair: loggerMap) {
+        pair.second->set_level(level);
+    }
 }
 
 /**

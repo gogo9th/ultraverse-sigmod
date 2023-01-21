@@ -6,15 +6,18 @@
 #define ULTRAVERSE_LOG_HPP
 
 #include <cstdio>
+#include <cstdarg>
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/null_sink.h>
 
-
 using LoggerPtr = std::shared_ptr<spdlog::logger>;
 
 LoggerPtr createLogger(const std::string &name);
+
+void setLogLevel(spdlog::level::level_enum level);
+
 
 
 /**

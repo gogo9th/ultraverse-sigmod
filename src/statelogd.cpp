@@ -55,12 +55,15 @@ public:
 
             return 0;
         }
-
+    
         if (isArgSet('v')) {
-            spdlog::set_level(spdlog::level::debug);
-        } else if (isArgSet('V')) {
-            spdlog::set_level(spdlog::level::trace);
+            setLogLevel(spdlog::level::debug);
         }
+    
+        if (isArgSet('V')) {
+            setLogLevel(spdlog::level::trace);
+        }
+
         
         if (!isArgSet('b')) {
             _logger->error("FATAL: binlog.index file must be specified (-b)");
