@@ -488,12 +488,6 @@ namespace ultraverse::state::v2 {
             addTransaction(transaction);
         }
         
-        {
-            auto phase2_main_end = std::chrono::steady_clock::now();
-            std::chrono::duration<double> time = phase2_main_end - phase2_main_start;
-            _phase2MainTime = time.count();
-        }
-    
         while (!taskQueue.empty()) {
             auto task = std::move(taskQueue.front());
             auto future = task->get_future();
@@ -504,6 +498,12 @@ namespace ultraverse::state::v2 {
         for (auto &pair: _rowCluster2.keyMap()) {
             _logger->info("MERGING CLUSTER: {}", pair.first);
             _rowCluster2.mergeCluster(pair.first);
+        }
+    
+        {
+            auto phase2_main_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = phase2_main_end - phase2_main_start;
+            _phase2Time = time.count();
         }
         
         if (_hashWatcher != nullptr) {
@@ -609,9 +609,7 @@ namespace ultraverse::state::v2 {
         _logger->info("TODO: EXECUTE QUERY:\n{}", queryBuilder.str());
         
         _logger->info("total {} queries replayed", _replayedQueries);
-        _logger->info("phase1 {}s", _phase1Time);
-        _logger->info("phase2_main {}s, phase2_worker {}s", _phase2MainTime, _phase2WorkerTime);
-        _logger->info("phase2_total {}s", _phase2MainTime + _phase2WorkerTime);
+        _logger->info("phase1 {}s, phase2 {}s", _phase1Time, _phase2Time);
     
         taskExecutor.shutdown();
     }
@@ -995,8 +993,6 @@ namespace ultraverse::state::v2 {
     }
     
     void StateChanger::processNode(uint64_t nodeIdx) {
-        auto workerTimeStart = std::chrono::steady_clock::now();
-        
         _logger->trace("[#{}] thread created", nodeIdx);
         auto node = _stateGraph->getTxnNode(nodeIdx);
     
@@ -1045,15 +1041,6 @@ namespace ultraverse::state::v2 {
         }
     
         _logger->trace("[#{}] thread end", nodeIdx);
-        
-        {
-            auto workerTimeEnd = std::chrono::steady_clock::now();
-            double time = std::chrono::duration<double>(workerTimeEnd - workerTimeStart).count();
-            
-            // https://stackoverflow.com/questions/47886129/add-atomicdouble-and-double
-            for (double x = _phase2WorkerTime; !_phase2WorkerTime.compare_exchange_strong(x, x + time);) {
-            }
-        }
     }
     
     void StateChanger::__node__processTransaction(
