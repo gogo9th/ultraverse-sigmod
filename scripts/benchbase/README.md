@@ -42,6 +42,10 @@ docker compose stop
 
 # NOTE
 
+- **statelogd 실행 시 로그를 작성하다 binlog를 같은 파일, 같은 위치로 계속 seek하고 있는 경우 로그에 끝에 도달한 것입니다. (처리가 끝난 것입니다)**
+
+  Ctrl+C 등으로 종료한 후 다음 단계로 넘어가 주십시오.
+
 - MariaDB 도커 인스턴스는 호스트 PC의 3306 포트를 점유합니다.
 
   만약 MariaDB / MySQL을 호스트에서 이미 실행하고 있는 경우 정지해 주십시오.
