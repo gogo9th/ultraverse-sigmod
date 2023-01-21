@@ -61,6 +61,19 @@ $ ./db_state_change \
 
 # NOTE
 
+- 다량의 데이터 처리 시 기본 malloc 대신 jemalloc를 사용하면 메모리 할당 관련된 시간을 단축할 수 있습니다.
+
+```shell
+sudo apt install libjemalloc-dev
+LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 ./db_state_change ... 
+
+# 기본 malloc 사용 시
+226.48s user 27.56s system 192% cpu 2:12.18 total
+
+# jemalloc 사용 시
+123.35s user 30.00s system 127% cpu 1:59.86 total
+```
+
 - 문제 파악을 위해 의도적으로 intermediate database를 드랍하지 않도록 했습니다.
 - 상기와 같은 이유로, 상태 전환 이후에 REPLACE 쿼리문을 표시하지만 실제로 실행하지는 않습니다.
 
