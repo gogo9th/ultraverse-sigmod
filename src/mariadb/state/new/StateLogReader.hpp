@@ -25,6 +25,9 @@ namespace ultraverse::state::v2 {
         
         void reset();
         
+        uint64_t pos();
+        void seek(uint64_t pos);
+        
         bool nextHeader();
         bool nextTransaction();
         

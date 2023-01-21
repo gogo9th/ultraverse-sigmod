@@ -12,6 +12,8 @@
 #include <SQLParserResult.h>
 
 #include "StateLogWriter.hpp"
+#include "GIDIndexWriter.hpp"
+#include "GIDIndexReader.hpp"
 #include "cluster/RowCluster.hpp"
 
 #include "StateChanger.hpp"
@@ -167,6 +169,7 @@ namespace ultraverse::state::v2 {
         std::mutex queueMutex;
         TaskExecutor taskExecutor(8);
         StateLogWriter stateLogWriter(_plan.stateLogPath(), _plan.stateLogName());
+        GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
         createIntermediateDB();
         
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
@@ -195,11 +198,17 @@ namespace ultraverse::state::v2 {
             }
         });
         
-        while (_reader.next()) {
+        while (_reader.nextHeader()) {
             auto transactionHeader = _reader.txnHeader();
+            auto pos = _reader.pos() - sizeof(TransactionHeader);
+            
+            _reader.nextTransaction();
             auto transaction = _reader.txnBody();
             auto gid = transactionHeader->gid;
             auto flags = transactionHeader->flags;
+            
+            gidIndexWriter.append(pos);
+            
             _logger->trace("read gid {}; flags {}", gid, flags);
             
             if (gid < _plan.startGid()) {
@@ -304,6 +313,8 @@ namespace ultraverse::state::v2 {
         
         TaskExecutor taskExecutor(8);
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
+    
+        GIDIndexReader gidIndexReader(_plan.stateLogPath(), _plan.stateLogName());
         
         auto stateLogWriter = _plan.writeStateLog() ?
             std::make_unique<StateLogWriter>(_plan.stateLogPath(), fmt::format("{}_statechange_{}", _plan.stateLogName(), (int) time(nullptr))) :
@@ -350,53 +361,54 @@ namespace ultraverse::state::v2 {
     
         auto time_start = std::chrono::steady_clock::now();
         
-        while (_reader.nextHeader()) {
-            auto header = std::move(_reader.txnHeader());
+        for (const auto gid: _plan.rollbackGids()) {
+            auto pos = gidIndexReader.offsetOf(gid);
+            _reader.seek(pos);
             
-            if (_plan.isRollbackGid(header->gid)) {
-                _reader.nextTransaction();
-                auto transaction = std::move(_reader.txnBody());
-                
-                for (const auto &keyColumn: _plan.keyColumns()) {
-                    auto &ranges = _keyRanges[keyColumn];
-                    auto newRanges = _rowCluster.getKeyRangeOf2(*transaction, keyColumn, _context->foreignKeys);
-                    ranges.insert(
-                        ranges.end(),
-                        newRanges.begin(), newRanges.end()
-                    );
-                }
-        
-                for (auto &query: transaction->queries()) {
-                    _columnSetHashes->push_back(std::hash<ColumnSet>{}(query->writeSet()));
-            
-                    // FIXME
-                    if (query->type() == Query::INSERT || query->type() == Query::DELETE) {
-                        _tableGraph->addRelationship(query->writeSet(), query->writeSet());
-                    }
-                }
-                
-                continue;
-            } else if (_plan.hasUserQuery(header->gid)) {
-                auto userQuery = std::move(loadUserQuery(_plan.userQueries()[header->gid]));
-    
-                for (const auto &keyColumn: _plan.keyColumns()) {
-                    auto &ranges = _keyRanges[keyColumn];
-                    auto newRanges = _rowCluster.getKeyRangeOf(*userQuery, keyColumn, _context->foreignKeys);
-                    ranges.insert(
-                        ranges.end(),
-                        newRanges.begin(), newRanges.end()
-                    );
-                }
-            }
-            
-            if (header->gid < _plan.lowestGidAvailable()) {
-                gids.insert(header->gid);
+            if (!_reader.next()) {
+                throw std::runtime_error(fmt::format("cannot read transaction data at {} (gid={})", pos, gid));
             }
     
-            _reader.skipTransaction();
+            auto transaction = std::move(_reader.txnBody());
+            
+            for (const auto &keyColumn: _plan.keyColumns()) {
+                auto &ranges = _keyRanges[keyColumn];
+                auto newRanges = _rowCluster.getKeyRangeOf2(*transaction, keyColumn, _context->foreignKeys);
+                ranges.insert(
+                    ranges.end(),
+                    newRanges.begin(), newRanges.end()
+                );
+            }
+    
+            for (auto &query: transaction->queries()) {
+                _columnSetHashes->push_back(std::hash<ColumnSet>{}(query->writeSet()));
+    
+                // FIXME
+                if (query->type() == Query::INSERT || query->type() == Query::DELETE) {
+                    _tableGraph->addRelationship(query->writeSet(), query->writeSet());
+                }
+            }
         }
         
-        _reader.reset();
+        for (const auto &pair: _plan.userQueries()) {
+            auto userQuery = std::move(loadUserQuery(pair.second));
+    
+            for (const auto &keyColumn: _plan.keyColumns()) {
+                auto &ranges = _keyRanges[keyColumn];
+                auto newRanges = _rowCluster.getKeyRangeOf(*userQuery, keyColumn, _context->foreignKeys);
+                ranges.insert(
+                    ranges.end(),
+                    newRanges.begin(), newRanges.end()
+                );
+            }
+    
+            gids.insert(pair.first);
+        }
+    
+    
+        for (gid_t i = 0; i < _plan.lowestGidAvailable(); i++) {
+            gids.insert(i);
+        }
         
         for (const auto &pair: _keyRanges) {
             for (auto &range: pair.second) {
@@ -404,10 +416,6 @@ namespace ultraverse::state::v2 {
                     range.second.begin(), range.second.end()
                 );
             }
-        }
-        
-        for (auto gid: gids) {
-            _logger->info(gid);
         }
         
         auto addTransaction = [this, &taskExecutor, &taskQueue] (std::shared_ptr<Transaction> transaction) {
@@ -428,18 +436,16 @@ namespace ultraverse::state::v2 {
     
         auto txn_replay_start = std::chrono::steady_clock::now();
         
-        while (_reader.nextHeader()) {
-            auto transactionHeader = _reader.txnHeader();
-            auto gid = transactionHeader->gid;
-            auto flags = transactionHeader->flags;
-            
-            if (gids.find(transactionHeader->gid) == gids.end() && !_plan.hasUserQuery(transactionHeader->gid)) {
-                _reader.skipTransaction();
-                continue;
+        for (const auto gid: gids) {
+            auto pos = gidIndexReader.offsetOf(gid);
+            _reader.seek(pos);
+    
+            if (!_reader.next()) {
+                throw std::runtime_error(fmt::format("cannot read transaction data at {} (gid={})", pos, gid));
             }
             
-            _reader.nextTransaction();
-            
+            auto transactionHeader = _reader.txnHeader();
+            auto flags = transactionHeader->flags;
             auto transaction = _reader.txnBody();
             _logger->trace("read gid {}; flags {}", gid, flags);
             

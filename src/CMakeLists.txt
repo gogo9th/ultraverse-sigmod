@@ -6,6 +6,7 @@ find_package(FLEX REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
 
+# pkg_check_modules(JEMALLOC REQUIRED jemalloc)
 pkg_check_modules(MARIADB REQUIRED mariadb)
 pkg_check_modules(FMT REQUIRED fmt)
 pkg_check_modules(SPDLOG REQUIRED spdlog)
@@ -13,6 +14,7 @@ pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 add_compile_options(-msse4.2 -O2)
+# add_link_options(-fsanitize=leak)
 
 set(ULTRAVERSE_DEPENDENCIES
     ${BOOST_LIBRARIES}
@@ -93,6 +95,10 @@ set(LIBULTRAVERSE_STATE_SRCS
     mariadb/state/new/TableDependencyGraph.hpp
     mariadb/state/new/StateChanger.sqlload.cpp
     
+    mariadb/state/new/GIDIndexWriter.cpp
+    mariadb/state/new/GIDIndexWriter.hpp
+    mariadb/state/new/GIDIndexReader.cpp
+    mariadb/state/new/GIDIndexReader.hpp
 )
 
 set(LIBULTRAVERSE_MARIADB_SRCS

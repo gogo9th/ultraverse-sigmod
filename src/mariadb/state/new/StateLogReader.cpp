@@ -35,6 +35,17 @@ namespace ultraverse::state::v2 {
         _currentBody = nullptr;
     }
     
+    uint64_t StateLogReader::pos() {
+        return _stream.tellg();
+    }
+    
+    void StateLogReader::seek(uint64_t pos) {
+        _stream.seekg(pos);
+    
+        _currentHeader = nullptr;
+        _currentBody = nullptr;
+    }
+    
     bool StateLogReader::nextHeader() {
         auto header = std::make_shared<TransactionHeader>();
         _stream.read((char *) header.get(), sizeof(TransactionHeader));
