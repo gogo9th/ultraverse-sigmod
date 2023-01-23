@@ -76,6 +76,7 @@ namespace ultraverse::state {
         }
         
         void MakeUpData() {
+            /*
             MD5_CTX md5_ctx;
             MD5_Init(&md5_ctx);
             
@@ -92,6 +93,7 @@ namespace ultraverse::state {
             };
             MD5_Final(digest, &md5_ctx);
             memcpy(&hash, digest, sizeof(hash));
+             */
         }
         
         EN_USER_QUERY_TYPE user_query;
