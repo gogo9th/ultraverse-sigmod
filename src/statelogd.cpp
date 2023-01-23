@@ -91,7 +91,6 @@ public:
         return 0;
     }
     
-    [[noreturn]]
     void writerMain() {
         _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(".", _binlogIndexPath);
         _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(".", _stateLogName);

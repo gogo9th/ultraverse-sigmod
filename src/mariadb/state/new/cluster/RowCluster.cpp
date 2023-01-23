@@ -414,6 +414,8 @@ namespace ultraverse::state::v2 {
             }
             // dst._clusterMap[key] = StateRange::AND(this->_clusterMap.at(key), other._clusterMap.at(key));
         }
+        
+        return std::move(dst);
     }
     
     RowCluster RowCluster::operator|(const RowCluster &other) const {
@@ -434,5 +436,7 @@ namespace ultraverse::state::v2 {
                 dst._clusterMap[it.first] = it.second;
             }
         }
+        
+        return std::move(dst);
     }
 }

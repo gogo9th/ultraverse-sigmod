@@ -98,15 +98,20 @@ namespace ultraverse::state::v2 {
     
             if (lowest_name.empty()) {
                 _logger->error("cannot find candidate column");
+                
+                return "";
             } else {
                 _logger->info("candidate column found: {}", lowest_name);
                 
                 for (auto &range: candidate_maps[lowest_name]) {
                     _logger->info("    (WHERE {})", range.MakeWhereQuery(lowest_name));
                 }
+                
+                return lowest_name;
             }
         }
     
+        return "";
     }
     
     std::vector<CandidateColumn>
