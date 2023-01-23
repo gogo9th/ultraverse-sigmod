@@ -3,7 +3,7 @@
 # SYNOPSIS
 
 ```shell
-$ sudo apt install build-essential cmake mariadb libmariadb-dev libmariadb-dev-compat pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev
+$ sudo apt install build-essential cmake mariadb-server mariadb-client libmariadb-dev libmariadb-dev-compat pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev doxygen
 
 # ...
 
@@ -22,7 +22,7 @@ $ systemctl restart mariadb
 ```
 
 ```shell
-$ git clone $ULTRAVERSE_GIT
+$ git clone https://github.com/team-unstablers/ultraverse
 $ cd ultraverse
 $ git submodule init
 $ git submodule update
