@@ -55,12 +55,15 @@ public:
 
             return 0;
         }
-
+    
         if (isArgSet('v')) {
-            spdlog::set_level(spdlog::level::debug);
-        } else if (isArgSet('V')) {
-            spdlog::set_level(spdlog::level::trace);
+            setLogLevel(spdlog::level::debug);
         }
+    
+        if (isArgSet('V')) {
+            setLogLevel(spdlog::level::trace);
+        }
+
         
         if (!isArgSet('b')) {
             _logger->error("FATAL: binlog.index file must be specified (-b)");
@@ -88,7 +91,6 @@ public:
         return 0;
     }
     
-    [[noreturn]]
     void writerMain() {
         _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(".", _binlogIndexPath);
         _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(".", _stateLogName);
@@ -401,6 +403,8 @@ public:
             pendingQuery->whereSet().begin(),
             dummyEvent.whereSet().begin(), dummyEvent.whereSet().end()
         );
+        
+        pendingQuery->sqlVarMap() = dummyEvent.sqlVarMap();
     }
 
     void sigintHandler(int param) {

@@ -12,6 +12,8 @@
 #include <SQLParserResult.h>
 
 #include "StateLogWriter.hpp"
+#include "GIDIndexWriter.hpp"
+#include "GIDIndexReader.hpp"
 #include "cluster/RowCluster.hpp"
 
 #include "StateChanger.hpp"
@@ -96,15 +98,20 @@ namespace ultraverse::state::v2 {
     
             if (lowest_name.empty()) {
                 _logger->error("cannot find candidate column");
+                
+                return "";
             } else {
                 _logger->info("candidate column found: {}", lowest_name);
                 
                 for (auto &range: candidate_maps[lowest_name]) {
                     _logger->info("    (WHERE {})", range.MakeWhereQuery(lowest_name));
                 }
+                
+                return lowest_name;
             }
         }
     
+        return "";
     }
     
     std::vector<CandidateColumn>
@@ -164,11 +171,14 @@ namespace ultraverse::state::v2 {
         _mode = OperationMode::PREPARE;
         
         std::mutex mutex;
+        std::mutex queueMutex;
         TaskExecutor taskExecutor(8);
         StateLogWriter stateLogWriter(_plan.stateLogPath(), _plan.stateLogName());
+        GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
         createIntermediateDB();
         
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
+        std::atomic_bool isRunning = true;
         
         if (!_plan.dbDumpPath().empty()) {
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
@@ -176,11 +186,34 @@ namespace ultraverse::state::v2 {
         
         _reader.open();
         
-        while (_reader.next()) {
+        std::atomic_int64_t count = 0;
+        
+        std::thread queueConsumerThread([this, &queueMutex, &taskQueue, &isRunning]() {
+            while (!taskQueue.empty() || isRunning) {
+                while (!taskQueue.empty()) {
+                    // _logger->trace("{} task(s) left", taskQueue.size());
+                    std::scoped_lock lock(queueMutex);
+                    auto task = std::move(taskQueue.front());
+                    auto future = task->get_future();
+                    future.wait();
+                    taskQueue.pop();
+                }
+                using namespace std::chrono_literals;
+                std::this_thread::sleep_for(100ms);
+            }
+        });
+        
+        while (_reader.nextHeader()) {
             auto transactionHeader = _reader.txnHeader();
+            auto pos = _reader.pos() - sizeof(TransactionHeader);
+            
+            _reader.nextTransaction();
             auto transaction = _reader.txnBody();
             auto gid = transactionHeader->gid;
             auto flags = transactionHeader->flags;
+            
+            gidIndexWriter.append(pos);
+            
             _logger->trace("read gid {}; flags {}", gid, flags);
             
             if (gid < _plan.startGid()) {
@@ -192,7 +225,7 @@ namespace ultraverse::state::v2 {
                 break;
             }
     
-            auto task = taskExecutor.post<int>([this, &mutex, &stateLogWriter, transaction, gid, flags]() {
+            auto task = taskExecutor.post<int>([this, &mutex, &stateLogWriter, &count, transaction, gid, flags]() {
                 if (!isTransactionRelatedToPlan(transaction)) {
                     _logger->trace("skipping transaction #{}", gid);
                     return 0;
@@ -247,23 +280,21 @@ namespace ultraverse::state::v2 {
                     }
     
                     if (isTransactionRelatedToCluster(transaction)) {
-                        expandClusterMap(_rowCluster, *transaction, CLUSTER_EXPAND_FLAG_STRICT | CLUSTER_EXPAND_FLAG_WILDCARD);
+                        expandClusterMap(_rowCluster, *transaction, CLUSTER_EXPAND_FLAG_WILDCARD);
                     }
                 }
     
                 return 0;
             });
-            
-            taskQueue.emplace(std::move(task));
+    
+            {
+                std::scoped_lock lock(queueMutex);
+                taskQueue.emplace(std::move(task));
+            }
         }
         
-        while (!taskQueue.empty()) {
-            _logger->trace("{} task(s) left", taskQueue.size());
-            auto task = std::move(taskQueue.front());
-            auto future = task->get_future();
-            future.wait();
-            taskQueue.pop();
-        }
+        isRunning = false;
+        queueConsumerThread.join();
         
         for (auto &pair: _rowCluster.keyMap()) {
             _logger->info("MERGING CLUSTER: {}", pair.first);
@@ -287,6 +318,8 @@ namespace ultraverse::state::v2 {
         
         TaskExecutor taskExecutor(8);
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
+    
+        GIDIndexReader gidIndexReader(_plan.stateLogPath(), _plan.stateLogName());
         
         auto stateLogWriter = _plan.writeStateLog() ?
             std::make_unique<StateLogWriter>(_plan.stateLogPath(), fmt::format("{}_statechange_{}", _plan.stateLogName(), (int) time(nullptr))) :
@@ -313,17 +346,88 @@ namespace ultraverse::state::v2 {
         _reader >> _rowCluster;
         
         // _hashWatcher = std::make_unique<HashWatcher>(_plan.binlogPath(), _plan.stateLogName() + ".index", _intermediateDBName);
-        
+    
         createIntermediateDB();
     
         if (!_plan.dbDumpPath().empty()) {
+            auto load_backup_start = std::chrono::steady_clock::now();
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
+            auto load_backup_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = load_backup_end - load_backup_start;
+            _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
         }
     
         _logger->info("opening state log");
         _reader.open();
         
         _isRunning = true;
+        
+        std::set<gid_t> gids;
+    
+        auto phase1_start = std::chrono::steady_clock::now();
+        
+        for (const auto gid: _plan.rollbackGids()) {
+            auto pos = gidIndexReader.offsetOf(gid);
+            _reader.seek(pos);
+            
+            if (!_reader.next()) {
+                throw std::runtime_error(fmt::format("cannot read transaction data at {} (gid={})", pos, gid));
+            }
+    
+            auto transaction = std::move(_reader.txnBody());
+            
+            for (const auto &keyColumn: _plan.keyColumns()) {
+                auto &ranges = _keyRanges[keyColumn];
+                auto newRanges = _rowCluster.getKeyRangeOf2(*transaction, keyColumn, _context->foreignKeys);
+                ranges.insert(
+                    ranges.end(),
+                    newRanges.begin(), newRanges.end()
+                );
+            }
+    
+            for (auto &query: transaction->queries()) {
+                _columnSetHashes->push_back(std::hash<ColumnSet>{}(query->writeSet()));
+    
+                // FIXME
+                if (query->type() == Query::INSERT || query->type() == Query::DELETE) {
+                    _tableGraph->addRelationship(query->writeSet(), query->writeSet());
+                }
+            }
+        }
+        
+        for (const auto &pair: _plan.userQueries()) {
+            auto userQuery = std::move(loadUserQuery(pair.second));
+    
+            for (const auto &keyColumn: _plan.keyColumns()) {
+                auto &ranges = _keyRanges[keyColumn];
+                auto newRanges = _rowCluster.getKeyRangeOf(*userQuery, keyColumn, _context->foreignKeys);
+                ranges.insert(
+                    ranges.end(),
+                    newRanges.begin(), newRanges.end()
+                );
+            }
+    
+            gids.insert(pair.first);
+        }
+    
+    
+        for (gid_t i = 0; i < _plan.lowestGidAvailable(); i++) {
+            gids.insert(i);
+        }
+        
+        for (const auto &pair: _keyRanges) {
+            for (auto &range: pair.second) {
+                gids.insert(
+                    range.second.begin(), range.second.end()
+                );
+            }
+        }
+    
+        {
+            auto phase1_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = phase1_end - phase1_start;
+            _phase1Time = time.count();
+        }
         
         auto addTransaction = [this, &taskExecutor, &taskQueue] (std::shared_ptr<Transaction> transaction) {
             auto node = _stateGraph->addTransaction(transaction);
@@ -340,36 +444,21 @@ namespace ultraverse::state::v2 {
                 taskQueue.push(std::move(task));
             }
         };
+    
+        auto phase2_main_start = std::chrono::steady_clock::now();
         
-        while (_reader.next()) {
+        for (const auto gid: gids) {
+            auto pos = gidIndexReader.offsetOf(gid);
+            _reader.seek(pos);
+    
+            if (!_reader.next()) {
+                throw std::runtime_error(fmt::format("cannot read transaction data at {} (gid={})", pos, gid));
+            }
+            
             auto transactionHeader = _reader.txnHeader();
-            auto gid = transactionHeader->gid;
             auto flags = transactionHeader->flags;
             auto transaction = _reader.txnBody();
             _logger->trace("read gid {}; flags {}", gid, flags);
-            
-            if (_plan.isRollbackGid(transactionHeader->gid)) {
-                _logger->info("rollback target found");
-                _rollbackTarget = _reader.txnBody();
-                
-                for (const auto &keyColumn: _plan.keyColumns()) {
-                    auto &ranges = _keyRanges[keyColumn];
-                    auto newRanges = _rowCluster.getKeyRangeOf(*_rollbackTarget, keyColumn, _context->foreignKeys);
-                    ranges.insert(
-                        ranges.end(),
-                        newRanges.begin(), newRanges.end()
-                    );
-                }
-                
-                for (auto &query: _rollbackTarget->queries()) {
-                    _columnSetHashes->push_back(std::hash<ColumnSet>{}(query->writeSet()));
-                    
-                    // FIXME
-                    if (query->type() == Query::INSERT || query->type() == Query::DELETE) {
-                        _tableGraph->addRelationship(query->writeSet(), query->writeSet());
-                    }
-                }
-            }
             
             if (_plan.isRollbackGid(transactionHeader->gid) || _plan.hasUserQuery(transactionHeader->gid)) {
                 _isClusterReady = true;
@@ -397,15 +486,6 @@ namespace ultraverse::state::v2 {
                 auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transactionHeader->gid]));
                 _logger->info("executing user-provided query");
     
-                for (const auto &keyColumn: _plan.keyColumns()) {
-                    auto &ranges = _keyRanges[keyColumn];
-                    auto newRanges = _rowCluster.getKeyRangeOf(*userQuery, keyColumn, _context->foreignKeys);
-                    ranges.insert(
-                        ranges.end(),
-                        newRanges.begin(), newRanges.end()
-                    );
-                }
-                
                 addTransaction(userQuery);
                 writeStateLog(userQuery);
             }
@@ -423,6 +503,12 @@ namespace ultraverse::state::v2 {
         for (auto &pair: _rowCluster2.keyMap()) {
             _logger->info("MERGING CLUSTER: {}", pair.first);
             _rowCluster2.mergeCluster(pair.first);
+        }
+    
+        {
+            auto phase2_main_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = phase2_main_end - phase2_main_start;
+            _phase2Time = time.count();
         }
         
         if (_hashWatcher != nullptr) {
@@ -525,7 +611,10 @@ namespace ultraverse::state::v2 {
         
         queryBuilder << fmt::format("SET FOREIGN_KEY_CHECKS = TRUE;\n\n");
     
-        _logger->trace("TODO: EXECUTE QUERY:\n{}", queryBuilder.str());
+        _logger->info("TODO: EXECUTE QUERY:\n{}", queryBuilder.str());
+        
+        _logger->info("total {} queries replayed", _replayedQueries);
+        _logger->info("phase1 {}s, phase2 {}s", _phase1Time, _phase2Time);
     
         taskExecutor.shutdown();
     }
@@ -989,10 +1078,10 @@ namespace ultraverse::state::v2 {
                 (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
             
             const bool skipQuery =
-                (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
-                !(needsForceExecution                               ||
-                isDDL                                               ||
-                (isRelatedWithCluster && isRelatedWithColumnGraph));
+                    (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
+                    !(needsForceExecution                               ||
+                    isDDL                                               ||
+                    (isRelatedWithCluster && isRelatedWithColumnGraph));
             
             return !skipQuery;
         })) {
@@ -1024,10 +1113,10 @@ namespace ultraverse::state::v2 {
                     (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
                 
                 const bool skipQuery =
-                    (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
-                    !(needsForceExecution                               ||
-                    isDDL                                               ||
-                    (isRelatedWithCluster && isRelatedWithColumnGraph));
+                      (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
+                      !(needsForceExecution                               ||
+                      isDDL                                               ||
+                      (isRelatedWithCluster && isRelatedWithColumnGraph));
     
     
                 if (isRelatedWithColumnGraph && query->type() == Query::INSERT) {
@@ -1084,7 +1173,13 @@ namespace ultraverse::state::v2 {
                     goto NEXT_QUERY;
                 }
                 
-                __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
+                try {
+                    __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
+                    _replayedQueries++;
+                } catch (std::exception &e) {
+                    dbHandle.executeQuery("ROLLBACK");
+                    goto END_TRANSACTION;
+                }
                 
                 if (!isDDL && transaction->gid() > _plan.lowestGidAvailable() || transaction->flags() & Transaction::FLAG_FORCE_EXECUTE) {
                     std::scoped_lock lock(_changedTablesMutex);
@@ -1101,6 +1196,8 @@ namespace ultraverse::state::v2 {
         // _logger->trace("[#{}->#{}] finalizing transaction", rootNodeId, nodeId);
         dbHandle.executeQuery("COMMIT");
         // _logger->debug("[#{}->#{}] releasing dbHandle", rootNodeId, nodeId);
+        
+        END_TRANSACTION: ;
     
         if (!(_mode == OperationMode::NORMAL && isTargetTransaction) && isTransactionRelatedToCluster(transaction)) {
             expandClusterMap(_rowCluster2, *transaction, CLUSTER_EXPAND_FLAG_INCLUDE_FK | CLUSTER_EXPAND_FLAG_DONT_EXPAND);
@@ -1126,12 +1223,20 @@ namespace ultraverse::state::v2 {
         if (dbHandle.executeQuery(fmt::format("SET TIMESTAMP={}", query->timestamp())) != 0) {
             _logger->warn("[#{}->#{}] failed to set timestamp", rootNodeId, nodeId);
         }
+    
+        for (auto &sqlvar: query->sqlVarMap()) {
+            std::string data;
+            sqlvar.second.Get(data);
+            
+            _logger->trace("setting SQLVAR: @{} => {}", sqlvar.first, data);
+            
+            dbHandle.executeQuery(fmt::format("SET @{} = {}", sqlvar.first, data));
+        }
         
         if (dbHandle.executeQuery(statement) != 0) {
             // TODO: 오류 발생 시 transaction 자체를 abort하되, 다른 트랜잭션은 돌아가도록
             _logger->error("[#{}->#{}] query execution failed: {}", rootNodeId, nodeId,
                            mysql_error(dbHandle));
-            dbHandle.executeQuery("ROLLBACK");
             throw std::runtime_error(mysql_error(dbHandle));
         }
         

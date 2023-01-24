@@ -121,4 +121,8 @@ namespace ultraverse::state::v2 {
     std::vector<std::string> &Query::changeSet() {
         return _changeSet;
     }
+    
+    std::unordered_map<std::string, StateData> &Query::sqlVarMap() {
+        return _sqlVarMap;
+    }
 }

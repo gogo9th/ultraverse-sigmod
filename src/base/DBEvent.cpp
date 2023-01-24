@@ -121,6 +121,7 @@ namespace ultraverse::base {
                 std::string strValue(clause->value->name);
                 
                 if (strValue.find("__ULTRAVERSE_SQLVAR__")) {
+                    auto varName = utility::replaceAll(strValue, "__ULTRAVERSE_SQLVAR__", "");
                     auto *stateItem = findStateItem(clause->column);
                     
                     if (stateItem == nullptr) {
@@ -131,6 +132,7 @@ namespace ultraverse::base {
                         updateExpr.data_list.push_back(value);
                     } else {
                         updateExpr.data_list.push_back(stateItem->data_list[0]);
+                        _sqlVarMap[varName] = stateItem->data_list[0];
                     }
                 } else {
                     StateData value;
@@ -246,6 +248,7 @@ namespace ultraverse::base {
         if (expr->isType(hsql::kExprLiteralString)) {
             std::string strValue(expr->name);
             if (strValue.find("__ULTRAVERSE_SQLVAR__") != std::string::npos) {
+                auto varName = utility::replaceAll(strValue, "__ULTRAVERSE_SQLVAR__", "");
                 auto stateItem = findStateItem(parent.name);
                 if (stateItem == nullptr) {
                     _logger->warn("SQLVAR {} referenced but not found", strValue);
@@ -255,6 +258,7 @@ namespace ultraverse::base {
                     parent.data_list.push_back(value);
                 } else {
                     parent.data_list.push_back(stateItem->data_list[0]);
+                    _sqlVarMap[varName] = stateItem->data_list[0];
                 }
             } else {
                 StateData value;
@@ -301,6 +305,10 @@ namespace ultraverse::base {
     
     std::vector<StateItem> &QueryEventBase::whereSet() {
         return _whereSet;
+    }
+    
+    std::unordered_map<std::string, StateData> &QueryEventBase::sqlVarMap() {
+        return _sqlVarMap;
     }
     
     std::vector<int16_t> QueryEventBase::tokens() const {

@@ -101,6 +101,8 @@ namespace ultraverse::base {
         std::vector<StateItem> &itemSet();
         std::vector<StateItem> &whereSet();
         
+        std::unordered_map<std::string, StateData> &sqlVarMap();
+        
     protected:
         LoggerPtr _logger;
         
@@ -122,6 +124,8 @@ namespace ultraverse::base {
     
         std::vector<StateItem> _itemSet;
         std::vector<StateItem> _whereSet;
+        
+        std::unordered_map<std::string, StateData> _sqlVarMap;
         
         hsql::SQLParserResult _parseResult;
     };

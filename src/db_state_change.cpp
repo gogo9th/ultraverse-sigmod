@@ -112,6 +112,14 @@ namespace ultraverse {
             threadNum = std::stoi(getArg('C'));
         }
         
+        if (isArgSet('v')) {
+            setLogLevel(spdlog::level::debug);
+        }
+        
+        if (isArgSet('V')) {
+            setLogLevel(spdlog::level::trace);
+        }
+        
         if (
             getEnv("DB_HOST").empty() ||
             getEnv("DB_PORT").empty() ||

@@ -1,9 +1,13 @@
+#include <queue>
+
 #include <boost/graph/adjacency_list.hpp>
 #include <fmt/format.h>
 
 #include "RowCluster.hpp"
 #include "mariadb/state/StateUserQuery.h"
 #include "utils/StringUtil.hpp"
+
+#include "base/TaskExecutor.hpp"
 
 namespace ultraverse::state::v2 {
     RowCluster::RowCluster():
@@ -32,6 +36,7 @@ namespace ultraverse::state::v2 {
         auto size = cluster.size();
         auto nodeIdx = add_vertex({ size - 1, false }, graph);
     
+        /*
     
         boost::graph_traits<ClusterGraph>::vertex_iterator vi, viEnd, next;
         boost::tie(vi, viEnd) = vertices(graph);
@@ -46,6 +51,7 @@ namespace ultraverse::state::v2 {
                 break;
             }
         }
+         */
     }
     
     void RowCluster::setWildcard(const std::string &columnName, bool wildcard) {
@@ -182,36 +188,61 @@ namespace ultraverse::state::v2 {
             );
             
             visitNode(*vi, range, gidList);
-            newCluster.emplace_back(std::make_pair(range, std::move(gidList)));
+            newCluster.emplace_back(range, std::move(gidList));
         }
         
         cluster = newCluster;
         _clusterGraph[columnName].clear();
     
         bool rerun = false;
+    
+        {
+            auto &graph = _clusterGraph[columnName];
+            std::mutex mutex;
+            TaskExecutor taskExecutor(8);
+            std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
         
-        for (int i = 0; i < cluster.size(); i++) {
-            auto nodeIdx = add_vertex({i, false}, _clusterGraph[columnName]);
+            for (int i = 0; i < cluster.size(); i++) {
+                add_vertex({i, false}, graph);
+            }
+    
+            for (int i = 0; i < cluster.size(); i++) {
+                auto task = taskExecutor.post<int>([this, &mutex, &graph, &cluster, &rerun, i]() {
+                    _logger->trace("reconstructing graph.. {} / {}", i, cluster.size());
+                
+                    boost::graph_traits<ClusterGraph>::vertex_iterator vi, viEnd, next;
+                    boost::tie(vi, viEnd) = vertices(graph);
+                
+                    for (next = vi; vi != viEnd; vi = next) {
+                        ++next;
+                    
+                    
+                        const auto &pair = graph[*vi];
+                        int index = pair.first;
+                    
+                        if (i == index) {
+                            continue;
+                        }
+                    
+                        if (StateRange::AND_FAST(*cluster[i].first, *(cluster[index].first))) {
+                            std::scoped_lock<std::mutex> lock(mutex);
+                            rerun = true;
+                            add_edge(*vi, i, graph);
+                            break;
+                        }
+                    }
+                    
+                    return 0;
+                });
+                
+                taskQueue.emplace(std::move(task));
+            }
             
-            boost::graph_traits<ClusterGraph>::vertex_iterator vi, viEnd, next;
-            boost::tie(vi, viEnd) = vertices(_clusterGraph[columnName]);
-            
-            for (next = vi; vi != viEnd; vi = next) {
-                ++next;
-                
-                
-                const auto &pair = _clusterGraph[columnName][*vi];
-                int index = pair.first;
-                
-                if (i == index) {
-                    continue;
-                }
-                
-                if (StateRange::AND_FAST(*cluster[i].first, *(cluster[index].first))) {
-                    rerun = true;
-                    add_edge(*vi, nodeIdx, _clusterGraph[columnName]);
-                    break;
-                }
+            while (!taskQueue.empty()) {
+                auto task = std::move(taskQueue.front());
+                auto future = task->get_future();
+                future.wait();
+                taskQueue.pop();
             }
         }
         
@@ -244,14 +275,28 @@ namespace ultraverse::state::v2 {
         return _clusterMap;
     }
     
-    std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> RowCluster::getKeyRangeOf(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys) {
+    std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>>
+    RowCluster::getKeyRangeOf(Transaction &transaction, const std::string &keyColumn,
+                              const std::vector<ForeignKey> &foreignKeys) {
         std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> keyRanges;
         
         for (auto &query: transaction.queries()) {
             for (auto &range: _clusterMap.at(keyColumn)) {
-                if (isTransactionRelated(transaction.gid(), range.second)) {
+                if (isQueryRelated(keyColumn, range.first, *query, foreignKeys, _aliases)) {
                     keyRanges.push_back(range);
                 }
+            }
+        }
+        
+        return keyRanges;
+    }
+    
+    std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> RowCluster::getKeyRangeOf2(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys) {
+        std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> keyRanges;
+        
+        for (auto &range: _clusterMap.at(keyColumn)) {
+            if (isTransactionRelated(transaction.gid(), range.second)) {
+                keyRanges.push_back(range);
             }
         }
         
@@ -369,6 +414,8 @@ namespace ultraverse::state::v2 {
             }
             // dst._clusterMap[key] = StateRange::AND(this->_clusterMap.at(key), other._clusterMap.at(key));
         }
+        
+        return std::move(dst);
     }
     
     RowCluster RowCluster::operator|(const RowCluster &other) const {
@@ -389,5 +436,7 @@ namespace ultraverse::state::v2 {
                 dst._clusterMap[it.first] = it.second;
             }
         }
+        
+        return std::move(dst);
     }
 }

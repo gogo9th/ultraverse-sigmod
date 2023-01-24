@@ -6,7 +6,10 @@
 #include <algorithm>
 #include <sstream>
 
+#include <openssl/evp.h>
+
 #include "StateHash.hpp"
+
 
 namespace ultraverse::state {
     std::vector<StateHash::BigNumPtr> StateHash::generateModulo(int count) {
@@ -104,16 +107,20 @@ namespace ultraverse::state {
     
     StateHash::HashValue StateHash::calculateHash(StateHash::Record &record) {
         HashValue hashValue;
-        MD5_CTX md5Ctx;
-        MD5_Init(&md5Ctx);
-        MD5_Update(&md5Ctx, record.c_str(), record.size());
-        MD5_Final(hashValue.data(), &md5Ctx);
         
+        const EVP_MD *md5 = EVP_get_digestbyname("md5");
+        EVP_MD_CTX *md5Ctx = EVP_MD_CTX_new();
+        EVP_DigestInit_ex2(md5Ctx, md5, nullptr);
+        EVP_DigestUpdate(md5Ctx, record.c_str(), record.size());
+        EVP_DigestFinal_ex(md5Ctx, hashValue.data(), nullptr);
+        EVP_MD_CTX_free(md5Ctx);
+       
         return hashValue;
     }
     
     StateHash::BigNumPtr StateHash::prime(StateHash::HashValue digest, const StateHash::BigNumPtr &modulo) {
-        MD5_CTX md5Ctx;
+        const EVP_MD *md5 = EVP_get_digestbyname("md5");
+        std::shared_ptr<EVP_MD_CTX> md5Ctx;
         BigNumPtr bn;
         
         while (true) {
@@ -123,9 +130,10 @@ namespace ultraverse::state {
                 break;
             }
             
-            MD5_Init(&md5Ctx);
-            MD5_Update(&md5Ctx, digest.data(), digest.size());
-            MD5_Final(digest.data(), &md5Ctx);
+            md5Ctx = std::shared_ptr<EVP_MD_CTX>(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+            EVP_DigestInit_ex2(md5Ctx.get(), md5, nullptr);
+            EVP_DigestUpdate(md5Ctx.get(), digest.data(), digest.size());
+            EVP_DigestFinal_ex(md5Ctx.get(), digest.data(), nullptr);
         }
         
         return bn;

@@ -23,6 +23,16 @@ namespace ultraverse::state::v2 {
         void open();
         void close();
         
+        void reset();
+        
+        uint64_t pos();
+        void seek(uint64_t pos);
+        
+        bool nextHeader();
+        bool nextTransaction();
+        
+        void skipTransaction();
+        
         bool next();
         
         std::shared_ptr<TransactionHeader> txnHeader();
