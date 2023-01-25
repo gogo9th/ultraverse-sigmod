@@ -69,3 +69,50 @@ docker compose up -d
 # 테스트가 끝나면, MariaDB 도커 인스턴스를 종료합니다.
 docker compose stop
 ```
+
+# NOTE
+
+## 키 컬럼 / 클러스터 설정 예시
+
+`01-create-cluster.sh`와 `02-testcase-main.sh` 설정 시 참조하여 주십시오.
+
+### TATP
+
+```shell
+db_state_change \
+        -i benchbase \
+        -d benchbase \
+        -k "subscriber.s_id" \
+        -a "subscriber.sub_nbr=subscriber.s_id" \
+        # (actions ...) 
+```
+
+### Epinions
+
+```shell
+db_state_change \
+        -i benchbase \
+        -d benchbase \
+        -k "useracct.u_id,item2.i_id" \
+        # (actions ...) 
+```
+
+### SEATS
+
+```shell
+db_state_change \
+        -i benchbase \
+        -d benchbase \
+        -k "flight.f_id,customer.c_id" \
+        # (actions ...) 
+```
+
+### TPC-C
+
+```shell
+db_state_change \
+        -i benchbase \
+        -d benchbase \
+        -k "warehouse.w_id" \
+        # (actions ...) 
+```
