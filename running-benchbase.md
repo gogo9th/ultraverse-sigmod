@@ -72,7 +72,7 @@ docker compose stop
 
 # NOTE
 
-## 키 컬럼 / 클러스터 설정 예시
+## 키 컬럼 / alias 설정 예시
 
 `01-create-cluster.sh`와 `02-testcase-main.sh` 설정 시 참조하여 주십시오.
 
