@@ -31,6 +31,18 @@ $ git submodule update
 $ mkdir build && cd build 
 $ cmake ..
 $ make -j8 
+
+$ vim /etc/mysql/my.cnf.d/server.cnf
+
+[mariadb]
+log-bin=myserver-binlog
+binlog_format=ROW
+binlog_row_image=FULL
+binlog_row_metadata=FULL
+binlog-checksum=NONE
+max_binlog_size=100M
+
+$ systemctl restart mariadb
 ```
 
 ## 4. 벤치마크 부트스트래핑
@@ -40,6 +52,9 @@ export ULTRAVERSE_HOME=$HOME/ultraverse/build/src
 export BENCHBASE_HOME=$HOME/benchbase
 
 cd ultraverse/scripts/benchbase
+
+# 사용중이던 MySQL을 끕니다
+service mysql stop
 
 # epinions / 1m 환경을 부트스트래핑 합니다
 ./bootstrap.pl epinions 1m
