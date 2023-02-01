@@ -115,7 +115,7 @@ namespace ultraverse::state::v2 {
     }
     
     void RowCluster::mergeCluster(const std::string &columnName) {
-        if (_wildcardMap[columnName]) {
+        if (_wildcardMap.find(columnName) != _wildcardMap.end()) {
             mergeClusterAll(columnName);
         } else {
             mergeClusterUsingGraph(columnName);

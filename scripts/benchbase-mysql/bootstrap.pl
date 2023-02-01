@@ -200,7 +200,7 @@ sub bootstrap {
         exit 1;
     };
 
-    sleep 5;
+    sleep 10;
 
     eval {
         say colored("preparing ", "bold white"), 

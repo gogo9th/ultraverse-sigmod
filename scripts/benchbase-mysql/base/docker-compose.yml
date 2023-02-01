@@ -2,19 +2,19 @@ version: "3.1"
 
 services:
   db:
-    image: mariadb:10.9.4
+    image: mysql:8.0.32
     environment:
       TZ: Asia/Seoul
-      MARIADB_DATABASE: benchbase
-      MARIADB_ROOT_PASSWORD: password
-      MARIADB_USER: admin
-      MARIADB_PASSWORD: password
-    expose: 
+      MYSQL_DATABASE: benchbase
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: password
+    expose:
       - 3306
     ports:
       - 3306:3306
     restart: unless-stopped
-    volumes: 
+    volumes:
       - ./db_data:/var/lib/mysql
       - ./mysql.cnf.d:/etc/mysql/conf.d
     network_mode: default

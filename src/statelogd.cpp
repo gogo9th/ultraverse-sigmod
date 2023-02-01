@@ -199,12 +199,17 @@ public:
     
     void processQueryEvent(std::shared_ptr<mariadb::QueryEvent> event) {
         auto pendingQuery = std::make_shared<state::v2::Query>();
-
+        
+        if (event->statement() == "BEGIN") {
+            return;
+        }
+        
         pendingQuery->setTimestamp(event->timestamp());
         pendingQuery->setDatabase(event->database());
         pendingQuery->setStatement(event->statement());
 
         event->tokenize();
+        
         
         if (event->isDDL()) {
             event->parse();

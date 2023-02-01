@@ -75,13 +75,13 @@ namespace ultraverse::mariadb {
             _currentEvent = readXIDEvent(header);
         } else if (eventType == internal::TABLE_MAP_EVENT) {
             _currentEvent = readTableMapEvent(header);
-        } else if (eventType == internal::ANNOTATE_ROWS_EVENT) {
+        } else if (eventType == internal::ROWS_QUERY_LOG_EVENT) {
             _currentEvent = readRowAnnotationEvent(header);
-        } else if (eventType == internal::WRITE_ROWS_EVENT_V1) {
+        } else if (eventType == internal::WRITE_ROWS_EVENT) {
             _currentEvent = readRowEvent(header, RowEvent::INSERT, false);
-        } else if (eventType == internal::UPDATE_ROWS_EVENT_V1) {
+        } else if (eventType == internal::UPDATE_ROWS_EVENT) {
             _currentEvent = readRowEvent(header, RowEvent::UPDATE, false);
-        } else if (eventType == internal::DELETE_ROWS_EVENT_V1) {
+        } else if (eventType == internal::DELETE_ROWS_EVENT) {
             _currentEvent = readRowEvent(header, RowEvent::DELETE, false);
         } else {
             _logger->trace("unsupported event type: {}", (int) eventType);
@@ -218,8 +218,12 @@ namespace ultraverse::mariadb {
         for (int i = 0; i < columns; i++) {
             using namespace internal;
             switch (columnTypeDef.get()[i]) {
+                case MYSQL_TYPE_DECIMAL:
+                    columnTypeDef2.emplace_back(column_type::STRING, -1);
+                    break;
+                    
                 case MYSQL_TYPE_STRING: {
-                    uint8_t size = metadata.get()[metadataPos + 1];
+                    uint8_t size = metadata.get()[metadataPos + 2];
                     metadataPos += 2;
                     
                     columnTypeDef2.emplace_back(column_type::STRING, size);
@@ -250,13 +254,14 @@ namespace ultraverse::mariadb {
                 case MYSQL_TYPE_ENUM:
                 case MYSQL_TYPE_SET:
                 case MYSQL_TYPE_NEWDECIMAL:
-                case MYSQL_TYPE_DECIMAL:
                 {
                     metadataPos += 2;
     
                     columnTypeDef2.emplace_back(column_type::STRING, -1);
                 }
                     break;
+    
+
                 
                 case MYSQL_TYPE_LONG_BLOB:
                 case MYSQL_TYPE_MEDIUM_BLOB:
@@ -390,8 +395,10 @@ namespace ultraverse::mariadb {
     
     std::shared_ptr<RowQueryEvent>
     MySQLBinaryLogReader::readRowAnnotationEvent(std::shared_ptr<internal::EventHeader> header) {
-        auto queryLength = header->event_size - sizeof(internal::EventHeader);
-        
+        auto queryLength = header->event_size - sizeof(internal::EventHeader) - 1;
+        uint8_t unused = 0;
+        _stream.read((char *) &unused, sizeof(uint8_t));
+
         auto queryCStr = std::shared_ptr<uint8_t>(new uint8_t[queryLength]);
         _stream.read((char *) queryCStr.get(), (int) queryLength);
         
@@ -409,6 +416,7 @@ namespace ultraverse::mariadb {
         _stream.read((char *) postHeader.get(), sizeof(internal::RowEventPostHeader));
         totalRead += sizeof(internal::RowEventPostHeader);
         
+        
         if (isV2) {
             auto postHeaderV2 = std::make_shared<internal::RowEventPostHeaderV2>();
             _stream.read((char *) postHeaderV2.get(), sizeof(internal::RowEventPostHeaderV2));
@@ -421,11 +429,14 @@ namespace ultraverse::mariadb {
         
         uint64_t tableId = (postHeader->table_id_high << 4) | postHeader->table_id_low;
         _logger->trace("tableId: {}", (int) tableId);
+    
+        uint16_t FIXME_UNKNOWN_FIELD = 0;
+        _stream.read((char *) &FIXME_UNKNOWN_FIELD, sizeof(uint16_t));
+        totalRead += sizeof(uint16_t);
         
         uint8_t columns = 0;
         _stream.read((char *) &columns, sizeof(uint8_t));
         totalRead += sizeof(uint8_t);
-        
         
         auto colsSize = (int) ((columns + 7) / 8);
         
@@ -441,6 +452,7 @@ namespace ultraverse::mariadb {
         }
         
         auto dataSize = header->event_size - totalRead;
+        auto eventSize = header->event_size;
         auto data = std::shared_ptr<uint8_t>(new uint8_t[dataSize]);
         _stream.read((char *) data.get(), dataSize);
         

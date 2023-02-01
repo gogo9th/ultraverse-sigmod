@@ -22,25 +22,24 @@ namespace ultraverse::mariadb {
         void terminate();
         
     protected:
-        const std::string basePath() const;
         virtual std::unique_ptr<BinaryLogReaderBase> openBinaryLog(const std::string &logFile) = 0;
     
-    private:
         void updateIndex();
         void openLog(const std::string &logFile);
-        
+    
         bool pollNext();
-        
+    
         LoggerPtr _logger;
-        
+    
         std::string _basePath;
         std::string _indexFile;
         std::vector<std::string> _logFileList;
         // TOOD: currentFile or currentIndex;
         int _currentIndex;
-        
+    
         bool terminateSignal = false;
-        
+    
+    private:
         std::unique_ptr<BinaryLogReaderBase> _binaryLogReader;
     };
     

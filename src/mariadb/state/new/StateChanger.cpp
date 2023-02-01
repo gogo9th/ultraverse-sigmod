@@ -621,6 +621,11 @@ namespace ultraverse::state::v2 {
     
     bool StateChanger::isQueryRelatedWithKeyColumns(Query &query) {
         const auto &keyColumns = _plan.keyColumns();
+        
+        if (query.writeSet().empty()) {
+            return true;
+        }
+        
         const std::string tableName = StateUserQuery::SplitDBNameAndTableName(
             *(query.writeSet().begin())
         )[0];

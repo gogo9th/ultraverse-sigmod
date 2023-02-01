@@ -46,6 +46,9 @@ $ sudo chown user:group myserver-binlog*
 # (see ./statelogd -h for more information)
 $ ./statelogd -b myserver-binlog.index -o benchbase
 
+# use -M flag if you're running MySQL
+$ ./statelogd -M -b myserver-binlog.index -o benchbase
+
 # Make cluster map & table map before performing change state. 
 $ ./db_state_change -i benchbase -d benchbase -k "item2.i_id,useracct.u_id" make_cluster
 
