@@ -13,7 +13,7 @@ pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-add_compile_options(-msse4.2 -O2)
+# add_compile_options(-msse4.2 -O2)
 # add_link_options(-fsanitize=leak)
 
 set(ULTRAVERSE_DEPENDENCIES
@@ -106,11 +106,15 @@ set(LIBULTRAVERSE_MARIADB_SRCS
     mariadb/DBHandle.cpp
     mariadb/DBEvent.cpp
     
-    mariadb/binlog/BinaryLogReader.cpp
-    mariadb/binlog/BinaryLogReader.hpp
-    mariadb/binlog/BinaryLogReader.cpp
-    mariadb/binlog/BinaryLogReader.hpp
+    mariadb/binlog/MariaDBBinaryLogReader.cpp
+    mariadb/binlog/MariaDBBinaryLogReader.hpp
+    mariadb/binlog/MySQLBinaryLogReader.cpp
+    mariadb/binlog/MySQLBinaryLogReader.hpp
     mariadb/binlog/BinaryLogEvents.hpp
+    mariadb/binlog/BinaryLogReader.hpp
+    mariadb/binlog/BinaryLogReader.cpp
+    mariadb/binlog/BinaryLogSequentialReader.hpp
+    mariadb/binlog/BinaryLogSequentialReader.cpp
 )
 
 

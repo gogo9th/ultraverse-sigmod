@@ -1,9 +1,9 @@
 //
-// Created by cheesekun on 8/12/22.
+// Created by cheesekun on 2/1/23.
 //
 
-#ifndef ULTRAVERSE_MARIADB_BINARYLOGPARSER_HPP
-#define ULTRAVERSE_MARIADB_BINARYLOGPARSER_HPP
+#ifndef ULTRAVERSE_BINARYLOGREADER_HPP
+#define ULTRAVERSE_BINARYLOGREADER_HPP
 
 #include <cstdint>
 
@@ -13,92 +13,24 @@
 #include <memory>
 
 #include "base/DBEvent.hpp"
-#include "utils/log.hpp"
-
 #include "BinaryLogEvents.hpp"
 
 namespace ultraverse::mariadb {
-    static const uint8_t BINLOG_MAGIC[4] = {0xfe, 0x62, 0x69, 0x6e};
-    
-    class BinaryLogReader {
+    class BinaryLogReaderBase {
     public:
-        BinaryLogReader(const std::string &filename);
+        BinaryLogReaderBase(const std::string &filename);
         
-        void open();
-        void close();
-        
-        bool seek(int64_t position);
-        bool next();
-        
-        int pos();
-        
-        std::shared_ptr<base::DBEvent> currentEvent();
-        
-    private:
-        bool isMagicValid();
-        
-        std::shared_ptr<internal::EventHeader> readHeader();
-        
-        void
-        readFormatDescriptionEvent(std::shared_ptr<internal::EventHeader> header);
-        
-        std::shared_ptr<base::QueryEventBase>
-        readQueryEvent(std::shared_ptr<internal::EventHeader> header);
-        
-        std::shared_ptr<base::TransactionIDEventBase>
-        readXIDEvent(std::shared_ptr<internal::EventHeader> header);
-        
-        std::shared_ptr<TableMapEvent>
-        readTableMapEvent(std::shared_ptr<internal::EventHeader> header);
-        
-        std::shared_ptr<RowQueryEvent>
-        readRowAnnotationEvent(std::shared_ptr<internal::EventHeader> header);
-        
-        std::shared_ptr<RowEvent>
-        readRowEvent(std::shared_ptr<internal::EventHeader> header, RowEvent::Type eventType, bool isV2);
-        
-        LoggerPtr _logger;
-        std::string _filename;
-        
-        std::ifstream _stream;
-        int _pos;
-        
-        bool _hasChecksum;
-        
-        std::shared_ptr<base::DBEvent> _currentEvent;
-    };
+        virtual void open() = 0;
+        virtual void close() = 0;
     
-    class BinaryLogSequentialReader {
-    public:
-        explicit BinaryLogSequentialReader(const std::string &basePath, const std::string &indexFile);
     
-        bool seek(int index, int64_t position);
-        bool next();
-        int pos();
-        int logFileListSize();
+        virtual bool seek(int64_t position) = 0;
+        virtual bool next() = 0;
     
-        std::shared_ptr<base::DBEvent> currentEvent();
-
-        void terminate();
-        
-    private:
-        void updateIndex();
-        void openLog(const std::string &logFile);
-        
-        bool pollNext();
-        
-        LoggerPtr _logger;
-        
-        std::string _basePath;
-        std::string _indexFile;
-        std::vector<std::string> _logFileList;
-        // TOOD: currentFile or currentIndex;
-        int _currentIndex;
-
-        bool terminateSignal = false;
-        
-        std::unique_ptr<BinaryLogReader> _binaryLogReader;
+        virtual int pos() = 0;
+    
+        virtual std::shared_ptr<base::DBEvent> currentEvent() = 0;
     };
 }
 
-#endif //ULTRAVERSE_MARIADB_BINARYLOGPARSER_HPP
+#endif //ULTRAVERSE_BINARYLOGREADER_HPP

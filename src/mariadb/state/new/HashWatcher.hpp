@@ -14,9 +14,10 @@
 #include "../StateHash.hpp"
 
 #include "mariadb/DBEvent.hpp"
-#include "mariadb/binlog/BinaryLogReader.hpp"
+#include "mariadb/binlog/MySQLBinaryLogReader.hpp"
 
 #include "utils/log.hpp"
+#include "mariadb/binlog/BinaryLogSequentialReader.hpp"
 
 namespace ultraverse::state::v2 {
     class HashWatcher {
@@ -53,7 +54,7 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, StateHash> _hashState;
         std::unordered_map<std::string, bool> _matchState;
         std::unordered_map<std::string, std::queue<StateHash>> _hashQueue;
-        mariadb::BinaryLogSequentialReader _binlogReader;
+        mariadb::MariaDBBinaryLogSequentialReader _binlogReader;
     };
 }
 

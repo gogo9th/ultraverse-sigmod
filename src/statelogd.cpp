@@ -15,7 +15,9 @@
 #include "mariadb/DBHandle.hpp"
 #include "mariadb/BinaryLog.hpp"
 
-#include "mariadb/binlog/BinaryLogReader.hpp"
+#include "mariadb/binlog/MariaDBBinaryLogReader.hpp"
+#include "mariadb/binlog/MySQLBinaryLogReader.hpp"
+#include "mariadb/binlog/BinaryLogSequentialReader.hpp"
 
 #include "base/TaskExecutor.hpp"
 #include "utils/log.hpp"
@@ -35,7 +37,7 @@ public:
     }
     
     std::string optString() override {
-        return "b:o:c:r:dvVh";
+        return "b:o:c:r:dMvVh";
     }
     
     int main() override {
@@ -44,11 +46,12 @@ public:
             "statelogd - state-logging daemon\n"
             "\n"
             "Options: \n"
-            "    -b file        specify MySQL-variant binlog.index file\n"
+            "    -b file        specify MariaDB-variant binlog.index file\n"
             "    -o file        specify log output name\n"
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -r file        restore state and resume from given .ultchkpoint file\n"
             "    -d             force discard previous log and start over\n"
+            "    -M             treat server variant as MySQL"
             "    -v             set logger level to DEBUG\n"
             "    -V             set logger level to TRACE\n"
             "    -h             print this help and exit application\n";
@@ -92,7 +95,12 @@ public:
     }
     
     void writerMain() {
-        _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(".", _binlogIndexPath);
+        if (isArgSet('M')) {
+            _binlogReader = std::make_unique<mariadb::MySQLBinaryLogSequentialReader>(".", _binlogIndexPath);
+        } else {
+            _binlogReader = std::make_unique<mariadb::MariaDBBinaryLogSequentialReader>(".", _binlogIndexPath);
+        }
+        
         _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(".", _stateLogName);
 
         _pendingTxn = std::make_shared<state::v2::Transaction>();

@@ -10,7 +10,7 @@ using LoggerPtr = std::shared_ptr<spdlog::logger>;
 
 inline auto initLoggerSink() {
     auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_st>();
-    sink->set_level(spdlog::level::info);
+    sink->set_level(spdlog::level::trace);
     
     return sink;
 }
