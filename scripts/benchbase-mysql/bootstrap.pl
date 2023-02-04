@@ -238,6 +238,7 @@ sub bootstrap {
             carp("benchbase exited with code $retcode");
         }
 
+        sleep 5;
 
         chdir $project_path;
 
@@ -248,7 +249,7 @@ sub bootstrap {
 
         system(
             'sudo', 'sh', '-c',
-            'cp db_data/server-binlog* .'
+            'cp -rv db_data/server-binlog* .'
         );
 
         system(

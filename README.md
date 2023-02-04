@@ -19,6 +19,19 @@ max_binlog_size=100M
 
 $ systemctl restart mariadb
 
+# in case of MySQL 
+
+[mysqld]
+log-bin=server-binlog
+binlog_format=ROW
+binlog_row_image=FULL
+binlog_row_metadata=FULL
+binlog-checksum=NONE
+binlog_rows_query_log_events=ON
+max_binlog_size=300M
+
+$ systemctl restart mysqld
+
 ```
 
 ```shell
