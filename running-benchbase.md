@@ -4,7 +4,7 @@
 
 ```shell
 $ sudo apt install build-essential cmake mariadb libmariadb-dev libmariadb-dev-compat pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev
-$ sudo apt install perl
+$ sudo apt install perl curl
 ```
 
 ## 2. Docker 설치
@@ -45,7 +45,15 @@ max_binlog_size=100M
 $ systemctl restart mariadb
 ```
 
-## 4. 벤치마크 부트스트래핑
+## 4. benchbase 빌드
+```shell
+$ sudo apt install openjdk-17-jdk-headless
+$ git clone 'git@github.com:gogo9th/ultraverse-benchbase.git'
+$ cd ultraverse-benchbase
+$ ./make-mariadb
+```
+
+## 5. 벤치마크 부트스트래핑
 
 ```shell
 export ULTRAVERSE_HOME=$HOME/ultraverse/build/src
