@@ -2,6 +2,6 @@ export ULTRAVERSE_HOME=EDITME
 
 export DB_HOST=localhost
 export DB_PORT=3306
-export DB_USER=admin
+export DB_USER=root
 export DB_PASS=password
 
