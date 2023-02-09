@@ -57,7 +57,7 @@ $ ./make-mariadb
 
 ```shell
 export ULTRAVERSE_HOME=$HOME/ultraverse/build/src
-export BENCHBASE_HOME=$HOME/benchbase
+export BENCHBASE_HOME=$HOME/ultraverse-benchbase
 
 cd ultraverse/scripts/benchbase
 
