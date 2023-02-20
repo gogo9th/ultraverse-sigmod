@@ -222,7 +222,8 @@ namespace ultraverse::mariadb {
                     uint8_t size = metadata.get()[metadataPos + 1];
                     metadataPos += 2;
                     
-                    columnTypeDef2.emplace_back(column_type::STRING, size);
+                    // FIXME
+                    columnTypeDef2.emplace_back(column_type::STRING, -1);
                 }
                     break;
                 case MYSQL_TYPE_GEOMETRY:
@@ -241,7 +242,7 @@ namespace ultraverse::mariadb {
     
                     columnTypeDef2.emplace_back(
                         column_type::STRING,
-                        (maximumLength <= UINT8_MAX) ? 1 : 2
+                        (maximumLength <= UINT8_MAX) ? -1 : -2
                     );
                 }
                     break;
@@ -249,12 +250,20 @@ namespace ultraverse::mariadb {
                 case MYSQL_TYPE_BIT:
                 case MYSQL_TYPE_ENUM:
                 case MYSQL_TYPE_SET:
-                case MYSQL_TYPE_NEWDECIMAL:
-                case MYSQL_TYPE_DECIMAL:
                 {
                     metadataPos += 2;
     
                     columnTypeDef2.emplace_back(column_type::STRING, -1);
+                }
+                    break;
+                
+                case MYSQL_TYPE_NEWDECIMAL:
+                case MYSQL_TYPE_DECIMAL:
+                {
+                    uint16_t precisionAndScale = *reinterpret_cast<uint16_t *>(metadata.get() + metadataPos);
+                    metadataPos += 2;
+    
+                    columnTypeDef2.emplace_back(column_type::DECIMAL, precisionAndScale);
                 }
                     break;
                 

@@ -7,6 +7,7 @@
 
 #include <cereal/types/vector.hpp>
 #include <cereal/types/unordered_map.hpp>
+#include <iomanip>
 
 #include "DBEvent.hpp"
 
@@ -221,17 +222,20 @@ namespace ultraverse::mariadb {
                 uint64_t strLength = 0;
                 size_t strLengthSize = 1;
                 
-                if (columnSize == 1 || columnSize == -1) {
+                if (columnSize == -1) {
                     strLength = (_rowData.get()[offset]);
-                } else if (columnSize == 2) {
+                } else if (columnSize == -2) {
                     strLength = (uint16_t) *reinterpret_cast<uint16_t *>(_rowData.get() + offset);
                     strLengthSize = 2;
-                } else if (columnSize == 4) {
+                } else if (columnSize == -4) {
                     strLength = (uint32_t) *reinterpret_cast<uint32_t *>(_rowData.get() + offset);
                     strLengthSize = 4;
-                } else if (columnSize == 8) {
+                } else if (columnSize == -8) {
                     strLength = (uint64_t) *reinterpret_cast<uint64_t *>(_rowData.get() + offset);
                     strLengthSize = 8;
+                } else {
+                    strLength = columnSize;
+                    strLengthSize = 0;
                 }
                 
                 std::unique_ptr<uint8_t> rawValue(new uint8_t[strLength]);
@@ -273,8 +277,66 @@ namespace ultraverse::mariadb {
                 }
     
                 rowSize += columnSize;
-            } else {
+            } else if (columnType == column_type::DECIMAL) {
+                StateItem candidateItem;
+                StateData data;
+                
+                uint8_t precision = columnSize & 0xff;
+                uint8_t scale     = columnSize >> 8;
+                
+                uint8_t size = (precision + 1) / 2;
+                
+                std::unique_ptr<uint8_t> rawValue(new uint8_t[size]);
+                memcpy(rawValue.get(), _rowData.get() + offset, size);
+                
+                
+                bool sign = false;
+                uint64_t high = 0;
+                uint64_t low = 0;
+                
+                int i = 0;
+                while (i < size) {
+                    uint8_t value = rawValue.get()[i];
+                    
+                    if (i == 0) {
+                        sign = value & 0x80;
+                        value = value ^ 0x80;
+                    }
+                    
+                    if (i < ((precision - scale) + 1) / 2) {
+                        high = (high << 8) + value;
+                    } else {
+                        low = (low << 8) + value;
+                    }
+                    
+                    i++;
+                }
+                
+                
+                // FIXME: maybe inaccurate
+                std::stringstream replStream;
+                
+                if (!sign) {
+                    replStream << '-';
+                }
+                
+                replStream << high << "."
+                           << std::setfill('0') << std::setw(scale) << low;
+                
+                std::string replVal = replStream.str();
+                
+                data.Set(replVal.c_str(), replVal.size());
     
+                candidateItem.data_list.emplace_back(std::move(data));
+                candidateItem.function_type = FUNCTION_EQ;
+                candidateItem.name = tableMapEvent.table() + "." + columnName;
+    
+                _candidateSet.emplace_back(std::move(candidateItem));
+    
+                sstream << columnName << "=" << replVal;
+                
+                rowSize += size;
+            } else {
                 StateItem candidateItem;
                 StateData data;
                 
