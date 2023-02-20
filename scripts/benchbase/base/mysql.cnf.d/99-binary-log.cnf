@@ -6,4 +6,5 @@ binlog_row_metadata=FULL
 binlog-checksum=NONE
 max_binlog_size=300M
 
+log_bin_trust_function_creators=1
 

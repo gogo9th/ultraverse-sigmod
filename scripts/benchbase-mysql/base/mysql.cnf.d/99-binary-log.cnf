@@ -7,4 +7,4 @@ binlog-checksum=NONE
 binlog_rows_query_log_events=ON
 max_binlog_size=300M
 
-
+log_bin_trust_function_creators=1
