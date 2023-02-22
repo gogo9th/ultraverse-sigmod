@@ -1281,6 +1281,14 @@ insert_statement:
 			$$->columns = $4;
 			$$->values = $7;
 		}
+	|	INSERT table_name opt_column_list VALUES '(' literal_list ')' {
+			$$ = new InsertStatement(kInsertValues);
+			$$->pos = $2.pos;
+			$$->schema = $2.schema;
+			$$->tableName = $2.name;
+			$$->columns = $3;
+			$$->values = $6;
+		}
 	|	INSERT INTO table_name opt_column_list select_no_paren {
 			$$ = new InsertStatement(kInsertSelect);
 			$$->pos = $3.pos;
@@ -1288,6 +1296,14 @@ insert_statement:
 			$$->tableName = $3.name;
 			$$->columns = $4;
 			$$->select = $5;
+		}
+	|	INSERT table_name opt_column_list select_no_paren {
+			$$ = new InsertStatement(kInsertSelect);
+			$$->pos = $2.pos;
+			$$->schema = $2.schema;
+			$$->tableName = $2.name;
+			$$->columns = $3;
+			$$->select = $4;
 		}
 	;
 
