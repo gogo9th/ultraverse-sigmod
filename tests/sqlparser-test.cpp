@@ -99,5 +99,11 @@ int main() {
         OK(values->at(1)->ival == 32, "value of values[1] must be 32");
     }
     
+    // NAME_CONST() * NAME_CONST
+    SQL_OK("UPDATE scores SET score = NAME_CONST('var_score', 32) * NAME_CONST('var_multiplier', 2) WHERE user_id = 42;")
+    SQL_OK("UPDATE scores SET score = (NAME_CONST('var_score', 32) * NAME_CONST('var_multiplier', 2)) WHERE user_id = 42;")
+    
+    SQL_OK("INSERT scores (user_id, score) VALUES (42, NAME_CONST('var_score', 32) * NAME_CONST('var_multiplier', 2));")
+    
     return 0;
 }

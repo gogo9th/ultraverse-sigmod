@@ -1276,7 +1276,7 @@ truncate_statement:
  * INSERT INTO employees SELECT * FROM stundents
  ******************************/
 insert_statement:
-		INSERT INTO table_name opt_column_list VALUES '(' literal_list ')' {
+		INSERT INTO table_name opt_column_list VALUES '(' expr_list ')' {
 			$$ = new InsertStatement(kInsertValues);
 			$$->pos = $3.pos;
 			$$->schema = $3.schema;
@@ -1284,7 +1284,7 @@ insert_statement:
 			$$->columns = $4;
 			$$->values = $7;
 		}
-	|	INSERT table_name opt_column_list VALUES '(' literal_list ')' {
+	|	INSERT table_name opt_column_list VALUES '(' expr_list ')' {
 			$$ = new InsertStatement(kInsertValues);
 			$$->pos = $2.pos;
 			$$->schema = $2.schema;
