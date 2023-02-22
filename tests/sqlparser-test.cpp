@@ -48,6 +48,25 @@ int main() {
     SQL_OK("SELECT now();")
     SQL_OK("UPDATE users SET joined_at = NOW() WHERE id = 32;")
     
+    {
+        std::string sqlString = "UPDATE users SET joined_at = NOW() WHERE id = 32;";
+        hsql::SQLParserResult result;
+        hsql::SQLParser::parse(sqlString, &result);
+    
+        if (!result.isValid()) {
+            return 1;
+        }
+    
+        auto *updateStatement = static_cast<hsql::UpdateStatement *>(result.getStatements()[0]);
+        auto *updates = updateStatement->updates;
+        auto *where = updateStatement->where;
+    
+        OK(updates->size() == 1, "updates->size() must be 1");
+    
+        OK(updates->at(0)->value->type == hsql::ExprType::kExprFunctionRef, "type of updates[0]->value must be function");
+        OK(strcmp(updates->at(0)->value->name, "NOW") == 0, "value of updates[0]->value must be \"NOW\"");
+    }
+    
     // MySQL NAME_CONST
     SQL_OK("UPDATE warehouse SET W_YTD := W_YTD +  NAME_CONST('var_paymentAmount',3980.34) WHERE W_ID = NAME_CONST('var_w_id',10);")
     SQL_OK("UPDATE customer SET C_BALANCE =  NAME_CONST('var_c_balance',-3990.34), C_YTD_PAYMENT =  NAME_CONST('var_c_ytd_payment',3990.34),      C_PAYMENT_CNT =  NAME_CONST('var_c_payment_cnt',2)     WHERE C_W_ID =  NAME_CONST('var_customerWarehouseID',10) AND C_D_ID =  NAME_CONST('var_customerDistrictID',7)      AND C_ID =  NAME_CONST('var_c_id',62)")
