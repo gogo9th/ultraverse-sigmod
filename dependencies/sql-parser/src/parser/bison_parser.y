@@ -555,6 +555,7 @@ int yyerror(YYLTYPE* llocp, SQLParserResult* result, yyscan_t scanner, const cha
 %token	MYSQL_ERRNO
 %token	NAME
 %token	NAMES
+%token	NAME_CONST
 %token	NATIONAL
 %token	NATURAL
 %token	NCHAR
@@ -900,6 +901,8 @@ int yyerror(YYLTYPE* llocp, SQLParserResult* result, yyscan_t scanner, const cha
 %token	SHIFT_RIGHT
 %token	EQUAL
 
+%token _utf8mb4
+
 
 /*********************************
  ** Non-Terminal types (http://www.gnu.org/software/bison/manual/html_node/Type-Decl.html)
@@ -924,7 +927,7 @@ int yyerror(YYLTYPE* llocp, SQLParserResult* result, yyscan_t scanner, const cha
 %type <table>		    join_clause table_ref_name_no_alias
 %type <expr> 		    expr operand scalar_expr unary_expr binary_expr logic_expr exists_expr extract_expr
 %type <expr>		    function_expr between_expr expr_alias param_expr
-%type <expr> 		    column_name literal int_literal num_literal string_literal bool_literal
+%type <expr> 		    column_name literal int_literal num_literal string_literal bool_literal mysql_name_const_literal
 %type <expr> 		    comp_expr opt_where join_condition opt_having case_expr case_list in_expr hint
 %type <expr> 		    array_expr array_index null_literal
 %type <limit>		    opt_limit opt_top
@@ -1626,9 +1629,10 @@ comp_expr:
 	;
 
 function_expr:
-               IDENTIFIER '(' ')' { $$ = Expr::makeFunctionRef($1, new std::vector<Expr*>(), false); }
-       |       IDENTIFIER '(' opt_distinct expr_list ')' { $$ = Expr::makeFunctionRef($1, $4, $3); }
+               x_compat_ident '(' ')' { $$ = Expr::makeFunctionRef($1, new std::vector<Expr*>(), false); }
+       |       x_compat_ident '(' opt_distinct expr_list ')' { $$ = Expr::makeFunctionRef($1, $4, $3); }
        ;
+
 
 extract_expr:
          EXTRACT '(' datetime_field FROM expr ')'    { $$ = Expr::makeExtract($3, $5); }
@@ -1662,16 +1666,23 @@ column_name:
 	;
 
 literal:
-		string_literal
+		mysql_name_const_literal
+	|	string_literal
 	|	bool_literal
 	|	num_literal
 	|	null_literal
 	|	param_expr
 	;
 
+mysql_name_const_literal:
+		NAME_CONST '(' string_literal ',' literal ')' { $$ = $5; }
+	;
+
 string_literal:
 		STRING { $$ = Expr::makeLiteral($1); }
-	|   x_compat_ident { $$ = Expr::makeLiteral($1); }
+	|       _utf8mb4 STRING { $$ = Expr::makeLiteral($2); }
+	|       _utf8mb4 STRING COLLATE STRING { $$ = Expr::makeLiteral($2); }
+	|   	x_compat_ident { $$ = Expr::makeLiteral($1); }
 	;
 
 bool_literal:
