@@ -806,6 +806,8 @@ TRUE	TOKEN(TRUE)
 ">>"		TOKEN(SHIFT_RIGHT)
 "<=>"		TOKEN(EQUAL)
 
+":="        TOKEN(VARASSIGN)
+
 
 "_utf8mb4" TOKEN(_utf8mb4)
 

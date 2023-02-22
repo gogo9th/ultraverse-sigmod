@@ -900,6 +900,7 @@ int yyerror(YYLTYPE* llocp, SQLParserResult* result, yyscan_t scanner, const cha
 %token	SHIFT_LEFT
 %token	SHIFT_RIGHT
 %token	EQUAL
+%token	VARASSIGN
 
 %token _utf8mb4
 
@@ -1341,6 +1342,11 @@ update_clause:
 			$$ = new UpdateClause();
 			$$->column = $1;
 			$$->value = $3;
+		}
+	|	x_compat_ident VARASSIGN expr {
+			$$ = new UpdateClause();
+			$$->column = $1;
+			$$->value  = $3;
 		}
 	;
 

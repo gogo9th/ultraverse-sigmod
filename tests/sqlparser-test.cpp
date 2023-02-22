@@ -69,6 +69,29 @@ int main() {
     
     // MySQL NAME_CONST
     SQL_OK("UPDATE warehouse SET W_YTD := W_YTD +  NAME_CONST('var_paymentAmount',3980.34) WHERE W_ID = NAME_CONST('var_w_id',10);")
+    
+    {
+        std::string sqlString = "UPDATE warehouse SET W_YTD := W_YTD +  NAME_CONST('var_paymentAmount',3980.34) WHERE W_ID = NAME_CONST('var_w_id',10);";
+        hsql::SQLParserResult result;
+        hsql::SQLParser::parse(sqlString, &result);
+        
+        if (!result.isValid()) {
+            return 1;
+        }
+        
+        auto *updateStatement = static_cast<hsql::UpdateStatement *>(result.getStatements()[0]);
+        auto *updates = updateStatement->updates;
+        auto *where = updateStatement->where;
+        
+        OK(updates->size() == 1, "updates->size() must be 1");
+        
+        auto *update = updates->at(0);
+        
+        OK(update->value->opType == hsql::kOpPlus, "type of updates[0]->opType must be PLUS");
+        OK(strcmp(update->value->expr->name, "W_YTD") == 0, "value of updates[0]->expr must be \"W_YTD\"");
+        OK(((int) update->value->expr2->fval) == 3980, "value of (int) updates[0]->expr2 must be 3980");
+    }
+    
     SQL_OK("UPDATE customer SET C_BALANCE =  NAME_CONST('var_c_balance',-3990.34), C_YTD_PAYMENT =  NAME_CONST('var_c_ytd_payment',3990.34),      C_PAYMENT_CNT =  NAME_CONST('var_c_payment_cnt',2)     WHERE C_W_ID =  NAME_CONST('var_customerWarehouseID',10) AND C_D_ID =  NAME_CONST('var_customerDistrictID',7)      AND C_ID =  NAME_CONST('var_c_id',62)")
     
     // NAME_CONST with 'strval' COLLATE charset
