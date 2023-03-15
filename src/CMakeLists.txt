@@ -11,6 +11,7 @@ pkg_check_modules(MARIADB REQUIRED mariadb)
 pkg_check_modules(FMT REQUIRED fmt)
 pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
+pkg_check_modules(PYTHON3 REQUIRED python3)
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 # add_compile_options(-msse4.2 -O2)
@@ -23,6 +24,7 @@ set(ULTRAVERSE_DEPENDENCIES
     ${SPDLOG_LIBRARIES}
     ${Boost_LIBRARIES}
     ${GRAPHVIZ_LIBRARIES}
+    python3
     
     sqlparser
     OpenSSL::SSL
@@ -41,6 +43,9 @@ set(LIBULTRAVERSE_BASE_SRCS
     utils/log.hpp
     utils/StringUtil.cpp
     utils/StringUtil.hpp
+    
+    sql/PySQLParser.cpp
+    sql/PySQLParser.hpp
 )
 
 set(LIBULTRAVERSE_STATE_SRCS
@@ -134,6 +139,7 @@ include_directories(../dependencies/nlohmann-json/include)
 include_directories(../dependencies/cereal/include)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../dependencies/sql-parser)
 include_directories(${Boost_INCLUDE_DIRS})
+include_directories(${PYTHON3_INCLUDE_DIRS})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
