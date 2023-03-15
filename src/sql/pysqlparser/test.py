@@ -1,48 +1,40 @@
-R"(
+from parser_main import query_matches
 
-from typing import List, Optional
+if __name__ == "__main__":
+    import sqlparse
 
-from sqlparse.sql import Statement, TokenList, Token, Values, Parenthesis
-from sqlparse.tokens import Punctuation, Whitespace, String, Number
+    def test_update():
+        statement_a = 'UPDATE colors SET red = 0.5, blue = 1.0 WHERE id = 3'
+        statement_b = 'UPDATE colors SET red = 7.5, blue = 2.3 WHERE id = 24'
+        statement_c = 'UPDATE colors SET blue = 0.25, alpha = 1.2 WHERE id = 0.5'
+        statement_d = 'UPDATE colors_2 SET red = 7.5, blue = 2.3 WHERE id = 24'
 
-def get_values(statement: Statement) -> Parenthesis:
-    values: Values = list(filter(lambda t: isinstance(t, Values), statement.tokens))[0]
+        # should print True
+        print(query_matches(sqlparse, statement_a, statement_b))
+        # should print False
+        print(query_matches(sqlparse, statement_a, statement_c))
+        # should print False
+        print(query_matches(sqlparse, statement_a, statement_d))
 
-    return values.tokens[-1]
-def match_procedure_statements(sqlparse, procedure, binlog_statement: Statement):
-    pass
+    def test_select():
+        statement_a = 'SELECT red, green, blue FROM colors WHERE id = 42'
+        statement_b = 'SELECT red, green, blue FROM colors WHERE id = 24'
+        statement_c = 'SELECT red, alpha, green FROM colors WHERE id = 24'
 
-
-def get_procedure_hint(sqlparse, statement_str: str) -> (str, int):
-    statement: Statement = sqlparse.parse(statement_str)[0]
-    tokens = list(statement.flatten())
-
-    if len(list(filter(lambda t: t.match(sqlparse.tokens.Name, ('__ULTRAVERSE_PROCEDURE_HINT')), tokens))) == 0:
-        return None
-
-    values = get_values(statement)
-
-    proc_name: Optional[str] = None
-    call_id: Optional[int] = None
-
-    for token in values.tokens:
-        token: Token
-        if token.ttype in String:
-            proc_name = token.value
-        if token.ttype in Number:
-            call_id = token.value
-
-    if (proc_name is not None) and (call_id is not None):
-        return (proc_name, call_id)
-
-    return None
+        # should print True
+        print(query_matches(sqlparse, statement_a, statement_b))
+        # should print False
+        print(query_matches(sqlparse, statement_a, statement_c))
 
 
-# if __name__ == "__main__":
-#     import sqlparse
-#     statement: Statement = sqlparse.parse("INSERT INTO table1 (col1, col2, col3) VALUES ('text', (123 + 235), 456.5)")[0]
-#     print(get_values(statement))
-#
-#     print(get_procedure_hint(sqlparse, "INSERT INTO __ULTRAVERSE_PROCEDURE_HINT (procname) VALUES ('HELOWRLD');"))
+    def test_delete():
+        statement_a = 'DELETE FROM colors WHERE id = 42'
+        statement_b = 'DELETE FROM colors WHERE id = 24'
+        statement_c = 'DELETE FROM colors WHERE red = 1.0'
 
-)"
+        # should print True
+        print(query_matches(sqlparse, statement_a, statement_b))
+        # should print False
+        print(query_matches(sqlparse, statement_a, statement_c))
+
+    test_delete()

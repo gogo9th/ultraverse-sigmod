@@ -14,6 +14,7 @@
 
 namespace ultraverse::sql {
     
+    
     class PySQLParser {
     public:
         using PyObjectPtr = std::shared_ptr<PyObject>;
@@ -25,6 +26,7 @@ namespace ultraverse::sql {
         
         std::pair<std::string, uint64_t> getProcedureHint(const std::string &statement);
         
+        bool queryMatches(const std::string &statementA, const std::string &statementB);
     private:
         static PyObject *loadParserScript();
         
@@ -33,8 +35,6 @@ namespace ultraverse::sql {
         static PyObject *_sqlparseModule;
         static PyObject *_globalDict;
         static PyObject *_localDict;
-        
-        
     };
     
 }

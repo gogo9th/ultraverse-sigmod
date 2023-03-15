@@ -43,7 +43,7 @@ namespace ultraverse::sql {
     
     PyObject *PySQLParser::loadParserScript() {
         const std::string code =
-#include "pysqlparser/test.py"
+#include "pysqlparser/parser_main.py"
         ;
         
         return Py_CompileString(code.c_str(), "<pysqlparser internal>", Py_file_input);
@@ -83,5 +83,23 @@ namespace ultraverse::sql {
         }
     }
     
+    bool PySQLParser::queryMatches(const std::string &statementA, const std::string &statementB) {
+        auto *pyQueryMatchesFn = PyDict_GetItemString(_localDict, "query_matches");
+        assert(pyQueryMatchesFn != nullptr);
+        
+        auto *args = PyTuple_New(3);
+    
+        PyTuple_SetItem(args, 0, _sqlparseModule);
+        
+        // FIXME: 💩: Python GC에게 모든 것을 맡기지 마!
+        PyTuple_SetItem(args, 1, PyUnicode_FromStringAndSize(statementA.c_str(), statementA.size()));
+        PyTuple_SetItem(args, 2, PyUnicode_FromStringAndSize(statementB.c_str(), statementB.size()));
+        
+        auto *result = PyObject_Call(pyQueryMatchesFn, args, nullptr);
+        
+        // TODO: args 정리해야 하는데 수동으로 정리해버리면 죽음 (GC랑 충돌나는듯)
+    
+        return PyObject_IsTrue(result);
+    }
     
 }
