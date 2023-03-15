@@ -104,6 +104,9 @@ set(LIBULTRAVERSE_STATE_SRCS
     mariadb/state/new/GIDIndexWriter.hpp
     mariadb/state/new/GIDIndexReader.cpp
     mariadb/state/new/GIDIndexReader.hpp
+    
+    mariadb/state/new/ProcCall.cpp
+    mariadb/state/new/ProcLogReader.cpp
 )
 
 set(LIBULTRAVERSE_MARIADB_SRCS
