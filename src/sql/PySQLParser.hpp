@@ -23,7 +23,7 @@ namespace ultraverse::sql {
         
         PySQLParser();
         
-        std::string getProcedureHint(const std::string &statement);
+        std::pair<std::string, uint64_t> getProcedureHint(const std::string &statement);
         
     private:
         static PyObject *loadParserScript();

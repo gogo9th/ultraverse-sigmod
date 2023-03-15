@@ -1,9 +1,9 @@
 R"(
 
-from typing import List
+from typing import List, Optional
 
 from sqlparse.sql import Statement, TokenList, Token, Values, Parenthesis
-from sqlparse.tokens import Punctuation, Whitespace, String
+from sqlparse.tokens import Punctuation, Whitespace, String, Number
 
 def get_values(statement: Statement) -> Parenthesis:
     values: Values = list(filter(lambda t: isinstance(t, Values), statement.tokens))[0]
@@ -22,10 +22,18 @@ def get_procedure_hint(sqlparse, statement_str: str) -> (str, int):
 
     values = get_values(statement)
 
+    proc_name: Optional[str] = None
+    call_id: Optional[int] = None
+
     for token in values.tokens:
         token: Token
         if token.ttype in String:
-            return token
+            proc_name = token.value
+        if token.ttype in Number:
+            call_id = token.value
+
+    if (proc_name is not None) and (call_id is not None):
+        return (proc_name, call_id)
 
     return None
 
