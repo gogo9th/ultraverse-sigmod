@@ -19,7 +19,7 @@ namespace ultraverse::utility {
         }
         
         return std::make_pair(
-            input.substr(0, pos - 1),
+            input.substr(0, pos),
             input.substr(pos + 1, input.size() - (pos + 1))
         );
     }
