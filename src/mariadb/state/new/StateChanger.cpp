@@ -36,7 +36,8 @@ namespace ultraverse::state::v2 {
         _columnSetHashes(std::make_shared<std::vector<size_t>>()),
         _context(new StateChangeContext),
         _ddlTxnId(0),
-        _ddlTxnProcessedId(0)
+        _ddlTxnProcessedId(0),
+        _replayedQueries(0)
     {
         _stateGraph = std::make_unique<StateGraphBoost>(_context);
     }
@@ -175,13 +176,18 @@ namespace ultraverse::state::v2 {
         TaskExecutor taskExecutor(8);
         StateLogWriter stateLogWriter(_plan.stateLogPath(), _plan.stateLogName());
         GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
-        createIntermediateDB();
         
+        createIntermediateDB();
+    
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
         std::atomic_bool isRunning = true;
         
         if (!_plan.dbDumpPath().empty()) {
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
+    
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle.get(), 0);
+            updateForeignKeys(dbHandle.get(), 0);
         }
         
         _reader.open();
@@ -1296,9 +1302,15 @@ namespace ultraverse::state::v2 {
     
         MYSQL_RES *result = mysql_store_result(dbHandle);
         MYSQL_ROW row;
+    
+        auto tolower = [](unsigned char c) { return std::tolower(c); };
+        
         while ((row = mysql_fetch_row(result)) != nullptr) {
             std::string table(row[0]);
             std::string column(row[1]);
+    
+            std::transform(table.begin(), table.end(), table.begin(), tolower);
+            std::transform(column.begin(), column.end(), column.begin(), tolower);
        
             _logger->trace("updatePrimaryKeys(): adding primary key: {}.{}", table, column);
         
@@ -1327,12 +1339,21 @@ namespace ultraverse::state::v2 {
         
         MYSQL_RES *result = mysql_store_result(dbHandle);
         MYSQL_ROW row;
+        
+        auto tolower = [](unsigned char c) { return std::tolower(c); };
+        
         while ((row = mysql_fetch_row(result)) != nullptr) {
             std::string fromTable(row[0]);
             std::string fromColumn(row[1]);
             
             std::string toTable(row[2]);
             std::string toColumn(row[3]);
+            
+            std::transform(fromTable.begin(), fromTable.end(), fromTable.begin(), tolower);
+            std::transform(fromColumn.begin(), fromColumn.end(), fromColumn.begin(), tolower);
+            std::transform(toTable.begin(), toTable.end(), toTable.begin(), tolower);
+            std::transform(toColumn.begin(), toColumn.end(), toColumn.begin(), tolower);
+            
             
             // _logger->trace("updateForeignKeys(): adding foreign key: {}.{} -> {}.{}", fromTable, fromColumn, toTable, toColumn);
             
