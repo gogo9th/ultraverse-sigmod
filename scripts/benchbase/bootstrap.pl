@@ -60,11 +60,19 @@ sub docker_compose {
     my $project_directory = shift @_;
 
     my $pid = open2(
-        undef, undef,
+        my $stdout, undef,
         'docker', 'compose', '--project-directory', $project_directory, 
         @_
     );
-    waitpid($pid, 0);
+
+    while (waitpid($pid, WNOHANG) == 0) {
+        my $line = <$stdout>;
+        chomp $line;
+        printf("\33[2K\r");
+        printf("%s", $line) if $line;
+    }
+
+    printf("\n");
 
     return $? >> 8;
 }
@@ -250,12 +258,12 @@ sub bootstrap {
 
         system(
             'sudo', 'sh', '-c',
-            'cp db_data/server-binlog* .'
+            'cp db_data/server-binlog* db_data/*.ultproclog .'
         );
 
         system(
             'sudo', 'sh', '-c',
-            sprintf('chown %s:%s ./server-binlog*', $<, $>)
+            sprintf('chown %s:%s ./server-binlog* ./*.ultproclog', $<, $>)
         );
     };
 

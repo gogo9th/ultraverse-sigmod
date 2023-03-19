@@ -69,7 +69,7 @@ void ProcAssistPlugin::handleGeneralEvent(THD *thd,
       
   }
   
-  if (commandId == SQLCOM_CALL) {
+  if (commandId == SQLCOM_END && isProcedureCall(statement)) {
       if (event->event_subclass == MYSQL_AUDIT_GENERAL_RESULT) {
         writeProcLog(_callList[connectionId]);
       }
@@ -77,12 +77,18 @@ void ProcAssistPlugin::handleGeneralEvent(THD *thd,
       if (event->event_subclass == MYSQL_AUDIT_GENERAL_RESULT ||
           event->event_subclass == MYSQL_AUDIT_GENERAL_ERROR) {
         auto procCall= _callList[connectionId];
+        if (procCall == nullptr) {
+          return;
+        }
+
+        fprintf(stderr, "procCall finalized\n");
         fprintf(stderr, "%ld -- %s\n", procCall->callId(),
                 procCall->procName().c_str());
         for (const auto &st : procCall->statements())
         {
           fprintf(stderr, "    %s\n", st.c_str());
         }
+
         _callList[connectionId]= nullptr;
       }
    
@@ -93,10 +99,14 @@ void ProcAssistPlugin::handleGeneralEvent(THD *thd,
   {
       if (isProcedureCall(statement))
       {
+        if (_callList[connectionId] != nullptr) {
+          return;
+        }
+
         auto procCall = std::make_shared<ProcCall>();
         procCall->statements().push_back(statement);
         
-        _callList[connectionId]= procCall;
+        _callList[connectionId] = procCall;
       }
       else if (_callList[connectionId] != nullptr)
       {
@@ -105,9 +115,11 @@ void ProcAssistPlugin::handleGeneralEvent(THD *thd,
           auto procCall= _callList[connectionId];
           auto pair= extractProcedureHint(statement);
 
-          fprintf(stderr, "procName: %s / callId: %ld\n", pair.first.c_str(), pair.second);
-          procCall->setProcName(pair.first);
-          procCall->setCallId(pair.second);
+          if (procCall->callId() == 0) {
+            fprintf(stderr, "procName: %s / callId: %ld\n", pair.first.c_str(), pair.second);
+            procCall->setProcName(pair.first);
+            procCall->setCallId(pair.second);
+          }
         }
         else
         {
@@ -119,6 +131,10 @@ void ProcAssistPlugin::handleGeneralEvent(THD *thd,
 }
 
 void ProcAssistPlugin::writeProcLog(std::shared_ptr<ProcCall> procCall) {
+  if (procCall == nullptr) {
+      return;
+  }
+
   std::stringstream sstream;
   cereal::BinaryOutputArchive archive(sstream);
   archive(*procCall);

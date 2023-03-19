@@ -4,7 +4,10 @@
 
 #include "ProcCall.hpp"
 
-ProcCall::ProcCall() {
+ProcCall::ProcCall():
+  _procName(),
+  _callId(0)
+{
 
 }
 std::string ProcCall::procName() const {
