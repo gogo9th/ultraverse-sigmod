@@ -133,7 +133,7 @@ namespace ultraverse::state::v2 {
             if (pair1.second) {
                 return;
             }
-            _logger->trace("visiting node {}", pair1.first);
+            _logger->trace("visiting node {}: {}", pair1.first, _clusterMap[columnName][pair1.first].first->MakeWhereQuery(columnName));
             
             pair1.second = true;
             
@@ -379,8 +379,13 @@ namespace ultraverse::state::v2 {
     
     std::string RowCluster::resolveForeignKey(std::string exprName, const std::vector<ForeignKey> &foreignKeys) {
         auto vec = utility::splitTableName(exprName);
-        const auto &tableName = vec.first;
-        const auto &columnName = vec.second;
+        auto &tableName  = vec.first;
+        auto &columnName = vec.second;
+    
+        auto tolower = [](unsigned char c) { return std::tolower(c); };
+    
+        std::transform(tableName.begin(), tableName.end(), tableName.begin(), tolower);
+        std::transform(columnName.begin(), columnName.end(), columnName.begin(), tolower);
         
         auto it = std::find_if(foreignKeys.cbegin(), foreignKeys.cend(), [&tableName, &columnName](auto &foreignKey) {
             if (foreignKey.fromTable->getCurrentName() == tableName && columnName == foreignKey.fromColumn) {

@@ -13,6 +13,8 @@
 #include "StateChangePlan.hpp"
 #include "ColumnDependencyGraph.hpp"
 #include "HashWatcher.hpp"
+#include "ProcLogReader.hpp"
+#include "ProcMatcher.hpp"
 
 #include "cluster/CandidateColumn.hpp"
 #include "cluster/RowCluster.hpp"
@@ -144,6 +146,7 @@ namespace ultraverse::state::v2 {
         std::unique_ptr<ColumnDependencyGraph> _columnGraph;
         std::unique_ptr<TableDependencyGraph> _tableGraph;
         std::unique_ptr<HashWatcher> _hashWatcher;
+        std::unique_ptr<ProcLogReader> _procLogReader;
     
         std::mutex _changedTablesMutex;
         std::unordered_set<std::string> _changedTables;

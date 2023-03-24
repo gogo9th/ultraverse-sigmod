@@ -107,6 +107,7 @@ set(LIBULTRAVERSE_STATE_SRCS
     
     mariadb/state/new/ProcCall.cpp
     mariadb/state/new/ProcLogReader.cpp
+    mariadb/state/new/ProcMatcher.cpp
 )
 
 set(LIBULTRAVERSE_MARIADB_SRCS

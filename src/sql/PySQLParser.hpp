@@ -24,8 +24,6 @@ namespace ultraverse::sql {
         
         PySQLParser();
         
-        std::pair<std::string, uint64_t> getProcedureHint(const std::string &statement);
-        
         bool queryMatches(const std::string &statementA, const std::string &statementB);
     private:
         static PyObject *loadParserScript();

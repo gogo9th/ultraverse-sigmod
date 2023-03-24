@@ -53,6 +53,9 @@ namespace ultraverse::state::v2 {
         
         const std::string &stateLogName() const;
         void setStateLogName(const std::string &stateLogName);
+
+        const std::string &procCallLogPath() const;
+        void setProcCallLogPath(const std::string &procCallLogPath);
         
         bool writeStateLog() const;
         void setWriteStateLog(bool writeStateLog);
@@ -83,7 +86,8 @@ namespace ultraverse::state::v2 {
         std::string _binlogPath;
         std::string _stateLogPath;
         std::string _stateLogName;
-        
+        std::string _procCallLogPath;
+
         bool _writeStateLog;
         
         std::vector<std::string> _keyColumns;

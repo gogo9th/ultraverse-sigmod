@@ -125,7 +125,15 @@ namespace ultraverse::state::v2 {
     void StateChangePlan::setStateLogName(const std::string &stateLogName) {
         _stateLogName = stateLogName;
     }
-    
+
+    const std::string &StateChangePlan::procCallLogPath() const {
+        return _procCallLogPath;
+    }
+
+    void StateChangePlan::setProcCallLogPath(const std::string &procCallLogPath) {
+        _procCallLogPath = procCallLogPath;
+    }
+
     bool StateChangePlan::writeStateLog() const {
         return _writeStateLog;
     }

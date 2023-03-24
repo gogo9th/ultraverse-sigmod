@@ -52,37 +52,7 @@ namespace ultraverse::sql {
     PySQLParser::PySQLParser() {
     }
     
-    std::pair<std::string, uint64_t> PySQLParser::getProcedureHint(const std::string &statement) {
-        auto *pyGreetFn = PyDict_GetItemString(_localDict, "get_procedure_hint");
-        assert(pyGreetFn != nullptr);
-        
-        auto *pyStatementValue = PyUnicode_FromStringAndSize(statement.c_str(), statement.size());
-        auto *tuple = PyTuple_New(2);
-        
-        PyTuple_SetItem(tuple, 0, _sqlparseModule);
-        PyTuple_SetItem(tuple, 1, pyStatementValue);
-        
-       
-        /*
-         * ```python
-         * result: (str, int) = get_procedure_hint(sqlparse, statement)
-         * ```
-         */
-        auto *result = PyObject_Call(pyGreetFn, tuple, nullptr);
-        
-        if (Py_IsNone(result)) {
-            std::cout << "WARN: no procedure hint!" << std::endl;
-    
-            return {};
-        } else {
-            Py_ssize_t resultSize = 0;
-            auto *resultCStr = PyUnicode_AsUTF8AndSize(PyTuple_GetItem(result, 0), &resultSize);
-            uint64_t callId = PyLong_AsLongLong(PyTuple_GetItem(result, 1));
-            
-            return { std::string(resultCStr, resultSize), callId };
-        }
-    }
-    
+
     bool PySQLParser::queryMatches(const std::string &statementA, const std::string &statementB) {
         auto *pyQueryMatchesFn = PyDict_GetItemString(_localDict, "query_matches");
         assert(pyQueryMatchesFn != nullptr);
@@ -98,7 +68,12 @@ namespace ultraverse::sql {
         auto *result = PyObject_Call(pyQueryMatchesFn, args, nullptr);
         
         // TODO: args 정리해야 하는데 수동으로 정리해버리면 죽음 (GC랑 충돌나는듯)
-    
+
+        if (PyErr_Occurred()) {
+            PyErr_Print();
+        }
+        assert(PyBool_Check(result));
+
         return PyObject_IsTrue(result);
     }
     

@@ -19,6 +19,11 @@
 #include "mariadb/binlog/MySQLBinaryLogReader.hpp"
 #include "mariadb/binlog/BinaryLogSequentialReader.hpp"
 
+#include "mariadb/state/new/ProcLogReader.hpp"
+#include "mariadb/state/new/ProcMatcher.hpp"
+
+#include "sql/PySQLParser.hpp"
+
 #include "base/TaskExecutor.hpp"
 #include "utils/log.hpp"
 #include "utils/StringUtil.hpp"
@@ -37,10 +42,12 @@ public:
     }
     
     std::string optString() override {
-        return "b:o:c:r:dMvVh";
+        return "b:o:c:r:p:dMvVh";
     }
     
     int main() override {
+        sql::PySQLParser::initialize();
+
         if (isArgSet('h')) {
             std::cout <<
             "statelogd - state-logging daemon\n"
@@ -48,6 +55,7 @@ public:
             "Options: \n"
             "    -b file        specify MariaDB-variant binlog.index file\n"
             "    -o file        specify log output name\n"
+            "    -p file        use procedure log to append additional queries (SELECT ...)\n"
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -r file        restore state and resume from given .ultchkpoint file\n"
             "    -d             force discard previous log and start over\n"
@@ -81,7 +89,7 @@ public:
         } else {
             _stateLogName = getArg('o');
         }
-        
+
         _threadNum = isArgSet('c') ?
             std::stoi(getArg('c')) :
             std::thread::hardware_concurrency() + 1;
@@ -91,6 +99,8 @@ public:
         }
         
         writerMain();
+
+        sql::PySQLParser::finalize();
         return 0;
     }
     
@@ -100,7 +110,13 @@ public:
         } else {
             _binlogReader = std::make_unique<mariadb::MariaDBBinaryLogSequentialReader>(".", _binlogIndexPath);
         }
-        
+
+        if (isArgSet('p')) {
+            _procLogReader = std::make_unique<state::v2::ProcLogReader>();
+            _procLogReader->open(".", getArg('p'));
+        }
+
+
         _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(".", _stateLogName);
 
         _pendingTxn = std::make_shared<state::v2::Transaction>();
@@ -260,6 +276,13 @@ public:
     }
     
     void processTransactionIDEvent(std::shared_ptr<mariadb::TransactionIDEvent> event) {
+        std::unique_ptr<state::v2::ProcMatcher> procMatcher;
+        int prevIndex = 1;
+
+        if (_pendingProcCall != nullptr) {
+            procMatcher = std::make_unique<state::v2::ProcMatcher>(_pendingProcCall->statements());
+        }
+
         while (!_pendingQueries.empty()) {
             auto promise = std::move(_pendingQueries.front());
             _pendingQueries.pop();
@@ -271,10 +294,54 @@ public:
             if (pendingQuery == nullptr) {
                 continue;
             }
-            
+
+            if (procMatcher != nullptr) {
+                int index = procMatcher->matchForward(pendingQuery->statement(), prevIndex);
+
+                if (index != -1) {
+                    for (int i = prevIndex; i < index; i++) {
+                        _logger->trace("appending query from proclog: {}", _pendingProcCall->statements()[i]);
+
+                        auto query2 = std::make_shared<state::v2::Query>();
+                        auto queryEvent = std::make_shared<mariadb::QueryEvent>(
+                            pendingQuery->database(), _pendingProcCall->statements()[i], pendingQuery->timestamp()
+                        );
+
+                        // rowset, changeset이 없으므로 해시 계산 불가능
+                        if (!queryEvent->parse()) {
+                            // HACK: writeSet만이라도 건짐
+                            // 미래의 나에게: 아래 parseDDL이 select문에서 이상하게 동작함. pysqlparser를 써야 할지도 몰라.
+                            queryEvent->parseDDL(1);
+                        }
+
+                        query2->setDatabase(queryEvent->database());
+                        query2->setStatement(queryEvent->statement());
+                        query2->setTimestamp(queryEvent->timestamp());
+                        query2->setFlags(state::v2::Query::FLAG_IS_PROCCALL_QUERY);
+
+                        query2->readSet().insert(
+                            queryEvent->readSet().begin(), queryEvent->readSet().end()
+                        );
+                        query2->writeSet().insert(
+                            queryEvent->writeSet().begin(), queryEvent->writeSet().end()
+                        );
+
+                        *_pendingTxn << query2;
+                    }
+
+                    prevIndex = index + 1;
+                }
+            }
+
             _logger->trace("[{}]: {}", _gid, pendingQuery->statement());
 
+
             *_pendingTxn << pendingQuery;
+        }
+
+
+        if (_pendingProcCall != nullptr) {
+            _pendingProcCall = nullptr;
         }
 
         _logger->info("Transaction ID #{} processed.", event->transactionId());
@@ -381,6 +448,21 @@ public:
     void processRowQueryEvent(std::shared_ptr<mariadb::RowQueryEvent> event, std::shared_ptr<state::v2::Query> pendingQuery) {
         pendingQuery->setStatement(event->statement());
 
+        if (_procLogReader != nullptr && isProcedureHint(event->statement())) {
+            std::scoped_lock<std::mutex> _lock(_procLogMutex);
+
+            if (_pendingProcCall != nullptr) {
+                return;
+            }
+
+            auto pair = extractProcedureHint(event->statement());
+
+            if (_procLogReader->matchForward(pair.second)) {
+                _pendingProcCall = _procLogReader->current();
+            }
+        }
+
+
         mariadb::QueryEvent dummyEvent(pendingQuery->database(), event->statement(), 0);
         
         dummyEvent.itemSet().insert(
@@ -437,7 +519,42 @@ public:
         }
 
     }
-    
+
+    bool isProcedureHint(const std::string &statement) {
+        return statement.find("INSERT INTO __ULTRAVERSE_PROCEDURE_HINT") == 0;
+    }
+
+    std::pair<std::string, uint64_t> extractProcedureHint(const std::string &statement) {
+        std::string procName = "unknown";
+        uint64_t callId = 0;
+
+        {
+            int pos = statement.find('\'') + 1;
+            std::stringstream sstream;
+
+            while (statement[pos] != '\'') {
+                sstream.put(statement[pos]);
+                pos++;
+            }
+
+            procName = sstream.str();
+        }
+
+        {
+            int pos = statement.rfind(',') + 1;
+            std::stringstream sstream;
+
+            while (statement[pos] >= '0' && statement[pos] <= '9') {
+                sstream.put(statement[pos]);
+                pos++;
+            }
+
+            callId = std::stoul(sstream.str());
+        }
+
+        return std::make_pair(procName, callId);
+    }
+
 private:
     LoggerPtr _logger;
     TaskExecutor _taskExecutor;
@@ -455,11 +572,15 @@ private:
     std::unique_ptr<mariadb::BinaryLogSequentialReader> _binlogReader;
     std::unique_ptr<state::v2::StateLogWriter> _stateLogWriter;
 
+    std::unique_ptr<state::v2::ProcLogReader> _procLogReader;
+    std::mutex _procLogMutex;
+
     std::unordered_map<uint64_t, std::shared_ptr<mariadb::TableMapEvent>> _tableMap;
     std::unordered_map<std::string, state::StateHash> _stateHashMap;
     
     std::shared_ptr<state::v2::Transaction> _pendingTxn;
     std::shared_ptr<state::v2::Query> _pendingQuery;
+    std::shared_ptr<ProcCall> _pendingProcCall;
 
     std::queue<std::shared_ptr<std::promise<std::shared_ptr<state::v2::Query>>>> _pendingQueries;
     std::mutex _tableMapMutex;

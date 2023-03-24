@@ -51,7 +51,7 @@ namespace ultraverse::base {
         std::vector<int16_t> tokens;
         std::vector<size_t> tokenPos;
         hsql::SQLParser::tokenize(statement(), &tokens, &tokenPos);
-        
+
         int i = 0;
         int j = 0;
         for (auto &token: tokens) {
@@ -63,7 +63,7 @@ namespace ultraverse::base {
                     tokenPos[i + 1] - tokenPos[i];
                     value = statement().substr(tokenPos[i], tokenPos[i + 1] - tokenPos[i]);
                 }
-    
+
                 _writeSet.insert(utility::normalizeColumnName(value) + ".*");
                 j++;
             }

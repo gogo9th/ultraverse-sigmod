@@ -176,9 +176,9 @@ namespace ultraverse::state::v2 {
         TaskExecutor taskExecutor(8);
         StateLogWriter stateLogWriter(_plan.stateLogPath(), _plan.stateLogName());
         GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
-        
+
         createIntermediateDB();
-    
+
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
         std::atomic_bool isRunning = true;
         
@@ -188,6 +188,11 @@ namespace ultraverse::state::v2 {
             auto dbHandle = _dbHandlePool.take();
             updatePrimaryKeys(dbHandle.get(), 0);
             updateForeignKeys(dbHandle.get(), 0);
+        }
+
+        if (!_plan.procCallLogPath().empty()) {
+            _procLogReader = std::make_unique<ProcLogReader>();
+            _procLogReader->open(_plan.stateLogPath(), _plan.procCallLogPath());
         }
         
         _reader.open();
@@ -361,6 +366,11 @@ namespace ultraverse::state::v2 {
             auto load_backup_end = std::chrono::steady_clock::now();
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
+        }
+
+        if (!_plan.procCallLogPath().empty()) {
+            _procLogReader = std::make_unique<ProcLogReader>();
+            _procLogReader->open(_plan.stateLogPath(), _plan.procCallLogPath());
         }
     
         _logger->info("opening state log");
