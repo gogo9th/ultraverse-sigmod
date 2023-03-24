@@ -24,7 +24,7 @@ void ProcCall::load(Archive &archive) {
   archive(_callId);
   archive(_procName);
   
-  int size = 0;
+  size_t size = 0;
   archive(size);
   
   for (int i = 0; i < size; i++) {
