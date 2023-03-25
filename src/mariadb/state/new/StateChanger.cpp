@@ -366,6 +366,11 @@ namespace ultraverse::state::v2 {
             auto load_backup_end = std::chrono::steady_clock::now();
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
+
+
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle.get(), 0);
+            updateForeignKeys(dbHandle.get(), 0);
         }
 
         if (!_plan.procCallLogPath().empty()) {
