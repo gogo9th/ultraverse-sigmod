@@ -35,12 +35,15 @@ namespace ultraverse::mariadb {
         int pos() override;
         
         std::shared_ptr<base::DBEvent> currentEvent() override;
-        
+
+
     private:
         bool isMagicValid();
         
         std::shared_ptr<internal::EventHeader> readHeader();
-        
+
+        uint64_t readLenEncInt();
+
         void
         readFormatDescriptionEvent(std::shared_ptr<internal::EventHeader> header);
         
@@ -58,7 +61,7 @@ namespace ultraverse::mariadb {
         
         std::shared_ptr<RowEvent>
         readRowEvent(std::shared_ptr<internal::EventHeader> header, RowEvent::Type eventType, bool isV2);
-        
+
         LoggerPtr _logger;
         std::string _filename;
         
