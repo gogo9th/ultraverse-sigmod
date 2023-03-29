@@ -191,9 +191,9 @@ namespace ultraverse::mariadb {
     std::pair<std::string, int> RowEvent::readRow(TableMapEvent &tableMapEvent, int basePos) {
         uint64_t nullFields = 0;
         int nullFieldsSize = (_columns + 7) / 8;
-        
+
         memcpy(&nullFields, _rowData.get() + basePos, (_columns + 7) / 8);
-        
+
         // FIXME: 이거 제거
         std::stringstream sstream;
         
@@ -207,7 +207,7 @@ namespace ultraverse::mariadb {
             auto offset = basePos + nullFieldsSize + rowSize;
             
             
-            if ((nullFields & (1 << i)) != 0) {
+            if ((nullFields & (((int64_t) 1) << i)) != 0) {
                 // NULL
                 sstream << columnName << "=";
                 
@@ -237,10 +237,10 @@ namespace ultraverse::mariadb {
                     strLength = columnSize;
                     strLengthSize = 0;
                 }
-                
+
                 std::unique_ptr<uint8_t> rawValue(new uint8_t[strLength]);
                 memcpy(rawValue.get(), _rowData.get() + offset + strLengthSize, strLength);
-                
+
                 std::string strValue((char *) rawValue.get(), strLength);
                 sstream << columnName << "=" << strValue;
     
