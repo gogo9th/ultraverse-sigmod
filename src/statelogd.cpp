@@ -364,7 +364,11 @@ public:
             it++;
 
             while (true) {
-                sstream << it->get<std::string>();
+                if (it->is_null()) {
+                    sstream << "NULL";
+                } else {
+                    sstream << '\'' << it->get<std::string>() << '\'';
+                }
 
                 it++;
 
