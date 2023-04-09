@@ -5,8 +5,9 @@
 #include "ProcCall.hpp"
 
 ProcCall::ProcCall():
+  _callId(0),
   _procName(),
-  _callId(0)
+  _callInfo()
 {
 
 }
@@ -19,6 +20,13 @@ uint64_t ProcCall::callId() const {
 }
 void ProcCall::setCallId(uint64_t callId) {
   _callId = callId;
+}
+
+std::string ProcCall::callInfo() const {
+  return _callInfo;
+}
+void ProcCall::setCallInfo(const std::string &callInfo) {
+  _callInfo = callInfo;
 }
 
 void ProcCall::setProcName(const std::string &procName) {

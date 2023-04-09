@@ -12,6 +12,7 @@ template <typename Archive>
 void ProcCall::save(Archive &archive) const {
   archive(_callId);
   archive(_procName);
+  archive(_callInfo);
   
   archive(_statements.size());
   for (const auto &statement: _statements) {
@@ -23,7 +24,8 @@ template <typename Archive>
 void ProcCall::load(Archive &archive) {
   archive(_callId);
   archive(_procName);
-  
+  archive(_callInfo);
+
   size_t size = 0;
   archive(size);
   

@@ -24,7 +24,10 @@ public:
   
   std::string procName() const;
   void setProcName(const std::string &procName);
-  
+
+  std::string callInfo() const;
+  void setCallInfo(const std::string &callInfo);
+
   std::vector<std::string> &statements();
   
   template <typename Archive>
@@ -36,6 +39,8 @@ public:
 private:
   uint64_t _callId;
   std::string _procName;
+  std::string _callInfo;
+
   std::vector<std::string> _statements;
 };
 

@@ -30,7 +30,7 @@ private:
   bool isProcedureCall(const std::string &statement);
   bool isProcedureHint(const std::string &statement);
   
-  std::pair<std::string, uint64_t> extractProcedureHint(const std::string &statement);
+  std::tuple<uint64_t, std::string, std::string> extractProcedureHint(const std::string &statement);
   
   /**
    * connectionId, ProcCall

@@ -13,6 +13,7 @@
 #include <mysql/plugin_audit.h>
 
 #include <cereal/archives/binary.hpp>
+#include <nlohmann/json.hpp>
 
 #include "ProcAssistPlugin.hpp"
 
@@ -113,12 +114,17 @@ void ProcAssistPlugin::handleGeneralEvent(THD *thd,
         if (isProcedureHint(statement))
         {
           auto procCall= _callList[connectionId];
-          auto pair= extractProcedureHint(statement);
+          auto tuple= extractProcedureHint(statement);
 
           if (procCall->callId() == 0) {
-            fprintf(stderr, "procName: %s / callId: %ld\n", pair.first.c_str(), pair.second);
-            procCall->setProcName(pair.first);
-            procCall->setCallId(pair.second);
+            uint64_t callId = std::get<0>(tuple);
+            std::string procName = std::get<1>(tuple);
+            std::string callInfo = std::get<2>(tuple);
+
+            fprintf(stderr, "procName: %s / callId: %ld\n", procName.c_str(), callId);
+            procCall->setProcName(procName);
+            procCall->setCallId(callId);
+            procCall->setCallInfo(callInfo);
           }
         }
         else
@@ -161,37 +167,29 @@ bool ProcAssistPlugin::isProcedureHint(const std::string &statement)
   return statement.find("INSERT INTO __ULTRAVERSE_PROCEDURE_HINT") == 0;
 }
 
-std::pair<std::string, uint64_t>
+std::tuple<uint64_t, std::string, std::string>
 ProcAssistPlugin::extractProcedureHint(const std::string &statement)
 {
+  using namespace nlohmann;
+
   std::string procName = "unknown";
   uint64_t callId = 0;
-  
-  {
-    int pos= statement.find('\'') + 1;
-    std::stringstream sstream;
 
-    while (statement[pos] != '\'')
-    {
-      sstream.put(statement[pos]);
-      pos++;
-    }
-    
-    procName = sstream.str();
-  }
+  int nameConstPos = statement.find("_utf8mb4");
+  int nameConstRPos = statement.rfind("COLLATE");
+  int lpos = statement.find('\'', nameConstPos) + 1;
+  int rpos = statement.rfind('\'', nameConstRPos);
 
-  {
-    int pos= statement.rfind(',') + 1;
-    std::stringstream sstream;
+  std::string jsonStr = statement.substr(lpos, rpos - lpos);
+  // FIXME
+  jsonStr.erase(std::remove(jsonStr.begin(), jsonStr.end(), '\\'), jsonStr.end());
 
-    while (statement[pos] >= '0' && statement[pos] <= '9')
-    {
-      sstream.put(statement[pos]);
-      pos++;
-    }
-    
-    callId = std::stoul(sstream.str());
-  }
-  
-  return std::make_pair(procName, callId);
+  fprintf(stderr, "JSON: %s\n", jsonStr.c_str());
+
+  auto jsonObj = json::parse(jsonStr);
+
+  callId = jsonObj.at(0).get<uint64_t>();
+  procName = jsonObj.at(1).get<std::string>();
+
+  return std::make_tuple(callId, procName, jsonStr);
 }
