@@ -151,6 +151,7 @@ sub mysqldump {
     my $pid = open2(
         my $stdout, '<&STDIN',
         'mysqldump', 
+        '-R', # include procedures
         '-h', '127.0.0.1',
         '-u', 'admin',
         '--password=password',
@@ -159,7 +160,10 @@ sub mysqldump {
 
     while (waitpid($pid, WNOHANG) == 0) {
         my $line = <$stdout>;
-        print $fh_dbdump $line if $line;
+        if ($line) {
+            $line =~ s/DEFINER=[^\s]+//g;
+            print $fh_dbdump $line;
+        }
     }
 
     my $retcode = ${^CHILD_ERROR_NATIVE} >> 8;
