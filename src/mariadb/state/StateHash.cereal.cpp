@@ -64,19 +64,21 @@ namespace ultraverse::state {
 
         assert(bnSize != 0);
         assert(listSize != 0);
-    
+
+        /*
         _moduloList.reserve(listSize);
         _hashList.reserve(listSize);
 
         for (auto i = 0; i < listSize * 2; i++) {
             StateHash::BigNumPtr bignum(BN_new(), BN_free);
             BN_bin2bn(srcPtr->data() + (bnSize * i), bnSize, bignum.get());
-            
+
             if (i < listSize) {
                 _moduloList.push_back(bignum);
             } else {
                 _hashList.push_back(bignum);
             }
         }
+        */
     }
 }

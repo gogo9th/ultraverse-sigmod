@@ -135,6 +135,9 @@ namespace ultraverse::state::v2 {
         std::mutex _clusterMutex;
         std::condition_variable _clusterCondvar;
         bool _isClusterReady;
+
+        std::mutex _autoIncrementMutex;
+        bool _autoIncrementSet;
         
         RowCluster _rowCluster;
         // FIXME: 네이밍

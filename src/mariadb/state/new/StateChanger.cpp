@@ -16,8 +16,10 @@
 #include "GIDIndexReader.hpp"
 #include "cluster/RowCluster.hpp"
 
-#include "StateChanger.hpp"
 #include "base/TaskExecutor.hpp"
+#include "utils/StringUtil.hpp"
+
+#include "StateChanger.hpp"
 
 namespace ultraverse::state::v2 {
     
@@ -184,7 +186,7 @@ namespace ultraverse::state::v2 {
         
         if (!_plan.dbDumpPath().empty()) {
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
-    
+
             auto dbHandle = _dbHandlePool.take();
             updatePrimaryKeys(dbHandle.get(), 0);
             updateForeignKeys(dbHandle.get(), 0);
@@ -271,6 +273,10 @@ namespace ultraverse::state::v2 {
                     dbHandle.executeQuery("COMMIT");
                 } else {
                     for (auto &query: transaction->queries()) {
+                        if (query->flags() & Query::FLAG_IS_PROCCALL_QUERY) {
+                            continue;
+                        }
+
                         std::scoped_lock scopedLock(mutex);
                         bool isColumnGraphChanged =
                             _columnGraph->add(query->readSet(), READ, _context->foreignKeys) ||
@@ -748,7 +754,7 @@ namespace ultraverse::state::v2 {
         std::function<void(StateItem &)> walkStateItem = [this, flags, &walkStateItem, &clusterMap, &rowCluster](StateItem &stateItem) {
             if (!stateItem.name.empty()) {
                 auto &keyColumns = _plan.keyColumns();
-                
+
                 auto resolvedName = RowCluster::resolveForeignKey(stateItem.name, _context->foreignKeys);
                 auto tmp = stateItem;
                 tmp.name = resolvedName;
@@ -797,12 +803,13 @@ namespace ultraverse::state::v2 {
                         );
                     }
 
+                    std::string aliasName(std::move(utility::toLower(resolvedAlias.name)));
                    
-                    if (clusterMap[resolvedAlias.name] == nullptr) {
-                        clusterMap[resolvedAlias.name] = std::make_shared<StateRange>();
+                    if (clusterMap[aliasName] == nullptr) {
+                        clusterMap[aliasName] = std::make_shared<StateRange>();
                     }
                     
-                    clusterMap[resolvedAlias.name] = StateRange::OR(*clusterMap[resolvedAlias.name], *stateRange);
+                    clusterMap[aliasName] = StateRange::OR(*clusterMap[aliasName], *stateRange);
                     // FK
                     
                     if (flags & CLUSTER_EXPAND_FLAG_INCLUDE_FK) {
@@ -835,12 +842,14 @@ namespace ultraverse::state::v2 {
                                     break;
                             }
                         }
-    
-                        if (clusterMap[stateItem.name] == nullptr) {
-                            clusterMap[stateItem.name] = std::make_shared<StateRange>();
+
+                        std::string exprName(std::move(utility::toLower(stateItem.name)));
+
+                        if (clusterMap[exprName] == nullptr) {
+                            clusterMap[exprName] = std::make_shared<StateRange>();
                         }
                         
-                        clusterMap[stateItem.name] = StateRange::OR(*clusterMap[stateItem.name], *stateRange2);
+                        clusterMap[exprName] = StateRange::OR(*clusterMap[exprName], *stateRange2);
                     }
                 }
             }
@@ -849,7 +858,8 @@ namespace ultraverse::state::v2 {
                 walkStateItem(subStateItem);
             }
         };
-        
+
+
         if (!_plan.keyColumns().empty()) {
             for (auto &query: transaction.queries()) {
                 
@@ -901,7 +911,7 @@ namespace ultraverse::state::v2 {
         }
     
         const auto &keyColumns = _plan.keyColumns();
-        
+
         if (flags & CLUSTER_EXPAND_FLAG_WILDCARD && containsUnrelatedQuery) {
             for (const auto &keyColumn: keyColumns) {
                 rowCluster.setWildcard(keyColumn, true);
@@ -1081,7 +1091,8 @@ namespace ultraverse::state::v2 {
         mariadb::DBHandle &dbHandle
     ) {
         const bool isTargetTransaction = _plan.isRollbackGid(transaction->gid());
-        
+        const bool isProcedureCall = transaction->flags() & Transaction::FLAG_IS_PROCEDURE_CALL;
+
         if (_hashWatcher != nullptr && isTargetTransaction) {
             dbHandle.executeQuery("use " + _intermediateDBName);
             dbHandle.executeQuery(fmt::format("/* ULTRAVERSE_HASHWATCHER_START_{} */ CREATE TABLE __ULTRAVERSE_HASHWATCHER_START__( dummy INTEGER )", _intermediateDBName));
@@ -1118,10 +1129,13 @@ namespace ultraverse::state::v2 {
         _logger->info("[#{}->#{}] replaying transaction", rootNodeId, nodeId);
         dbHandle.executeQuery("use " + _intermediateDBName);
         dbHandle.executeQuery("BEGIN");
-        
-    
+
         for (auto &query: transaction->queries()) {
             if (query->database() != _plan.dbName()) {
+                goto NEXT_QUERY;
+            }
+
+            if (query->statement().find("INSERT INTO __ULTRAVERSE_PROCEDURE_HINT") == 0) {
                 goto NEXT_QUERY;
             }
            
@@ -1136,26 +1150,36 @@ namespace ultraverse::state::v2 {
                 });
                 const bool needsForceExecution =
                     (transaction->gid() < _plan.lowestGidAvailable()) ||
-                    (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
-                
+                    (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE) ||
+                    (query->flags() & Query::FLAG_IS_PROCCALL_QUERY);
+
                 const bool skipQuery =
                       (_mode == OperationMode::NORMAL && isTargetTransaction)   ||
-                      !(needsForceExecution                               ||
-                      isDDL                                               ||
+                      query->flags() & Query::FLAG_IS_PROCCALL_RECOVERED_QUERY  ||
+                      !(needsForceExecution                                     ||
+                      isDDL                                                     ||
                       (isRelatedWithCluster && isRelatedWithColumnGraph));
     
-    
+
                 if (isRelatedWithColumnGraph && query->type() == Query::INSERT) {
                     auto tableName = StateUserQuery::SplitDBNameAndTableName(*query->writeSet().begin())[0];
                     if (_context->autoIncrements.find(tableName) == _context->autoIncrements.end()) {
                         _context->autoIncrements.insert({ tableName, getAutoIncrement(dbHandle, tableName) });
                     }
-                    
+
                     if (!skipQuery) {
-                        int64_t autoIncrement = _context->autoIncrements[tableName];
-                        
-                        _logger->trace("{}: setting AUTO_INCREMENT to {}", tableName, autoIncrement);
-                        setAutoIncrement(dbHandle, tableName, autoIncrement);
+                        std::scoped_lock<std::mutex> _aiLock(_autoIncrementMutex);
+                        if (!_autoIncrementSet) {
+                            int64_t autoIncrement = _context->autoIncrements[tableName];
+
+                            _logger->trace("{}: setting AUTO_INCREMENT to {}", tableName, autoIncrement);
+                            setAutoIncrement(dbHandle, tableName, autoIncrement);
+
+                            _autoIncrementSet = true;
+                        }
+                    } else if (skipQuery) {
+                        std::scoped_lock<std::mutex> _aiLock(_autoIncrementMutex);
+                        _autoIncrementSet = false;
                     }
     
                     _context->autoIncrements[tableName]++;
@@ -1198,6 +1222,10 @@ namespace ultraverse::state::v2 {
                     // _logger->trace("query marked as continuous");
                     goto NEXT_QUERY;
                 }
+
+                if (isProcedureCall && !(query->flags() & Query::FLAG_IS_PROCCALL_QUERY)) {
+                    goto MARK_TABLES_CHANGED;
+                }
                 
                 try {
                     __node__replayQuery(rootNodeId, nodeId, query, dbHandle);
@@ -1206,19 +1234,23 @@ namespace ultraverse::state::v2 {
                     dbHandle.executeQuery("ROLLBACK");
                     goto END_TRANSACTION;
                 }
+
+                MARK_TABLES_CHANGED: ;
                 
                 if (!isDDL && transaction->gid() > _plan.lowestGidAvailable() || transaction->flags() & Transaction::FLAG_FORCE_EXECUTE) {
                     std::scoped_lock lock(_changedTablesMutex);
-                    const std::string tableName = StateUserQuery::SplitDBNameAndTableName(
-                        *query->writeSet().begin())[0];
-                    
-                    _changedTables.insert(tableName);
+                    if (!query->writeSet().empty()) {
+                        const std::string tableName = StateUserQuery::SplitDBNameAndTableName(
+                            *query->writeSet().begin())[0];
+
+                        _changedTables.insert(tableName);
+                    }
                 }
             }
         
             NEXT_QUERY: ;
         }
-        
+
         // _logger->trace("[#{}->#{}] finalizing transaction", rootNodeId, nodeId);
         dbHandle.executeQuery("COMMIT");
         // _logger->debug("[#{}->#{}] releasing dbHandle", rootNodeId, nodeId);
@@ -1265,7 +1297,15 @@ namespace ultraverse::state::v2 {
                            mysql_error(dbHandle));
             throw std::runtime_error(mysql_error(dbHandle));
         }
-        
+
+        // 프로시저에서 반환한 result를 소모하지 않으면 commands out of sync 오류가 난다
+        do {
+            auto result = mysql_store_result(dbHandle);
+            if (result != nullptr) {
+                mysql_free_result(result);
+            }
+        } while (mysql_next_result(dbHandle) == 0);
+
         if (query->flags() & Query::FLAG_IS_DDL) {
             _logger->info("[#{}->#{}] updating foreign key..", rootNodeId, nodeId);
             updatePrimaryKeys(dbHandle, query->timestamp());
@@ -1318,15 +1358,10 @@ namespace ultraverse::state::v2 {
         MYSQL_RES *result = mysql_store_result(dbHandle);
         MYSQL_ROW row;
     
-        auto tolower = [](unsigned char c) { return std::tolower(c); };
-        
         while ((row = mysql_fetch_row(result)) != nullptr) {
-            std::string table(row[0]);
-            std::string column(row[1]);
-    
-            std::transform(table.begin(), table.end(), table.begin(), tolower);
-            std::transform(column.begin(), column.end(), column.begin(), tolower);
-       
+            std::string table(std::move(utility::toLower(row[0])));
+            std::string column(std::move(utility::toLower(row[1])));
+
             _logger->trace("updatePrimaryKeys(): adding primary key: {}.{}", table, column);
         
             primaryKeys.insert(table + "." + column);
@@ -1355,20 +1390,12 @@ namespace ultraverse::state::v2 {
         MYSQL_RES *result = mysql_store_result(dbHandle);
         MYSQL_ROW row;
         
-        auto tolower = [](unsigned char c) { return std::tolower(c); };
-        
         while ((row = mysql_fetch_row(result)) != nullptr) {
-            std::string fromTable(row[0]);
-            std::string fromColumn(row[1]);
+            std::string fromTable(std::move(utility::toLower(row[0])));
+            std::string fromColumn(std::move(utility::toLower(row[1])));
             
-            std::string toTable(row[2]);
-            std::string toColumn(row[3]);
-            
-            std::transform(fromTable.begin(), fromTable.end(), fromTable.begin(), tolower);
-            std::transform(fromColumn.begin(), fromColumn.end(), fromColumn.begin(), tolower);
-            std::transform(toTable.begin(), toTable.end(), toTable.begin(), tolower);
-            std::transform(toColumn.begin(), toColumn.end(), toColumn.begin(), tolower);
-            
+            std::string toTable(std::move(utility::toLower(row[2])));
+            std::string toColumn(std::move(utility::toLower(row[3])));
             
             // _logger->trace("updateForeignKeys(): adding foreign key: {}.{} -> {}.{}", fromTable, fromColumn, toTable, toColumn);
             

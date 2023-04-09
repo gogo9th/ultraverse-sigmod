@@ -7,6 +7,8 @@
 #include <fstream>
 #include <signal.h>
 
+#include <nlohmann/json.hpp>
+
 #include "mariadb/state/new/Transaction.hpp"
 #include "mariadb/state/new/ColumnDependencyGraph.hpp"
 #include "mariadb/state/new/StateLogWriter.hpp"
@@ -309,21 +311,30 @@ public:
 
                         // rowset, changeset이 없으므로 해시 계산 불가능
                         if (!queryEvent->parse()) {
-                            // HACK: writeSet만이라도 건짐
-                            // 미래의 나에게: 아래 parseDDL이 select문에서 이상하게 동작함. pysqlparser를 써야 할지도 몰라.
-                            queryEvent->parseDDL(1);
+                            // HACK: readSet이라도 건짐
+                            queryEvent->parseSelect();
                         }
 
                         query2->setDatabase(queryEvent->database());
                         query2->setStatement(queryEvent->statement());
                         query2->setTimestamp(queryEvent->timestamp());
-                        query2->setFlags(state::v2::Query::FLAG_IS_PROCCALL_QUERY);
+                        query2->setFlags(state::v2::Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
 
                         query2->readSet().insert(
                             queryEvent->readSet().begin(), queryEvent->readSet().end()
                         );
                         query2->writeSet().insert(
                             queryEvent->writeSet().begin(), queryEvent->writeSet().end()
+                        );
+
+                        query2->itemSet().insert(
+                            query2->itemSet().end(),
+                            queryEvent->itemSet().begin(), queryEvent->itemSet().end()
+                        );
+
+                        query2->whereSet().insert(
+                            query2->whereSet().end(),
+                            queryEvent->whereSet().begin(), queryEvent->whereSet().end()
                         );
 
                         *_pendingTxn << query2;
@@ -341,6 +352,51 @@ public:
 
 
         if (_pendingProcCall != nullptr) {
+            using namespace nlohmann;
+
+            auto callInfo = json::parse(_pendingProcCall->callInfo());
+
+            std::stringstream sstream;
+            sstream << "CALL " << _pendingProcCall->procName() << "(";
+
+            auto it = callInfo.begin();
+            it++;
+            it++;
+
+            while (true) {
+                sstream << it->get<std::string>();
+
+                it++;
+
+                if (it != callInfo.end()) {
+                    sstream << ",";
+                } else {
+                    break;
+                }
+            }
+
+            sstream << ")";
+
+
+            auto procCallQuery = std::make_shared<state::v2::Query>();
+            auto queryEvent = std::make_shared<mariadb::QueryEvent>(
+                _pendingTxn->queries()[0]->database(),
+                sstream.str(),
+                _pendingTxn->queries()[0]->timestamp()
+            );
+
+
+            procCallQuery->setDatabase(queryEvent->database());
+            procCallQuery->setStatement(queryEvent->statement());
+            procCallQuery->setTimestamp(queryEvent->timestamp());
+            procCallQuery->setFlags(state::v2::Query::FLAG_IS_PROCCALL_QUERY);
+
+            *_pendingTxn << procCallQuery;
+
+
+            _pendingTxn->setFlags(
+                _pendingTxn->flags() | state::v2::Transaction::FLAG_IS_PROCEDURE_CALL
+            );
             _pendingProcCall = nullptr;
         }
 
@@ -525,32 +581,26 @@ public:
     }
 
     std::pair<std::string, uint64_t> extractProcedureHint(const std::string &statement) {
+        using namespace nlohmann;
+
         std::string procName = "unknown";
         uint64_t callId = 0;
 
-        {
-            int pos = statement.find('\'') + 1;
-            std::stringstream sstream;
+        int nameConstPos = statement.find("_utf8mb4");
+        int nameConstRPos = statement.rfind("COLLATE");
+        int lpos = statement.find('\'', nameConstPos) + 1;
+        int rpos = statement.rfind('\'', nameConstRPos);
 
-            while (statement[pos] != '\'') {
-                sstream.put(statement[pos]);
-                pos++;
-            }
+        std::string jsonStr = statement.substr(lpos, rpos - lpos);
+        // FIXME
+        jsonStr.erase(std::remove(jsonStr.begin(), jsonStr.end(), '\\'), jsonStr.end());
 
-            procName = sstream.str();
-        }
+        fprintf(stderr, "JSON: %s\n", jsonStr.c_str());
 
-        {
-            int pos = statement.rfind(',') + 1;
-            std::stringstream sstream;
+        auto jsonObj = json::parse(jsonStr);
 
-            while (statement[pos] >= '0' && statement[pos] <= '9') {
-                sstream.put(statement[pos]);
-                pos++;
-            }
-
-            callId = std::stoul(sstream.str());
-        }
+        callId = jsonObj.at(0).get<uint64_t>();
+        procName = jsonObj.at(1).get<std::string>();
 
         return std::make_pair(procName, callId);
     }

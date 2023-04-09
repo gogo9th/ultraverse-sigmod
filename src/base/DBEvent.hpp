@@ -87,7 +87,8 @@ namespace ultraverse::base {
          * try to parse SQL statement if needed.
          */
         bool parse();
-        
+
+        bool parseSelect();
         bool parseDDL(int limit = -1);
         
         std::vector<int16_t> tokens() const;

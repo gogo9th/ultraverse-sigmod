@@ -17,6 +17,8 @@ namespace ultraverse::utility {
     std::string replaceAll(const std::string &source, const std::string from, const std::string to);
     
     std::string normalizeColumnName(const std::string &columnName);
+
+    std::string toLower(const std::string &source);
 }
 
 

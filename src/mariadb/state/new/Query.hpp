@@ -36,8 +36,11 @@ namespace ultraverse::state::v2 {
     
         static const uint8_t FLAG_IS_IGNORABLE      = 0b00000001;
         static const uint8_t FLAG_IS_DDL            = 0b00000010;
-        static const uint8_t FLAG_IS_PROCCALL_QUERY = 0b00001000;
-        static const uint8_t FLAG_IS_CONTINUOUS     = 0b10000000;
+
+        static const uint8_t FLAG_IS_PROCCALL_RECOVERED_QUERY = 0b00001000;
+        static const uint8_t FLAG_IS_PROCCALL_QUERY           = 0b00010000;
+
+        static const uint8_t FLAG_IS_CONTINUOUS = 0b10000000;
 
         Query();
         

@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+#include <fmt/format.h>
+
 #include "mariadb/DBEvent.hpp"
 #include "StateChanger.hpp"
 
@@ -128,7 +130,9 @@ namespace ultraverse::state::v2 {
             waitpid(pid, &wstatus, 0);
             
             if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0) {
-                throw std::runtime_error("failed to restore backup");
+                throw std::runtime_error(
+                    fmt::format("failed to restore backup: WEXITSTATUS {}", WEXITSTATUS(wstatus))
+                );
             }
         }
     }

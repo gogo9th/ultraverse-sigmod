@@ -379,14 +379,9 @@ namespace ultraverse::state::v2 {
     
     std::string RowCluster::resolveForeignKey(std::string exprName, const std::vector<ForeignKey> &foreignKeys) {
         auto vec = utility::splitTableName(exprName);
-        auto &tableName  = vec.first;
-        auto &columnName = vec.second;
+        auto tableName  = std::move(utility::toLower(vec.first));
+        auto columnName = std::move(utility::toLower(vec.second));
     
-        auto tolower = [](unsigned char c) { return std::tolower(c); };
-    
-        std::transform(tableName.begin(), tableName.end(), tableName.begin(), tolower);
-        std::transform(columnName.begin(), columnName.end(), columnName.begin(), tolower);
-        
         auto it = std::find_if(foreignKeys.cbegin(), foreignKeys.cend(), [&tableName, &columnName](auto &foreignKey) {
             if (foreignKey.fromTable->getCurrentName() == tableName && columnName == foreignKey.fromColumn) {
                 return true;
@@ -395,7 +390,7 @@ namespace ultraverse::state::v2 {
         });
         
         if (it == foreignKeys.end()) {
-            return exprName;
+            return std::move(utility::toLower(exprName));
         } else {
             return resolveForeignKey(it->toTable->getCurrentName() + "." + it->toColumn, foreignKeys);
         }

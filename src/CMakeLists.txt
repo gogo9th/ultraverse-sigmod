@@ -5,6 +5,7 @@ find_package(BISON REQUIRED)
 find_package(FLEX REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
+find_package(mimalloc REQUIRED)
 
 # pkg_check_modules(JEMALLOC REQUIRED jemalloc)
 pkg_check_modules(MARIADB REQUIRED mariadb)
@@ -13,8 +14,9 @@ pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 pkg_check_modules(PYTHON3 REQUIRED python3)
 
+
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-# add_compile_options(-msse4.2 -O2)
+add_compile_options(-msse4.2 -O2)
 # add_link_options(-fsanitize=leak)
 
 set(ULTRAVERSE_DEPENDENCIES
@@ -24,6 +26,7 @@ set(ULTRAVERSE_DEPENDENCIES
     ${SPDLOG_LIBRARIES}
     ${Boost_LIBRARIES}
     ${GRAPHVIZ_LIBRARIES}
+    mimalloc
     python3
     
     sqlparser

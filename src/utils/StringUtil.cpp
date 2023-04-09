@@ -2,11 +2,12 @@
 // Created by cheesekun on 1/9/23.
 //
 
-#include "StringUtil.hpp"
-
 #include <sstream>
 #include <vector>
 #include <utility>
+#include <algorithm>
+
+#include "StringUtil.hpp"
 
 namespace ultraverse::utility {
     std::pair<std::string, std::string> splitTableName(const std::string &input) {
@@ -67,5 +68,14 @@ namespace ultraverse::utility {
         }
         
         return value;
+    }
+
+    std::string toLower(const std::string &source) {
+        static const auto tolower = [](unsigned char c) { return std::tolower(c); };
+        std::string result(source);
+
+        std::transform(result.begin(), result.end(), result.begin(), tolower);
+
+        return std::move(result);
     }
 }

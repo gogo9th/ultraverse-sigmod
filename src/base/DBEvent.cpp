@@ -46,7 +46,158 @@ namespace ultraverse::base {
         
         return result;
     }
-    
+
+    bool QueryEventBase::parseSelect() {
+        static const auto tolower = [](unsigned char c) { return std::tolower(c); };
+
+        constexpr int PHASE_COLUMNS = 1;
+        constexpr int PHASE_TABLE_NAME = 2;
+        constexpr int PHASE_WHERE_COL = 3;
+        constexpr int PHASE_WHERE_VAL = 4;
+
+        int phase = PHASE_COLUMNS;
+        int depth = 0;
+
+        bool isNameConst = false;
+        bool isNameConstVal = false;
+        bool skip = false;
+
+        std::vector<int16_t> tokens;
+        std::vector<size_t> tokenPos;
+        hsql::SQLParser::tokenize(statement(), &tokens, &tokenPos);
+
+        std::string tableName;
+        std::string whereCol;
+        std::set<std::string> readSet;
+        std::unordered_map<std::string, int64_t> whereSet;
+
+        int i = 0;
+        for (auto &token: tokens) {
+            if (token == SQL_SELECT) {
+                phase = PHASE_COLUMNS;
+                skip = false;
+                goto NEXT_TOKEN;
+            } else if (token == SQL_FROM) {
+                phase = PHASE_TABLE_NAME;
+                skip = false;
+                goto NEXT_TOKEN;
+            } else if (token == SQL_WHERE) {
+                phase = PHASE_WHERE_COL;
+                skip = false;
+                goto NEXT_TOKEN;
+            }
+
+            if (token == SQL_NAME_CONST) {
+                isNameConst = true;
+                goto NEXT_TOKEN;
+            }
+
+            if (token == '(') {
+                depth++;
+                goto NEXT_TOKEN;
+            }
+
+            if (token == ')') {
+                depth--;
+                goto NEXT_TOKEN;
+            }
+
+            if (token == ',' || token == SQL_AND || token == SQL_OR) {
+                if (depth == 0) {
+                    skip = false;
+                    isNameConst = false;
+                    isNameConstVal = false;
+                }
+                goto NEXT_TOKEN;
+            } else if (skip) {
+                goto NEXT_TOKEN;
+            }
+
+            {
+                std::string value;
+                if (i + 1 == tokens.size()) {
+                    value = statement().substr(tokenPos[i]);
+                } else {
+                    tokenPos[i + 1] - tokenPos[i];
+                    value = statement().substr(tokenPos[i], tokenPos[i + 1] - tokenPos[i]);
+                }
+
+
+                if (phase == PHASE_COLUMNS) {
+                    std::transform(value.begin(), value.end(), value.begin(), tolower);
+                    readSet.insert(utility::normalizeColumnName(value));
+                    skip = true;
+                } else if (phase == PHASE_WHERE_COL) {
+                    std::transform(value.begin(), value.end(), value.begin(), tolower);
+                    readSet.insert(utility::normalizeColumnName(value));
+                    whereCol = utility::normalizeColumnName(value);
+
+                    phase = PHASE_WHERE_VAL;
+                } else if (phase == PHASE_WHERE_VAL) {
+                    if (token == '=' ||
+                        token == SQL_LESS ||
+                        token == SQL_LESSEQ ||
+                        token == SQL_EQUAL ||
+                        token == SQL_EQUALS ||
+                        token == SQL_GREATER ||
+                        token == SQL_GREATEREQ
+                    ) {
+                        goto NEXT_TOKEN;
+                    }
+
+                    if (isNameConst && !isNameConstVal) {
+                        isNameConstVal = true;
+                        goto NEXT_TOKEN;
+                    }
+
+                    whereSet.emplace(whereCol, (int64_t) std::stoll(value));
+
+                    skip = true;
+                    phase = PHASE_WHERE_COL;
+                } else if (phase == PHASE_TABLE_NAME) {
+                    if (tableName.empty()) {
+                        tableName = utility::normalizeColumnName(value);
+                        std::transform(tableName.begin(), tableName.end(), tableName.begin(), tolower);
+                    }
+                    skip = true;
+                }
+            }
+
+            NEXT_TOKEN:
+            i++;
+        }
+
+        for (const auto &token: readSet) {
+            if (token.find('.') == std::string::npos) {
+                _readSet.insert(tableName + "." + token);
+            } else {
+                _readSet.insert(token);
+            }
+        }
+
+        for (const auto &pair: whereSet) {
+            StateItem stateItem;
+            StateData data;
+
+            data.Set(pair.second);
+
+            if (pair.first.find('.') == std::string::npos) {
+                stateItem.name = tableName + "." + pair.first;
+            } else {
+                stateItem.name = pair.first;
+            }
+
+            stateItem.condition_type = EN_CONDITION_NONE;
+            stateItem.function_type = FUNCTION_EQ;
+
+
+            stateItem.data_list.emplace_back(std::move(data));
+            _whereSet.emplace_back(std::move(stateItem));
+        }
+
+        return true;
+    }
+
     bool QueryEventBase::parseDDL(int limit) {
         std::vector<int16_t> tokens;
         std::vector<size_t> tokenPos;
