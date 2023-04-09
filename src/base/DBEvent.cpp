@@ -150,7 +150,11 @@ namespace ultraverse::base {
                         goto NEXT_TOKEN;
                     }
 
-                    whereSet.emplace(whereCol, (int64_t) std::stoll(value));
+                    try {
+                        whereSet.emplace(whereCol, (int64_t) std::stoll(value));
+                    } catch (std::invalid_argument &e) {
+
+                    }
 
                     skip = true;
                     phase = PHASE_WHERE_COL;
