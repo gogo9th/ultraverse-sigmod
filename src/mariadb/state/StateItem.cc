@@ -741,7 +741,7 @@ void StateRange::OR_FAST(const StateRange &b) {
         // range->insert(range->range->end(), a.range->begin(), a.range->end());
         range->insert(range->end(), b.range->begin(), b.range->end());
         // range.range.insert(range.range.end(), b.range.begin(), b.range.end());
-        range = OR_ARRANGE(range);
+        // range = OR_ARRANGE(range);
     }
 }
 
@@ -906,6 +906,10 @@ int StateRange::MAX(const StateData &a, const StateData &b)
   if (a == b && a.IsEqual())
     return 0;
   return 1;
+}
+
+void StateRange::arrangeSelf() {
+    range = OR_ARRANGE(range);
 }
 
 StateItem::StateItem()

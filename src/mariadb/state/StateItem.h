@@ -178,6 +178,8 @@ public:
   template <typename Archive>
   void serialize(Archive &archive);
 
+  void arrangeSelf();
+
 private:
   enum EN_VALID
   {
