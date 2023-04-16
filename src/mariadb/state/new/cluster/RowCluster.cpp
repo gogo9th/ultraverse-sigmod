@@ -133,7 +133,7 @@ namespace ultraverse::state::v2 {
             if (pair1.second) {
                 return;
             }
-            _logger->trace("visiting node {}: {}", pair1.first, _clusterMap[columnName][pair1.first].first->MakeWhereQuery(columnName));
+            _logger->trace("visiting node {}", pair1.first);
             
             pair1.second = true;
             
@@ -189,6 +189,11 @@ namespace ultraverse::state::v2 {
             
             visitNode(*vi, range, gidList);
             newCluster.emplace_back(range, std::move(gidList));
+        }
+
+        for (int i = 0; i < newCluster.size(); i++) {
+            _logger->trace("performing OR_ARRANGE.. {} / {}", i, newCluster.size());
+            newCluster[i].first->arrangeSelf();
         }
         
         cluster = newCluster;
@@ -264,7 +269,9 @@ namespace ultraverse::state::v2 {
         while (it != cluster.end()) {
             first.first->OR_FAST(*(*it++).first);
         }
-        
+
+        first.first->arrangeSelf();
+
         cluster.clear();
         cluster.push_back(first);
         
