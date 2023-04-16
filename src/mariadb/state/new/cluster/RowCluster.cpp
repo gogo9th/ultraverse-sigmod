@@ -300,10 +300,12 @@ namespace ultraverse::state::v2 {
     
     std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> RowCluster::getKeyRangeOf2(Transaction &transaction, const std::string &keyColumn, const std::vector<ForeignKey> &foreignKeys) {
         std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>> keyRanges;
-        
-        for (auto &range: _clusterMap.at(keyColumn)) {
-            if (isTransactionRelated(transaction.gid(), range.second)) {
-                keyRanges.push_back(range);
+
+        if (_clusterMap.find(keyColumn) != _clusterMap.end()) {
+            for (auto &range: _clusterMap.at(keyColumn)) {
+                if (isTransactionRelated(transaction.gid(), range.second)) {
+                    keyRanges.push_back(range);
+                }
             }
         }
         
