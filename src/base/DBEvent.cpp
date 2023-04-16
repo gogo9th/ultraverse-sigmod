@@ -336,56 +336,76 @@ namespace ultraverse::base {
         }
         
         if (expr->isType(hsql::kExprOperator)) {
-            StateItem stateItem;
-    
-            if (expr->name != nullptr) {
-                stateItem.name = utility::normalizeColumnName(std::string(expr->name));
-            }
-            
-            stateItem.condition_type = EN_CONDITION_NONE;
-            stateItem.function_type = FUNCTION_NONE;
-            
-            switch (expr->opType) {
-                case hsql::OperatorType::kOpAnd:
-                    stateItem.condition_type = EN_CONDITION_AND;
-                    break;
-                case hsql::OperatorType::kOpOr:
-                    stateItem.condition_type = EN_CONDITION_OR;
-                    break;
-                case hsql::OperatorType::kOpEquals:
+            if (expr->opType == hsql::OperatorType::kOpIn) {
+                // TODO: X = A OR X = B OR ... 으로
+                std::string name = utility::normalizeColumnName(std::string(expr->expr->name));
+
+                for (auto &expr2: *expr->exprList) {
+                    StateItem stateItem;
+                    stateItem.name = name;
+                    stateItem.condition_type = EN_CONDITION_NONE;
                     stateItem.function_type = FUNCTION_EQ;
-                    break;
-                case hsql::OperatorType::kOpNotEquals:
-                    stateItem.function_type = FUNCTION_NE;
-                    break;
-                case hsql::OperatorType::kOpBetween:
-                    stateItem.function_type = FUNCTION_BETWEEN;
-                    break;
-                case hsql::OperatorType::kOpGreaterEq:
-                    stateItem.function_type = FUNCTION_GE;
-                    break;
-                case hsql::OperatorType::kOpGreater:
-                    stateItem.function_type = FUNCTION_GT;
-                    break;
-                case hsql::OperatorType::kOpLessEq:
-                    stateItem.function_type = FUNCTION_LE;
-                    break;
-                case hsql::OperatorType::kOpLess:
-                    stateItem.function_type = FUNCTION_LT;
-                    break;
-                default:
-                    break;
-            }
-            
-            walkExpr(expr->expr, stateItem, readSet, rootTable, false);
-            walkExpr(expr->expr2, stateItem, readSet, rootTable, false);
-            
-            if (isRoot) {
+
+                    walkExpr(expr2, stateItem, readSet, rootTable, false);
+
+                    parent.arg_list.push_back(stateItem);
+                }
+
                 parent.condition_type = EN_CONDITION_OR;
                 parent.function_type = FUNCTION_NONE;
-                parent.arg_list.push_back(stateItem);
             } else {
-                parent.arg_list.push_back(stateItem);
+                StateItem stateItem;
+
+                if (expr->name != nullptr) {
+                    stateItem.name = utility::normalizeColumnName(std::string(expr->name));
+                }
+
+                stateItem.condition_type = EN_CONDITION_NONE;
+                stateItem.function_type = FUNCTION_NONE;
+
+                switch (expr->opType) {
+                    case hsql::OperatorType::kOpAnd:
+                        stateItem.condition_type = EN_CONDITION_AND;
+                        break;
+                    case hsql::OperatorType::kOpOr:
+                        stateItem.condition_type = EN_CONDITION_OR;
+                        break;
+                    case hsql::OperatorType::kOpEquals:
+                        stateItem.function_type = FUNCTION_EQ;
+                        break;
+                    case hsql::OperatorType::kOpNotEquals:
+                        stateItem.function_type = FUNCTION_NE;
+                        break;
+                    case hsql::OperatorType::kOpBetween:
+                        stateItem.function_type = FUNCTION_BETWEEN;
+                        break;
+                    case hsql::OperatorType::kOpGreaterEq:
+                        stateItem.function_type = FUNCTION_GE;
+                        break;
+                    case hsql::OperatorType::kOpGreater:
+                        stateItem.function_type = FUNCTION_GT;
+                        break;
+                    case hsql::OperatorType::kOpLessEq:
+                        stateItem.function_type = FUNCTION_LE;
+                        break;
+                    case hsql::OperatorType::kOpLess:
+                        stateItem.function_type = FUNCTION_LT;
+                        break;
+                    default:
+                        break;
+                }
+
+                walkExpr(expr->expr, stateItem, readSet, rootTable, false);
+                walkExpr(expr->expr2, stateItem, readSet, rootTable, false);
+
+                if (isRoot) {
+                    parent.condition_type = EN_CONDITION_OR;
+                    parent.function_type = FUNCTION_NONE;
+                    parent.arg_list.push_back(stateItem);
+                } else {
+                    parent.arg_list.push_back(stateItem);
+                }
+
             }
             return;
         }
