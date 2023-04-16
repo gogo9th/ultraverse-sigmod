@@ -230,6 +230,8 @@ sub bootstrap {
             croak("failed to start MariaDB");
         }
 
+        sleep 10;
+
         say colored("starting ", "bold white"), 
             colored("benchbase", "bold blue"); 
 
