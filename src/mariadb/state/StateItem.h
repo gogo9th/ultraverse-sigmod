@@ -89,6 +89,21 @@ private:
   UNION_RAW_DATA d;
 };
 
+/**
+ * @copilot this class represents a range of SQL where clause.
+ *          for example,
+ *          - "WHERE colA > 10 and colA < 20" is represented as below: (pseudo code)
+ *          <code>
+ *          StateRange {
+ *              is_equal: false,
+ *              range: [
+ *                  ST_RANGE { begin: 10, end: 20 }
+ *              ]
+ *          }
+ *          </code>
+ *
+ * @note 이 코드의 일부는 GitHub copilot로부터 어시스트 받아 작성하였습니다.
+ */
 class StateRange
 {
 public:
@@ -97,20 +112,48 @@ public:
     StateData begin;
     StateData end;
     
-    bool empty() {
+    bool empty() const {
         return begin.Type() == en_column_data_null &&
                end.Type() == en_column_data_null;
     }
     
-    bool operator== (const ST_RANGE &other) const {
+    /**
+     * @copilot this function checks if two ranges are intersected.
+     */
+    bool isIntersection(const ST_RANGE &other) const {
+        return (this->begin <= other.end) && (other.begin <= this->end);
+    }
+    
+    [[nodiscard]]
+    bool equals(const ST_RANGE &other) const {
         return this->begin == other.begin && this->end == other.end;
     }
     
+    bool operator== (const ST_RANGE &other) const {
+        return equals(other);
+    }
+    
+    /**
+     * @copilot this function returns the intersection of two ranges.
+     */
     ST_RANGE operator& (const ST_RANGE &other) const {
         ST_RANGE range;
-        const ST_RANGE *small, *big;
+        if (isIntersection(other))
+        {
+            range.begin = std::max(this->begin, other.begin);
+            range.end = std::min(this->end, other.end);
+        }
+        return std::move(range);
+    }
     
-        auto new_range = std::make_shared<std::vector<ST_RANGE>>();
+    /**
+     * @copilot this function merges two ranges into one.
+     *
+     * @note IsIntersection을 필요한 경우 사용하십시오
+     */
+    ST_RANGE operator| (const ST_RANGE &other) const {
+        ST_RANGE range;
+        const ST_RANGE *small, *big;
     
         //a.begin 이 더 작을경우
         if (MIN(begin, other.begin) == 0)
@@ -118,35 +161,33 @@ public:
             small = this;
             big = &other;
         }
-            //b.begin 이 더 작을경우 (또는 완벽히 동일할 경우)
+        //b.begin 이 더 작을경우 (또는 완벽히 동일할 경우)
         else
         {
             small = &other;
             big = this;
         }
-    
-        if (IsIntersection(*small, *big))
+        
+        if (small->begin.Type() == en_column_data_null ||
+            big->begin.Type() == en_column_data_null)
         {
-            //교집합
-            if (big->begin == big->end)
-            {
-                range = *big;
-            }
-            else
-            {
-                range.begin = big->begin;
-                range.end = small->end;
-            }
+            range.begin = small->begin.Type() == en_column_data_null ? big->begin : small->begin;
+        } else {
+            range.begin = std::min(small->begin, big->begin);
         }
-        else
+        
+        if (small->end.Type() == en_column_data_null ||
+            big->end.Type() == en_column_data_null)
         {
-            //공집합
+            range.end = small->end.Type() == en_column_data_null ? big->end : small->end;
+        } else {
+            range.end = std::max(small->end, big->end);
         }
-    
+
         return std::move(range);
     }
     
-      template <typename Archive>
+    template <typename Archive>
     void serialize(Archive &archive);
   };
 
@@ -168,12 +209,12 @@ public:
   const std::vector<ST_RANGE> *GetRange() const;
   static std::shared_ptr<std::vector<StateRange>> OR_ARRANGE(const std::vector<StateRange> &a);
   
-  static bool AND_FAST(const StateRange &a, const StateRange &b);
+  static bool isIntersects(const StateRange &a, const StateRange &b);
   
-  void OR_FAST(const StateRange &b);
+  void OR_FAST(const StateRange &b, bool ignoreIntersect = false);
   
   static std::shared_ptr<StateRange> AND(const StateRange &a, const StateRange &b);
-  static std::shared_ptr<StateRange> OR(const StateRange &a, const StateRange &b);
+  static std::shared_ptr<StateRange> OR(const StateRange &a, const StateRange &b, bool ignoreIntersect = false);
 
   template <typename Archive>
   void serialize(Archive &archive);
@@ -187,10 +228,13 @@ private:
     EN_VALID_RANGE
   };
   static EN_VALID IsValid(const StateRange &a, const StateRange &b);
-  static bool IsIntersection(const ST_RANGE &small, const ST_RANGE &big);
+  
+
+  static bool IsIntersection(const ST_RANGE &a, const ST_RANGE &b);
 
   static std::shared_ptr<std::vector<ST_RANGE>> AND(const ST_RANGE &a, const ST_RANGE &b);
   static std::shared_ptr<std::vector<ST_RANGE>> OR_ARRANGE(const std::shared_ptr<std::vector<ST_RANGE>> a);
+  static std::shared_ptr<std::vector<ST_RANGE>> OR_ARRANGE2(const std::shared_ptr<std::vector<ST_RANGE>> a);
   static std::shared_ptr<std::vector<ST_RANGE>> OR(const ST_RANGE &a, const ST_RANGE &b);
   static int MIN(const StateData &a, const StateData &b);
   static int MAX(const StateData &a, const StateData &b);
@@ -199,6 +243,11 @@ private:
   bool _wildcard;
 };
 
+/**
+ * @copilot this class represents expression of SQL where clause.
+ *
+ * @note 이 코드의 일부는 GitHub copilot로부터 어시스트 받아 작성하였습니다.
+ */
 class StateItem
 {
 public:
@@ -209,11 +258,7 @@ public:
   std::shared_ptr<StateRange> MakeRange(const std::string &column_name, bool &is_valid);
   static std::shared_ptr<StateRange> MakeRange(const StateItem &item);
 
-  // 두 범위(또는 값)가 교집합인지 공집합인지 확인
-  // 정보가 불완전 할 경우 / 기본값은 교집합으로 함
-  // 공집합인 경우 쿼리간 의존관계가 없어지기 때문에 데이터가 모두 유효할때만 신중하게 결정
-  // 교집합이면 true, 공집합이면 false
-  static bool IsIntersection(const std::vector<StateRange> &a, const std::vector<StateRange> &b);
+
   
   template <typename Archive>
   void serialize(Archive &archive);

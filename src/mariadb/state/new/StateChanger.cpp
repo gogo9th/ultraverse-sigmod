@@ -796,11 +796,13 @@ namespace ultraverse::state::v2 {
                                 break;
                         }
                         
+                        /*
                         _logger->trace(
                             "RowCluster: expanding range of {} => (WHERE {})",
                             resolvedAlias.name,
                             stateRange->MakeWhereQuery(resolvedAlias.name)
                         );
+                         */
                     }
 
                     std::string aliasName(std::move(utility::toLower(resolvedAlias.name)));
@@ -809,7 +811,7 @@ namespace ultraverse::state::v2 {
                         clusterMap[aliasName] = std::make_shared<StateRange>();
                     }
                     
-                    clusterMap[aliasName] = StateRange::OR(*clusterMap[aliasName], *stateRange);
+                    clusterMap[aliasName] = StateRange::OR(*clusterMap[aliasName], *stateRange, true);
                     // FK
                     
                     if (flags & CLUSTER_EXPAND_FLAG_INCLUDE_FK) {
@@ -849,7 +851,7 @@ namespace ultraverse::state::v2 {
                             clusterMap[exprName] = std::make_shared<StateRange>();
                         }
                         
-                        clusterMap[exprName] = StateRange::OR(*clusterMap[exprName], *stateRange2);
+                        clusterMap[exprName] = StateRange::OR(*clusterMap[exprName], *stateRange2, true);
                     }
                 }
             }

@@ -229,7 +229,7 @@ namespace ultraverse::state::v2 {
                             continue;
                         }
                     
-                        if (StateRange::AND_FAST(*cluster[i].first, *(cluster[index].first))) {
+                        if (StateRange::isIntersects(*cluster[i].first, *(cluster[index].first))) {
                             std::scoped_lock<std::mutex> lock(mutex);
                             rerun = true;
                             add_edge(*vi, i, graph);
@@ -344,7 +344,6 @@ namespace ultraverse::state::v2 {
         return std::find(gidList.begin(), gidList.end(), gid) != gidList.end();
     }
     
-    
     bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
         for (auto &expr: query.whereSet()) {
             if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases)) {
@@ -371,7 +370,7 @@ namespace ultraverse::state::v2 {
             
             if (keyColumn == expr.name) {
                 auto range = StateItem::MakeRange(expr);
-                if (StateRange::AND_FAST(*range, keyRange)) {
+                if (StateRange::isIntersects(*range, keyRange)) {
                     return true;
                 }
             }

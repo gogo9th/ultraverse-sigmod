@@ -509,22 +509,32 @@ StateRange::EN_VALID StateRange::IsValid(const StateRange &a, const StateRange &
   return EN_VALID_NONE;
 }
 
-bool StateRange::IsIntersection(const ST_RANGE &small, const ST_RANGE &big)
+/**
+ * @copilot this function checks if two ST_RANGEs are intersected.
+ *   - begin.is_equal and end.is_equal must be considered for following reasons:
+ *       - StateData::is_equal is a flag that indicates ~ than or equal to operator,
+ *       - so if begin.is_equal is true, it means that begin is greater than or equal to.
+ *       - if end.is_equal is true, it means that end is less than or equal to.
+ */
+bool StateRange::IsIntersection(const ST_RANGE &a, const ST_RANGE &b)
 {
-  //small.end 와 big.begin 이 겹치는가
-  //small.end 와 big.begin 이 동일하면 Equal 이 있을경우 겹침
-  if (small.end.IsNone() || big.begin.IsNone() ||
-      small.end > big.begin ||
-      (small.end == big.begin && (small.end.IsEqual() || big.begin.IsEqual())))
-  {
-    return true;
-  }
-  else
-  {
-    return false;
-  }
+    const ST_RANGE &small = a.begin < b.begin ? a : b;
+    const ST_RANGE &big = a.begin < b.begin ? b : a;
+    
+    bool isNone = small.end.IsNone() || big.begin.IsNone();
+    bool isIntersect =
+        (small.end >= big.begin) ||
+        (small.end == big.begin && (small.end.IsEqual() || big.begin.IsEqual()));
+        
+        // (small.begin < big.end) ||
+        // (small.begin == big.end && (small.begin.IsEqual() || big.end.IsEqual()));
+    
+    return isNone || isIntersect;
 }
 
+/**
+ * @copilot this function checks if two StateRange objects are equal.
+ */
 bool StateRange::operator==(const StateRange &c) const
 {
   if (range->size() != c.range->size())
@@ -532,11 +542,17 @@ bool StateRange::operator==(const StateRange &c) const
 
   for (size_t idx = 0; idx < range->size(); ++idx)
   {
-    if ((*range)[idx].begin != (*c.range)[idx].begin ||
-        (*range)[idx].end != (*c.range)[idx].end)
-    {
+    if ((*range)[idx].begin.IsNone() != (*c.range)[idx].begin.IsNone())
       return false;
-    }
+      
+    if ((*range)[idx].begin.IsEqual() != (*c.range)[idx].begin.IsEqual())
+      return false;
+    
+    if ((*range)[idx].begin != (*c.range)[idx].begin)
+      return false;
+
+    if ((*range)[idx].end != (*c.range)[idx].end)
+      return false;
   }
 
   return true;
@@ -678,91 +694,143 @@ std::shared_ptr<std::vector<StateRange>> StateRange::OR_ARRANGE(const std::vecto
   }
 }
 
-bool StateRange::AND_FAST(const StateRange &a, const StateRange &b) {
-  auto ret = IsValid(a, b);
-  
-  if (a.wildcard() || b.wildcard()) {
-      return true;
-  }
-  
-  if (ret == EN_VALID_RANGE) {
-      // vector<RANGE>에서 각 range를 머지가 불가능해질때까지 병합함
-      auto &range1 = *a.range;
-      auto &range2 = *b.range;
+/**
+ * @copilot this function performs OR operation between two StateRange objects.
+ */
+bool StateRange::isIntersects(const StateRange &a, const StateRange &b) {
+    if (IsValid(a, b) != EN_VALID_RANGE) {
+        return false;
+    }
     
-      auto it = std::find_if(range2.begin(), range2.end(), [&range1](auto &range) {
-          return std::find(range1.begin(), range1.end(), range) != range1.end();
-      });
+    if (a.wildcard() || b.wildcard()) {
+        return true;
+    }
     
-      return it != range2.end();
-  } else {
-      return false;
-  }
-}
-
-std::shared_ptr<StateRange> StateRange::AND(const StateRange &a, const StateRange &b)
-{
-  auto range = std::make_shared<StateRange>();
-
-  auto ret = IsValid(a, b);
-  
-  if (a.wildcard() || b.wildcard()) {
-      return StateRange::OR(a, b);
-  }
-
-  if (ret == EN_VALID_RANGE)
-  {
-    // vector<RANGE>에서 각 range를 머지가 불가능해질때까지 병합함
     auto &range1 = *a.range;
     auto &range2 = *b.range;
     
-    for (auto &i : range1)
-    {
-      for (auto &j : range2)
-      {
-        auto ret = std::move(i & j);
-        if (!ret.empty())
-        {
-          range->range->emplace_back(std::move(ret));
-          break;
+    for (auto &i: range1) {
+        for (auto &j: range2) {
+            if (IsIntersection(i, j)) {
+                return true;
+            }
         }
-      }
     }
-  }
-  
-  return range;
-}
-
-void StateRange::OR_FAST(const StateRange &b) {
-    auto ret = IsValid(*this, b);
     
-    if (ret == EN_VALID_RANGE) {
-        range->reserve(range->size() + b.range->size());
-        // range->insert(range->range->end(), a.range->begin(), a.range->end());
-        range->insert(range->end(), b.range->begin(), b.range->end());
-        // range.range.insert(range.range.end(), b.range.begin(), b.range.end());
-        // range = OR_ARRANGE(range);
-    }
+    return false;
 }
 
-std::shared_ptr<StateRange> StateRange::OR(const StateRange &a, const StateRange &b)
+/**
+ * @copilot this function performs AND operation between two StateRange objects.
+ *  - this function is used for merging two StateRange objects. (e.g. a = a & b)
+ */
+std::shared_ptr<StateRange> StateRange::AND(const StateRange &a, const StateRange &b)
 {
-  auto range = std::make_shared<StateRange>();
+    auto range = std::make_shared<StateRange>();
+    
+    if (IsValid(a, b) != EN_VALID_RANGE) {
+        return range;
+    }
 
-  auto ret = IsValid(a, b);
-
-  if (ret == EN_VALID_RANGE)
-  {
-    range->range->reserve(a.range->size() + b.range->size());
-    range->range->insert(range->range->end(), a.range->begin(), a.range->end());
-    range->range->insert(range->range->end(), b.range->begin(), b.range->end());
-    // range.range.insert(range.range.end(), b.range.begin(), b.range.end());
-    range->range = OR_ARRANGE(range->range);
-  }
+    // wildcard에 대한 교집합 연산은 wildcard가 아닌 반대편의 범위값이어야 함
+    if (a.wildcard()) {
+        return std::make_shared<StateRange>(b);
+    } else if (b.wildcard()) {
+        return std::make_shared<StateRange>(a);
+    }
+    
+    // merge two ST_RANGEs until it is not possible to merge
+    auto range1 = *a.range;
+    auto range2 = *b.range;
+    
+    range->range->reserve(range1.size() + range2.size());
+    
+    while (range1.size() > 0 && range2.size() > 0) {
+        auto &i = range1.front();
+        auto &j = range2.front();
+        
+        if (IsIntersection(i, j)) {
+            range->range->emplace_back(std::move(i & j));
+            range1.erase(range1.begin());
+            range2.erase(range2.begin());
+        } else if (i.begin.IsNone()) {
+            range->range->emplace_back(std::move(j));
+            range2.erase(range2.begin());
+        } else if (j.begin.IsNone()) {
+            range->range->emplace_back(std::move(i));
+            range1.erase(range1.begin());
+        } else {
+            if (i.begin < j.begin) {
+                range->range->emplace_back(std::move(i));
+                range1.erase(range1.begin());
+            } else {
+                range->range->emplace_back(std::move(j));
+                range2.erase(range2.begin());
+            }
+        }
+    }
   
-  return std::move(range);
+    return range;
 }
 
+/**
+ * @copilot this function performs OR operation between two StateRange objects.
+ * - this function is used for merging two StateRange objects. (e.g. a = a | b)
+ */
+void StateRange::OR_FAST(const StateRange &b, bool ignoreIntersect) {
+    if (IsValid(*this, b) != EN_VALID_RANGE) {
+        return;
+    }
+    
+    if (b.wildcard()) {
+        *this = b;
+        return;
+    }
+    
+    auto &range1 = *range;
+    auto range2 = *b.range;
+    
+    range1.reserve(range1.size() + range2.size());
+    
+    // merge two ST_RANGEs until it is not possible to merge
+    while (range2.size() > 0) {
+        auto &j = range2.front();
+        
+        bool is_merged = false;
+        for (auto &i: range1) {
+            if (ignoreIntersect || IsIntersection(i, j)) {
+                i = std::move(i | j);
+                is_merged = true;
+                break;
+            }
+        }
+        
+        if (!is_merged) {
+            range1.emplace_back(std::move(j));
+        }
+        
+        range2.erase(range2.begin());
+    }
+    
+    true;
+}
+
+std::shared_ptr<StateRange> StateRange::OR(const StateRange &a, const StateRange &b, bool ignoreIntersect)
+{
+    if (IsValid(a, b) != EN_VALID_RANGE) {
+        return std::make_shared<StateRange>();
+    }
+    
+    auto range = std::make_shared<StateRange>(a);
+    range->OR_FAST(b, ignoreIntersect);
+  
+    return std::move(range);
+}
+
+
+/**
+ * @deprecated use isIntersects() instead.
+ */
 std::shared_ptr<std::vector<StateRange::ST_RANGE>> StateRange::AND(const ST_RANGE &a, const ST_RANGE &b)
 {
   auto new_range = std::make_shared<std::vector<ST_RANGE>>();
@@ -841,39 +909,53 @@ std::shared_ptr<std::vector<StateRange::ST_RANGE>> StateRange::OR_ARRANGE(const 
   return std::move(new_range);
 }
 
+/**
+ * @copilot simplified version of OR_ARRANGE().
+ *
+ * - this function is used for arranging range objects of StateRange::range.
+ * - this function visits all range objects and merges them if they are intersected.
+ * - previous implementation of OR_ARRANGE() was too inefficient:
+ *      - it creates new vector and copies all range objects to it every iteration.
+ *      - it uses OR() function to merge two range objects, which is too inefficient. (TODO: use ST_RANGE::operator|)
+ * - above problems must be solved and this function must be optimized.
+ */
+std::shared_ptr<std::vector<StateRange::ST_RANGE>> StateRange::OR_ARRANGE2(const std::shared_ptr<std::vector<ST_RANGE>> a) {
+    if (a->size() < 2)
+        return std::make_shared<std::vector<ST_RANGE>>(*a);
+    
+    
+    // visit all range objects and merge them if they are intersected.
+    std::shared_ptr<std::vector<ST_RANGE>> curr_range = std::make_shared<std::vector<ST_RANGE>>(*a);
+    std::shared_ptr<std::vector<ST_RANGE>> new_range = std::make_shared<std::vector<ST_RANGE>>();
+    
+    while (curr_range->size() > 0) {
+        auto curr = (*curr_range)[0];
+        curr_range->erase(curr_range->begin());
+        
+        for (auto it = curr_range->begin(); it != curr_range->end(); ) {
+            if (IsIntersection(curr, *it)) {
+                curr = curr | *it;
+                it = curr_range->erase(it);
+            } else {
+                ++it;
+            }
+        }
+        
+        new_range->emplace_back(curr);
+    }
+    
+    return new_range;
+}
+
 std::shared_ptr<std::vector<StateRange::ST_RANGE>> StateRange::OR(const ST_RANGE &a, const ST_RANGE &b)
 {
-  
-  auto new_range = std::make_shared<std::vector<ST_RANGE>>();
-  const ST_RANGE *small, *big;
-
-  //a.begin 이 더 작을경우
-  if (MIN(a.begin, b.begin) == 0)
-  {
-    small = &a;
-    big = &b;
-  }
-  //b.begin 이 더 작을경우 (또는 완벽히 동일할 경우)
-  else
-  {
-    small = &b;
-    big = &a;
-  }
-
-  if (IsIntersection(*small, *big))
-  {
-    auto begin = small->begin;
-    auto end = MAX(small->end, big->end) == 0 ? small->end : big->end;
-
-    //두 범위가 겹쳐지는 구간이 있으면 합칠수 있음
-    new_range->emplace_back(ST_RANGE{begin, end});
-  }
-  else
-  {
-    //두 범위가 겹쳐지는 구간이 없으면 독립적으로 존재
-  }
-
-  return new_range;
+    if (IsIntersection(a, b)) {
+        return std::shared_ptr<std::vector<StateRange::ST_RANGE>>(
+            new std::vector<StateRange::ST_RANGE>{a | b}
+        );
+    }
+    
+    return std::make_shared<std::vector<StateRange::ST_RANGE>>();
 }
 
 // a 가 작으면 : 0
@@ -909,7 +991,7 @@ int StateRange::MAX(const StateData &a, const StateData &b)
 }
 
 void StateRange::arrangeSelf() {
-    range = OR_ARRANGE(range);
+    range = OR_ARRANGE2(range);
 }
 
 StateItem::StateItem()
@@ -953,28 +1035,6 @@ bool StateItem::is_data_ok(const StateItem &item)
   }
 }
 
-bool StateItem::IsIntersection(const std::vector<StateRange> &a, const std::vector<StateRange> &b)
-{
-  if (a.size() == 0 || b.size() == 0)
-  {
-    return true;
-  }
-
-  size_t empty_size = 0;
-  for (auto &i : a)
-  {
-    for (auto &j : b)
-    {
-      auto range = StateRange::AND(i, j);
-      if (range->GetRange()->size() == 0)
-      {
-        ++empty_size;
-      }
-    }
-  }
-
-  return empty_size == a.size() * b.size() ? false : true;
-}
 
 std::shared_ptr<StateRange> StateItem::MakeRange()
 {
