@@ -390,7 +390,8 @@ namespace ultraverse::state::v2 {
         _isRunning = true;
         
         std::set<gid_t> gids;
-    
+        std::vector<std::shared_ptr<std::set<gid_t>>> clusterGids;
+
         auto phase1_start = std::chrono::steady_clock::now();
         
         for (const auto gid: _plan.rollbackGids()) {
@@ -443,12 +444,35 @@ namespace ultraverse::state::v2 {
         }
         
         for (const auto &pair: _keyRanges) {
+            auto _gids = std::make_shared<std::set<gid_t>>();
+            clusterGids.push_back(_gids);
+
             for (auto &range: pair.second) {
-                gids.insert(
+                _gids->insert(
                     range.second.begin(), range.second.end()
                 );
             }
         }
+        
+        {
+            // performs clusterGids[0] & clusterGids[1] & ...
+            const auto x = *clusterGids.begin();
+            clusterGids.erase(clusterGids.begin());
+            
+            for (auto &_gids: clusterGids) {
+                std::set<gid_t> result;
+                std::set_intersection(
+                    x->begin(), x->end(),
+                    _gids->begin(), _gids->end(),
+                    std::inserter(result, result.begin())
+                );
+                
+                x->swap(result);
+            }
+            
+            gids.insert(x->begin(), x->end());
+        }
+        
     
         {
             auto phase1_end = std::chrono::steady_clock::now();
