@@ -143,6 +143,14 @@ namespace ultraverse::state::v2 {
         _writeStateLog = writeStateLog;
     }
     
+    bool StateChangePlan::isFullReplay() const {
+        return _isFullReplay;
+    }
+    
+    void StateChangePlan::setFullReplay(bool isFullReplay) {
+        _isFullReplay = isFullReplay;
+    }
+    
     bool StateChangePlan::isDryRun() const {
         return _isDryRun;
     }

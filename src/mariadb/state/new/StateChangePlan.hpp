@@ -60,6 +60,9 @@ namespace ultraverse::state::v2 {
         bool writeStateLog() const;
         void setWriteStateLog(bool writeStateLog);
         
+        bool isFullReplay() const;
+        void setFullReplay(bool isFullReplay);
+        
         bool isDryRun() const;
         void setDryRun(bool isDryRun);
         
@@ -94,6 +97,7 @@ namespace ultraverse::state::v2 {
         std::vector<std::pair<std::string, std::string>> _columnAliases;
     
         std::vector<uint64_t> _skipGids;
+        bool _isFullReplay;
         bool _isDryRun;
         
     };

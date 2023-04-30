@@ -18,6 +18,7 @@ namespace ultraverse {
             MAKE_CLUSTER,
             ROLLBACK,
             PREPEND,
+            FULL_REPLAY
         };
     }
     
@@ -54,6 +55,12 @@ namespace ultraverse {
     private:
         gid_t _gid;
         std::string _sqlFile;
+    };
+    
+    class FullReplayAction: public Action {
+    public:
+        FullReplayAction();
+        ActionType::Value type() override;
     };
     
     

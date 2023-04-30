@@ -29,7 +29,8 @@ namespace ultraverse::state::v2 {
     namespace OperationMode {
         enum Value {
             NORMAL,
-            PREPARE
+            PREPARE,
+            FULL_REPLAY
         };
     }
     
@@ -43,6 +44,7 @@ namespace ultraverse::state::v2 {
         
         void prepare();
         void start();
+        void fullReplay();
         
     private:
         constexpr static int CLUSTER_EXPAND_FLAG_NO_FLAGS    = 0;
