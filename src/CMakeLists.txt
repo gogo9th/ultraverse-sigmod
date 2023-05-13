@@ -25,6 +25,7 @@ set(ULTRAVERSE_DEPENDENCIES
     ${SPDLOG_LIBRARIES}
     ${Boost_LIBRARIES}
     ${GRAPHVIZ_LIBRARIES}
+    
     python3
     
     sqlparser
