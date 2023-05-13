@@ -5,7 +5,6 @@ find_package(BISON REQUIRED)
 find_package(FLEX REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
-find_package(mimalloc REQUIRED)
 
 # pkg_check_modules(JEMALLOC REQUIRED jemalloc)
 pkg_check_modules(MARIADB REQUIRED mariadb)
@@ -26,7 +25,6 @@ set(ULTRAVERSE_DEPENDENCIES
     ${SPDLOG_LIBRARIES}
     ${Boost_LIBRARIES}
     ${GRAPHVIZ_LIBRARIES}
-    mimalloc
     python3
     
     sqlparser
