@@ -153,7 +153,7 @@ sub mysqldump {
         'mysqldump', 
         '-R', # include procedures
         '-h', '127.0.0.1',
-        '-u', 'admin',
+        '-u', 'root',
         '--password=password',
         $dbname
     );
@@ -212,7 +212,7 @@ sub bootstrap {
         exit 1;
     };
 
-    sleep 10;
+    sleep 15;
 
     eval {
         say colored("preparing ", "bold white"), 
@@ -242,7 +242,7 @@ sub bootstrap {
             croak("failed to start MariaDB");
         }
 
-        sleep 10;
+        sleep 15;
 
         say colored("starting ", "bold white"), 
             colored("benchbase", "bold blue"); 
