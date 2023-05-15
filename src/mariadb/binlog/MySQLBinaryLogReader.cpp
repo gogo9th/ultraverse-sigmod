@@ -259,11 +259,18 @@ namespace ultraverse::mariadb {
                     break;
                     
                 case MYSQL_TYPE_STRING: {
-                    uint8_t size = metadata.get()[metadataPos + 2];
+                    uint8_t size = metadata.get()[metadataPos + 1];
                     metadataPos += 2;
                     
+                    int actualSize =
+                        (size <= 0xFB) ? -1 :
+                        (size == 0xFC) ? -2 :
+                        (size == 0xFD) ? -3 :
+                        (size == 0xFE) ? -4 :
+                        -1;
+                    
                     // FIXME: 이거 무시해야 하는가
-                    columnTypeDef2.emplace_back(column_type::STRING, size);
+                    columnTypeDef2.emplace_back(column_type::STRING, actualSize);
                 }
                     break;
                 case MYSQL_TYPE_GEOMETRY:
