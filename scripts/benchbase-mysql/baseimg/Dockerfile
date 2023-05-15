@@ -26,4 +26,4 @@ RUN cp ./plugin_output_directory/ultraverse_procassist.so /usr/lib/mysql/plugin
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 EXPOSE 3306
-CMD ["mariadbd"]
+CMD ["mysqld"]

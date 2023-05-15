@@ -60,11 +60,19 @@ sub docker_compose {
     my $project_directory = shift @_;
 
     my $pid = open2(
-        undef, undef,
+        my $stdout, undef,
         'docker', 'compose', '--project-directory', $project_directory, 
         @_
     );
-    waitpid($pid, 0);
+
+    while (waitpid($pid, WNOHANG) == 0) {
+        my $line = <$stdout>;
+        chomp $line;
+        printf("\33[2K\r");
+        printf("%s", $line) if $line;
+    }
+
+    printf("\n");
 
     return $? >> 8;
 }
@@ -143,6 +151,7 @@ sub mysqldump {
     my $pid = open2(
         my $stdout, '<&STDIN',
         'mysqldump', 
+        '-R', # include procedures
         '-h', '127.0.0.1',
         '-u', 'admin',
         '--password=password',
@@ -151,7 +160,10 @@ sub mysqldump {
 
     while (waitpid($pid, WNOHANG) == 0) {
         my $line = <$stdout>;
-        print $fh_dbdump $line if $line;
+        if ($line) {
+            $line =~ s/DEFINER=[^\s]+//g;
+            print $fh_dbdump $line;
+        }
     }
 
     my $retcode = ${^CHILD_ERROR_NATIVE} >> 8;
@@ -240,7 +252,6 @@ sub bootstrap {
             carp("benchbase exited with code $retcode");
         }
 
-        sleep 5;
 
         chdir $project_path;
 
@@ -251,12 +262,12 @@ sub bootstrap {
 
         system(
             'sudo', 'sh', '-c',
-            'cp -rv db_data/server-binlog* .'
+            'cp db_data/server-binlog* db_data/*.ultproclog .'
         );
 
         system(
             'sudo', 'sh', '-c',
-            sprintf('chown %s:%s ./server-binlog*', $<, $>)
+            sprintf('chown %s:%s ./server-binlog* ./*.ultproclog', $<, $>)
         );
     };
 

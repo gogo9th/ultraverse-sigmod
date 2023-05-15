@@ -1,0 +1,2 @@
+[mysqld]
+plugin_load_add = ultraverse_procassist
