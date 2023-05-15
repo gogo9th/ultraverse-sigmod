@@ -100,6 +100,42 @@ namespace ultraverse::mariadb {
         return _currentEvent;
     }
     
+    uint64_t MySQLBinaryLogReader::readLenEncInt() {
+        uint8_t value1 = 0;
+        _stream.read((char *) &value1, sizeof(uint8_t));
+        
+        switch (value1) {
+            case 0xFB:
+                return 0;
+            case 0xFC: {
+                uint16_t value2 = 0;
+                _stream.read((char *) &value2, sizeof(uint16_t));
+                
+                return value2;
+            }
+                break;
+            case 0xFD: {
+                uint8_t value2 = 0;
+                uint16_t value3 = 0;
+                
+                _stream.read((char *) &value2, sizeof(uint8_t));
+                _stream.read((char *) &value3, sizeof(uint16_t));
+                
+                return (value2 << 16) | (value3);
+            }
+                break;
+            case 0xFE: {
+                uint64_t value2 = 0;
+                _stream.read((char *) &value2, sizeof(uint64_t));
+                
+                return value2;
+            }
+                break;
+            default:
+                return value1;
+        }
+    }
+    
     std::shared_ptr<internal::EventHeader> MySQLBinaryLogReader::readHeader() {
         auto header = std::make_shared<internal::EventHeader>();
         _stream.read((char *) header.get(), sizeof(internal::EventHeader));
@@ -368,11 +404,10 @@ namespace ultraverse::mariadb {
             uint8_t type = 0;
             _stream.read((char *) &type, sizeof(uint8_t));
             
-            uint8_t size = 0;
-            _stream.read((char *) &size, sizeof(uint8_t));
+            uint64_t size = readLenEncInt();
             
             if (type == internal::COLUMN_NAME) {
-                uint8_t readBytes = 0;
+                uint64_t readBytes = 0;
                 while (readBytes < size) {
                     uint8_t columnNameLength = 0;
                     _stream.read((char *) &columnNameLength, sizeof(uint8_t));

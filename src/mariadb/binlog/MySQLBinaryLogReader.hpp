@@ -39,6 +39,8 @@ namespace ultraverse::mariadb {
         
         std::shared_ptr<internal::EventHeader> readHeader();
         
+        uint64_t readLenEncInt();
+        
         void
         readFormatDescriptionEvent(std::shared_ptr<internal::EventHeader> header);
         
