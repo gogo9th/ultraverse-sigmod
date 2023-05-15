@@ -670,6 +670,107 @@ namespace ultraverse::state::v2 {
         taskExecutor.shutdown();
     }
     
+    void StateChanger::fullReplay() {
+        _mode = OperationMode::FULL_REPLAY;
+        
+        TaskExecutor taskExecutor(8);
+        std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
+       
+        createIntermediateDB();
+        
+        if (!_plan.dbDumpPath().empty()) {
+            auto load_backup_start = std::chrono::steady_clock::now();
+            loadBackup(_intermediateDBName, _plan.dbDumpPath());
+            auto load_backup_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = load_backup_end - load_backup_start;
+            _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
+        }
+        
+        _logger->info("opening state log");
+        _reader.open();
+        
+        _isRunning = true;
+        
+        auto addTransaction = [this, &taskExecutor, &taskQueue] (std::shared_ptr<Transaction> transaction) {
+            auto node = _stateGraph->addTransaction(transaction);
+            if (node.second) {
+                if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {
+                    _ddlTxnId = transaction->gid();
+                }
+                
+                auto task = taskExecutor.post<int>([this, node = std::move(node)]() {
+                    this->processNode(node.first);
+                    return 0;
+                });
+                
+                taskQueue.push(std::move(task));
+            }
+        };
+        
+        auto phase2_main_start = std::chrono::steady_clock::now();
+        
+        _isClusterReady = true;
+        _clusterCondvar.notify_all();
+        
+        while (_reader.nextHeader()) {
+            auto transactionHeader = _reader.txnHeader();
+            auto pos = _reader.pos() - sizeof(TransactionHeader);
+            
+            _reader.nextTransaction();
+            auto transaction = _reader.txnBody();
+            auto gid = transactionHeader->gid;
+            auto flags = transactionHeader->flags;
+            _logger->trace("read gid {}; flags {}", gid, flags);
+ 
+            if (!isTransactionRelatedToPlan(transaction)) {
+                _logger->trace("skipping transaction #{}", gid);
+                continue;
+            }
+            
+            if (flags & Transaction::FLAG_CONTAINS_DDL) {
+                processDDLTransaction(transaction);
+            }
+            
+            while (_ddlTxnProcessedId < _ddlTxnId) {
+                using namespace std::chrono_literals;
+                std::this_thread::sleep_for(10ms);
+            }
+            
+            addTransaction(transaction);
+        }
+        
+        while (!taskQueue.empty()) {
+            auto task = std::move(taskQueue.front());
+            auto future = task->get_future();
+            future.wait();
+            taskQueue.pop();
+        }
+        
+        {
+            auto phase2_main_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = phase2_main_end - phase2_main_start;
+            _phase2Time = time.count();
+        }
+        
+        if (_hashWatcher != nullptr) {
+            _hashWatcher->stop();
+        }
+        
+        _logger->trace("== FULL REPLAY FINISHED ==");
+        
+        std::stringstream queryBuilder;
+        queryBuilder << fmt::format("NEXT STEP:\n")
+                     << fmt::format("    - RENAME DATABASE: {} to {}\n", _intermediateDBName, _plan.dbName())
+                     << std::endl;
+       
+        _logger->info(queryBuilder.str());
+        
+        _logger->info("total {} queries replayed", _replayedQueries);
+        _logger->info("main phase {}s", _phase2Time);
+        
+        taskExecutor.shutdown();
+    }
+    
     bool StateChanger::isQueryRelatedWithKeyColumns(Query &query) {
         const auto &keyColumns = _plan.keyColumns();
         
@@ -1137,6 +1238,7 @@ namespace ultraverse::state::v2 {
                 return _columnGraph->isRelated(hashA, readSetHash) || _columnGraph->isRelated(hashA, writeSetHash);
             });
             const bool needsForceExecution =
+                _mode == OperationMode::FULL_REPLAY ||
                 (transaction->gid() < _plan.lowestGidAvailable()) ||
                 (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE);
             
@@ -1175,6 +1277,7 @@ namespace ultraverse::state::v2 {
                     return _columnGraph->isRelated(hashA, readSetHash) || _columnGraph->isRelated(hashA, writeSetHash);
                 });
                 const bool needsForceExecution =
+                    _mode == OperationMode::FULL_REPLAY ||
                     (transaction->gid() < _plan.lowestGidAvailable()) ||
                     (transaction->flags() & Transaction::FLAG_FORCE_EXECUTE) ||
                     (query->flags() & Query::FLAG_IS_PROCCALL_QUERY);

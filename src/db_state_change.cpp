@@ -1,5 +1,3 @@
-#include <mimalloc-new-delete.h>
-
 #include <iostream>
 #include <sstream>
 
@@ -58,6 +56,14 @@ namespace ultraverse {
         return _sqlFile;
     }
     
+    FullReplayAction::FullReplayAction() {
+    
+    }
+    
+    ActionType::Value FullReplayAction::type() {
+        return ActionType::FULL_REPLAY;
+    }
+    
     DBStateChangeApp::DBStateChangeApp():
         _logger(createLogger("statechange"))
     {
@@ -81,6 +87,7 @@ namespace ultraverse {
             "    make_cluster           creates row cluster file\n"
             "    rollback=gid           rollbacks specified transaction\n"
             "    prepend=gid,sqlfile    appends query before specified transaction\n"
+            "    full_replay            full replay (replay all transactions)\n"
             "\n"
             "Options: \n"
             "    -b sqlfile     database backup\n"
@@ -149,8 +156,16 @@ namespace ultraverse {
             return std::dynamic_pointer_cast<MakeClusterAction>(action) != nullptr;
         }) != actions.end();
         
+        bool fullReplay = std::find_if(actions.begin(), actions.end(), [](auto &action) {
+            return std::dynamic_pointer_cast<FullReplayAction>(action) != nullptr;
+        }) != actions.end();
+        
         if (makeClusterMap && actions.size() > 1) {
             throw std::runtime_error("make_clustermap cannot be executed with other actions.");
+        }
+        
+        if (fullReplay && actions.size() > 1) {
+            throw std::runtime_error("full_replay cannot be executed with other actions.");
         }
         
         StateChangePlan changePlan;
@@ -171,6 +186,8 @@ namespace ultraverse {
         
         if (makeClusterMap) {
             stateChanger.prepare();
+        } else if (fullReplay) {
+            stateChanger.fullReplay();
         } else {
             describeActions(actions);
             
@@ -299,6 +316,13 @@ namespace ultraverse {
                     changePlan.userQueries().insert({ prependAction->gid(), prependAction->sqlFile() });
                 }
             }
+            
+            {
+                auto fullReplayAction = std::dynamic_pointer_cast<FullReplayAction>(action);
+                if (fullReplayAction != nullptr) {
+                    changePlan.setFullReplay(true);
+                }
+            }
         }
     
         std::sort(changePlan.rollbackGids().begin(), changePlan.rollbackGids().end());
@@ -347,6 +371,10 @@ namespace ultraverse {
     
                 gid_t gid = std::stoll(args[0]);
                 actions.emplace_back(std::make_shared<PrependAction>(gid, args[1]));
+            } else if (action == "full-replay") {
+                actions.emplace_back(std::make_shared<FullReplayAction>());
+            } else {
+                throw std::runtime_error("invalid action");
             }
         }
         
