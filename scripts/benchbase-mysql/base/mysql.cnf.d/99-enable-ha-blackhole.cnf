@@ -1,2 +1,2 @@
 [mysqld]
-plugin_load_add = ha_blackhole
+plugin-load-add = ha_blackhole.so
