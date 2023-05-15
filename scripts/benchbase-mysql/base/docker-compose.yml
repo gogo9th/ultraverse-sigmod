@@ -2,7 +2,7 @@ version: "3.1"
 
 services:
   db:
-    image: mysql:8.0.32
+    build: ../baseimg
     environment:
       TZ: Asia/Seoul
       MYSQL_DATABASE: benchbase

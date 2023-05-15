@@ -5,10 +5,6 @@
 #include <sstream>
 #include <memory>
 
-#include <my_global.h>
-
-#include <handler.h>
-
 #include <mysql/plugin.h>
 #include <mysql/plugin_audit.h>
 
@@ -41,61 +37,17 @@ static int audit_null_plugin_deinit(void *arg __attribute__((unused)))
   return 0;
 }
 
-static void procassist_notify(MYSQL_THD thd __attribute__((unused)),
-                              unsigned int event_class,
+static int procassist_notify(MYSQL_THD thd __attribute__((unused)),
+                             mysql_event_class_t event_class,
                               const void *event)
 {
   if (plugin == nullptr) {
-    return;
+    return 0;
   }
   
   plugin->handleEvent(thd, event_class, event);
   
-  /* prone to races, oh well */
-  ncalls++;
-  MYSQL_XID xid;
-  thd_get_xid(thd, &xid);
-  
-  if (event_class == MYSQL_AUDIT_GENERAL_CLASS)
-  {
-  }
-  else
-  if (event_class == MYSQL_AUDIT_TABLE_CLASS)
-  {
-    const struct mysql_event_table *event_table=
-      (const struct mysql_event_table *) event;
-    const char *ip= event_table->ip ? event_table->ip : "";
-    const char *op= 0;
-    char buf[1024];
-
-    switch (event_table->event_subclass)
-    {
-    case MYSQL_AUDIT_TABLE_LOCK:
-      op= event_table->read_only ? "read" : "write";
-      break;
-    case MYSQL_AUDIT_TABLE_CREATE:
-      op= "create";
-      break;
-    case MYSQL_AUDIT_TABLE_DROP:
-      op= "drop";
-      break;
-    case MYSQL_AUDIT_TABLE_ALTER:
-      op= "alter";
-      break;
-    case MYSQL_AUDIT_TABLE_RENAME:
-      snprintf(buf, sizeof(buf), "rename to %s.%s",
-               event_table->new_database.str, event_table->new_table.str);
-      buf[sizeof(buf)-1]= 0;
-      op= buf;
-      break;
-    }
-
-    fprintf(stderr, "%s[%s] @ %s [%s]\t%s.%s : %s\n",
-            event_table->priv_user, event_table->user,
-            event_table->host, ip,
-            event_table->database.str, event_table->table.str, op);
-  }
-  
+  return 0;
 }
 
 
@@ -106,7 +58,7 @@ static struct st_mysql_audit procassist_descriptor=
 {
   MYSQL_AUDIT_INTERFACE_VERSION, nullptr,
   procassist_notify,
-  { MYSQL_AUDIT_GENERAL_CLASSMASK | MYSQL_AUDIT_TABLE_CLASSMASK }
+  { MYSQL_AUDIT_GENERAL_CLASS | MYSQL_AUDIT_TABLE_ACCESS_ALL }
 };
 
 /*
@@ -157,8 +109,10 @@ mysql_declare_plugin(ultraverse_procassist)
   &procassist_descriptor,
   "ULTRAVERSE_PROCASSIST",
   "the ultraverse authors",
+  "",
   PLUGIN_LICENSE_GPL,
   audit_null_plugin_init,
+  nullptr,
   audit_null_plugin_deinit,
   0x0002,
   nullptr,  // procassist_status,
