@@ -7,6 +7,7 @@
 namespace ultraverse::state::v2 {
     StateChangePlan::StateChangePlan():
         _startGid(0),
+        _endGid(0),
         _writeStateLog(false)
     {
     
