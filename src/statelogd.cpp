@@ -167,7 +167,11 @@ public:
                     processQueryEvent(std::dynamic_pointer_cast<mariadb::QueryEvent>(event));
                     break;
                 case event_type::TXNID:
-                    processTransactionIDEvent(std::dynamic_pointer_cast<mariadb::TransactionIDEvent>(event));
+                    if (isArgSet('M')) {
+                        processTransactionIDEvent_MySQL(std::dynamic_pointer_cast<mariadb::TransactionIDEvent>(event));
+                    } else {
+                        processTransactionIDEvent(std::dynamic_pointer_cast<mariadb::TransactionIDEvent>(event));
+                    }
                     break;
                     
                 // row events
@@ -277,6 +281,51 @@ public:
         finalizeTransaction();
     }
     
+    void processTransactionIDEvent_MySQL(std::shared_ptr<mariadb::TransactionIDEvent> event) {
+        while (!_pendingQueries.empty()) {
+            auto promise = std::move(_pendingQueries.front());
+            _pendingQueries.pop();
+            
+            auto future = promise->get_future();
+            future.wait();
+            auto pendingQuery = future.get();
+            
+            if (pendingQuery == nullptr) {
+                continue;
+            }
+            _logger->trace("[{}]: {}", _gid, pendingQuery->statement());
+            
+            if (_pendingProcCall != nullptr) {
+                pendingQuery->setFlags(pendingQuery->flags() | state::v2::Query::FLAG_IS_IGNORABLE);
+            }
+            
+            *_pendingTxn << pendingQuery;
+        }
+        
+        
+        if (_pendingProcCall != nullptr) {
+            auto procCallQuery = std::make_shared<state::v2::Query>();
+            procCallQuery->setStatement(_pendingProcCall->statements()[0]);
+            procCallQuery->setDatabase(_pendingTxn->queries()[0]->database());
+            procCallQuery->setTimestamp(_pendingTxn->queries()[0]->timestamp());
+            procCallQuery->setFlags(state::v2::Query::FLAG_IS_PROCCALL_QUERY);
+            // procCallQuery->setFlags();
+            
+            *_pendingTxn << procCallQuery;
+            
+            
+            _pendingTxn->setFlags(
+                _pendingTxn->flags() | state::v2::Transaction::FLAG_IS_PROCEDURE_CALL
+            );
+
+            _pendingProcCall = nullptr;
+        }
+        
+        _logger->info("Transaction ID #{} processed.", event->transactionId());
+        _pendingTxn->setXid(event->transactionId());
+        finalizeTransaction();
+    }
+    
     void processTransactionIDEvent(std::shared_ptr<mariadb::TransactionIDEvent> event) {
         std::unique_ptr<state::v2::ProcMatcher> procMatcher;
         int prevIndex = 1;
@@ -284,7 +333,7 @@ public:
         if (_pendingProcCall != nullptr) {
             procMatcher = std::make_unique<state::v2::ProcMatcher>(_pendingProcCall->statements());
         }
-
+        
         while (!_pendingQueries.empty()) {
             auto promise = std::move(_pendingQueries.front());
             _pendingQueries.pop();
@@ -508,18 +557,76 @@ public:
     void processRowQueryEvent(std::shared_ptr<mariadb::RowQueryEvent> event, std::shared_ptr<state::v2::Query> pendingQuery) {
         pendingQuery->setStatement(event->statement());
 
-        if (_procLogReader != nullptr && isProcedureHint(event->statement())) {
+        if ((isArgSet('M') || _procLogReader != nullptr) && isProcedureHint(event->statement())) {
             std::scoped_lock<std::mutex> _lock(_procLogMutex);
 
             if (_pendingProcCall != nullptr) {
                 return;
             }
-
-            auto pair = extractProcedureHint(event->statement());
-
-            if (_procLogReader->matchForward(pair.second)) {
-                _pendingProcCall = _procLogReader->current();
+            
+            std::string statement;
+            
+            if (isArgSet('M')) {
+                using namespace nlohmann;
+                pendingQuery->itemSet().begin()->data_list.at(0).Get(statement);
+                
+                auto jsonObj = json::parse(statement);
+                
+                uint64_t callId = jsonObj.at(0).get<uint64_t>();
+                std::string procName = jsonObj.at(1).get<std::string>();
+                std::vector<std::string> args;
+                
+                for (int i = 2; i < jsonObj.size(); i++) {
+                    const auto &elem = jsonObj.at(i);
+                    
+                    switch (elem.type()) {
+                        case json::value_t::string:
+                            args.push_back(elem.get<std::string>());
+                            break;
+                        case json::value_t::number_integer:
+                            args.push_back(std::to_string(elem.get<int>()));
+                            break;
+                        case json::value_t::number_unsigned:
+                            args.push_back(std::to_string(elem.get<unsigned int>()));
+                            break;
+                        case json::value_t::number_float:
+                            args.push_back(std::to_string(elem.get<float>()));
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                
+                std::stringstream sstream;
+                sstream << "CALL " << procName << "(";
+                
+                for (int i = 0; i < args.size(); i++) {
+                    sstream << args[i];
+                    
+                    if (i < args.size() - 1) {
+                        sstream << ", ";
+                    }
+                }
+                
+                sstream << ")";
+                
+                _pendingProcCall = std::make_shared<ProcCall>();
+                _pendingProcCall->setCallId(callId);
+                _pendingProcCall->setProcName(procName);
+                _pendingProcCall->statements().push_back(sstream.str());
+                
+                true;
+            } else {
+                statement = event->statement();
+                
+                auto pair = extractProcedureHint(statement);
+                
+                if (_procLogReader->matchForward(pair.second)) {
+                    _pendingProcCall = _procLogReader->current();
+                }
             }
+            
+
         }
 
 
@@ -586,27 +693,36 @@ public:
 
     std::pair<std::string, uint64_t> extractProcedureHint(const std::string &statement) {
         using namespace nlohmann;
-
+        
         std::string procName = "unknown";
         uint64_t callId = 0;
-
-        int nameConstPos = statement.find("_utf8mb4");
-        int nameConstRPos = statement.rfind("COLLATE");
-        int lpos = statement.find('\'', nameConstPos) + 1;
-        int rpos = statement.rfind('\'', nameConstRPos);
-
-        std::string jsonStr = statement.substr(lpos, rpos - lpos);
-        // FIXME
-        jsonStr.erase(std::remove(jsonStr.begin(), jsonStr.end(), '\\'), jsonStr.end());
-
-        fprintf(stderr, "JSON: %s\n", jsonStr.c_str());
-
-        auto jsonObj = json::parse(jsonStr);
-
-        callId = jsonObj.at(0).get<uint64_t>();
-        procName = jsonObj.at(1).get<std::string>();
-
-        return std::make_pair(procName, callId);
+        
+        if (isArgSet('M')) {
+            auto jsonObj = json::parse(statement);
+            
+            callId = jsonObj.at(0).get<uint64_t>();
+            procName = jsonObj.at(1).get<std::string>();
+            
+            return std::make_pair(procName, callId);
+        } else {
+            int nameConstPos = statement.find("_utf8mb4");
+            int nameConstRPos = statement.rfind("COLLATE");
+            int lpos = statement.find('\'', nameConstPos) + 1;
+            int rpos = statement.rfind('\'', nameConstRPos);
+            
+            std::string jsonStr = statement.substr(lpos, rpos - lpos);
+            // FIXME
+            jsonStr.erase(std::remove(jsonStr.begin(), jsonStr.end(), '\\'), jsonStr.end());
+            
+            fprintf(stderr, "JSON: %s\n", jsonStr.c_str());
+            
+            auto jsonObj = json::parse(jsonStr);
+            
+            callId = jsonObj.at(0).get<uint64_t>();
+            procName = jsonObj.at(1).get<std::string>();
+            
+            return std::make_pair(procName, callId);
+        }
     }
 
 private:
