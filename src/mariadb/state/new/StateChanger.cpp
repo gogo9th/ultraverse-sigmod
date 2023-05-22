@@ -175,7 +175,7 @@ namespace ultraverse::state::v2 {
         
         std::mutex mutex;
         std::mutex queueMutex;
-        TaskExecutor taskExecutor(8);
+        TaskExecutor taskExecutor(_plan.threadNum());
         StateLogWriter stateLogWriter(_plan.stateLogPath(), _plan.stateLogName());
         GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
 
@@ -333,7 +333,7 @@ namespace ultraverse::state::v2 {
     void StateChanger::start() {
         _mode = OperationMode::NORMAL;
         
-        TaskExecutor taskExecutor(8);
+        TaskExecutor taskExecutor(_plan.threadNum());
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
     
         GIDIndexReader gidIndexReader(_plan.stateLogPath(), _plan.stateLogName());
@@ -673,7 +673,7 @@ namespace ultraverse::state::v2 {
     void StateChanger::fullReplay() {
         _mode = OperationMode::FULL_REPLAY;
         
-        TaskExecutor taskExecutor(8);
+        TaskExecutor taskExecutor(_plan.threadNum());
         std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
        
         createIntermediateDB();

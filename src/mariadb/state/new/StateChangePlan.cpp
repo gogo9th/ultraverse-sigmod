@@ -8,6 +8,7 @@ namespace ultraverse::state::v2 {
     StateChangePlan::StateChangePlan():
         _startGid(0),
         _endGid(0),
+        _threadNum(4),
         _writeStateLog(false)
     {
     
@@ -158,6 +159,14 @@ namespace ultraverse::state::v2 {
     
     void StateChangePlan::setDryRun(bool isDryRun) {
         _isDryRun = isDryRun;
+    }
+    
+    int StateChangePlan::threadNum() const {
+        return _threadNum;
+    }
+    
+    void StateChangePlan::setThreadNum(int threadNum) {
+        _threadNum = threadNum;
     }
     
     std::vector<std::string> &StateChangePlan::keyColumns() {

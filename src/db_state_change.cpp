@@ -177,6 +177,8 @@ namespace ultraverse {
             return 1;
         }
         
+        changePlan.setThreadNum(threadNum);
+        
         changePlan.setDBHost(getEnv("DB_HOST"));
         changePlan.setDBUsername(getEnv("DB_USER"));
         changePlan.setDBPassword(getEnv("DB_PASS"));

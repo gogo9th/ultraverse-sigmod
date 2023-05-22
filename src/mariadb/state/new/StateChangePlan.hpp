@@ -66,6 +66,9 @@ namespace ultraverse::state::v2 {
         bool isDryRun() const;
         void setDryRun(bool isDryRun);
         
+        int threadNum() const;
+        void setThreadNum(int threadNum);
+        
         std::vector<std::string> &keyColumns();
         std::vector<std::pair<std::string, std::string>> &columnAliases();
         
@@ -100,6 +103,7 @@ namespace ultraverse::state::v2 {
         bool _isFullReplay;
         bool _isDryRun;
         
+        int _threadNum;
     };
     
 }
