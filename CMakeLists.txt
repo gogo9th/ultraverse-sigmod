@@ -6,6 +6,8 @@ enable_testing()
 # -fPIC
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+add_subdirectory(parserlib)
+
 add_subdirectory(src)
 add_subdirectory(dependencies/cereal)
 add_subdirectory(dependencies/sql-parser)

@@ -31,6 +31,8 @@
 #include "utils/StringUtil.hpp"
 #include "Application.hpp"
 
+#include <libultparser/libultparser.h>
+
 using namespace ultraverse;
 
 class StateLogWriterApp: public ultraverse::Application {
@@ -768,5 +770,7 @@ void sigintHandler(int param) {
 
 int main(int argc, char **argv) {
     signal(SIGINT, sigintHandler);
+    
+    ult_sql_parser_init();
     return application.exec(argc, argv);
 }

@@ -12,6 +12,7 @@ pkg_check_modules(FMT REQUIRED fmt)
 pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 pkg_check_modules(PYTHON3 REQUIRED python3)
+pkg_check_modules(PROTOBUF REQUIRED protobuf)
 
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
@@ -26,10 +27,14 @@ set(ULTRAVERSE_DEPENDENCIES
     ${Boost_LIBRARIES}
     ${GRAPHVIZ_LIBRARIES}
     
+    ${PROTOBUF_LIBRARIES}
+    
     python3
     
     sqlparser
     OpenSSL::SSL
+    
+    ${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp/libultparser/libultparser.so
 )
 
 set(LIBULTRAVERSE_BASE_SRCS
@@ -48,6 +53,8 @@ set(LIBULTRAVERSE_BASE_SRCS
     
     sql/PySQLParser.cpp
     sql/PySQLParser.hpp
+    
+    ${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen/ultparser_query.pb.cc
 )
 
 set(LIBULTRAVERSE_STATE_SRCS
@@ -139,6 +146,8 @@ set(ULTRAVERSE_APP_BASE_SRCS
     Application.cpp
 )
 
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen)
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp)
 include_directories(../dependencies/sql-parser/src)
 include_directories(../dependencies/sql-parser/src/parser)
 include_directories(../dependencies/nlohmann-json/include)
