@@ -105,9 +105,11 @@ message DMLQuery {
     UPDATE table ...
     DELETE FROM table ...
    */
-  string table = 3;
+  AliasedIdentifier table = 3;
+  repeated AliasedIdentifier join = 4;
 
-  map<string, DMLQueryExpr> sqlvars = 4;
+  repeated DMLQuery subqueries = 5;
+  map<string, DMLQueryExpr> sqlvars = 6;
 
   /* READSET: SELECT `real` AS `alias` */
   /* SUBSELECT 또한 여기에 포함되어야 함 */
