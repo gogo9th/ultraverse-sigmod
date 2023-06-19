@@ -3,6 +3,10 @@
 //
 
 #include <algorithm>
+#include <thread>
+
+#include <libultparser/libultparser.h>
+#include <ultparser_query.pb.h>
 
 #include "DBEvent.hpp"
 
@@ -12,6 +16,7 @@
 #include "util/sqlhelper.h"
 
 #include "utils/StringUtil.hpp"
+
 
 namespace ultraverse::base {
     
@@ -26,27 +31,292 @@ namespace ultraverse::base {
     }
     
     bool QueryEventBase::parse() {
-        auto result = hsql::SQLParser::parse(statement(), &_parseResult);
-    
-        if (!(_parseResult.isValid() && _parseResult.size() > 0)) {
-            _logger->warn("could not parse SQL statement: {} at line {}, col {}", _parseResult.errorMsg(), _parseResult.errorLine(), _parseResult.errorColumn());
+        int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
+        
+        ultparser::ParseResult parseResult;
+        
+        char *parseResultCStr = nullptr;
+        int64_t parseResultCStrSize = ult_sql_parse(
+            (char *) statement().c_str(),
+            threadId,
+            &parseResultCStr
+        );
+        
+        if (parseResultCStrSize <= 0) {
+            _logger->error("could not parse SQL statement: {}", statement());
             return false;
         }
-      
-        const hsql::SQLStatement* statement = _parseResult.getStatement(0);
-        // hsql::printStatementInfo(statement);
-    
-        if (statement->isType(hsql::kStmtInsert)) {
-            extractReadWriteSet(static_cast<const hsql::InsertStatement *>(statement));
-        } else if (statement->isType(hsql::kStmtDelete)) {
-            extractReadWriteSet(static_cast<const hsql::DeleteStatement *>(statement));
-        } else if (statement->isType(hsql::kStmtUpdate)) {
-            extractReadWriteSet(static_cast<const hsql::UpdateStatement *>(statement));
+        
+        if (!parseResult.ParseFromArray(parseResultCStr, parseResultCStrSize)) {
+            free(parseResultCStr);
+            
+            _logger->error("could not parse SQL statement: {}", statement());
+            return false;
+        }
+        free(parseResultCStr);
+        
+        if (parseResult.result() != ultparser::ParseResult::SUCCESS) {
+            _logger->error("parser error: {}", parseResult.error());
+            return false;
         }
         
-        return result;
+        if (!parseResult.warnings().empty()) {
+            for (const auto &warning: parseResult.warnings()) {
+                _logger->warn("parser warning: {}", warning);
+            }
+        }
+        
+        if (parseResult.has_ddl()) {
+            return processDDL(parseResult.ddl());
+        }
+        
+        if (parseResult.has_dml()) {
+            return processDML(parseResult.dml());
+        }
+        
+        _logger->error("ASSERTION FAILURE: result has no errors but it contains no DDL or DML: {}", statement());
+        return false;
     }
-
+    
+    bool QueryEventBase::processDDL(const ultparser::DDLQuery &ddlQuery) {
+        _logger->warn("FIXME: DDL is not supported yet.");
+        return false;
+    }
+    
+    bool QueryEventBase::processDML(const ultparser::DMLQuery &dmlQuery) {
+        if (dmlQuery.type() == ultparser::DMLQuery::SELECT) {
+            return processSelect(dmlQuery);
+        } else if (dmlQuery.type() == ultparser::DMLQuery::INSERT) {
+            return processInsert(dmlQuery);
+        } else if (dmlQuery.type() == ultparser::DMLQuery::UPDATE) {
+            return processUpdate(dmlQuery);
+        } else if (dmlQuery.type() == ultparser::DMLQuery::DELETE) {
+            return processDelete(dmlQuery);
+        } else {
+            _logger->error("ASSERTION FAILURE: unknown DML type: {}", dmlQuery.type());
+            return false;
+        }
+        
+        return false;
+    }
+    
+    bool QueryEventBase::processSelect(const ultparser::DMLQuery &dmlQuery) {
+        const std::string primaryTable = dmlQuery.table().real().identifier();
+        // TODO: support join
+        
+        for (const auto &select: dmlQuery.select()) {
+            const auto &exprVal = select.real();
+            if (exprVal.type() == ultparser::DMLQueryExprValue::IDENTIFIER) {
+                const std::string &colName = exprVal.identifier();
+                if (colName.find('.') == std::string::npos) {
+                    _readSet.insert(primaryTable + "." + colName);
+                } else {
+                    _readSet.insert(colName);
+                }
+            } else {
+                _logger->trace("not selecting column: {}", exprVal.DebugString());
+            }
+        }
+        
+        if (dmlQuery.has_where()) {
+            processWhere(primaryTable, dmlQuery.where());
+        }
+        
+        return true;
+    }
+    
+    bool QueryEventBase::processInsert(const ultparser::DMLQuery &dmlQuery) {
+        const std::string primaryTable = dmlQuery.table().real().identifier();
+        
+        for (const auto &insertion: dmlQuery.update_or_write()) {
+            if (insertion.left().type() != ultparser::DMLQueryExprValue::IDENTIFIER) {
+                _logger->error("call ult_map_insert_cols() to resolve column names");
+                return false;
+            }
+            
+            std::string colName = insertion.left().identifier();
+            if (colName.find('.') == std::string::npos) {
+                colName = primaryTable + "." + colName;
+            }
+            
+            _writeSet.insert(colName);
+        }
+        
+        
+        return true;
+    }
+    
+    bool QueryEventBase::processUpdate(const ultparser::DMLQuery &dmlQuery) {
+        const std::string primaryTable = dmlQuery.table().real().identifier();
+        
+        for (const auto &update: dmlQuery.update_or_write()) {
+            std::string colName = update.left().identifier();
+            if (colName.find('.') == std::string::npos) {
+                colName = primaryTable + "." + colName;
+            }
+            
+            _writeSet.insert(colName);
+        }
+        
+        if (dmlQuery.has_where()) {
+            processWhere(primaryTable, dmlQuery.where());
+        }
+        
+        return true;
+    }
+    
+    bool QueryEventBase::processDelete(const ultparser::DMLQuery &dmlQuery) {
+        const std::string primaryTable = dmlQuery.table().real().identifier();
+        
+        _writeSet.insert(primaryTable + ".*");
+        
+        if (dmlQuery.has_where()) {
+            processWhere(primaryTable, dmlQuery.where());
+        }
+        
+        return true;
+    }
+    
+    bool QueryEventBase::processWhere(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr) {
+        std::function<void(const ultparser::DMLQueryExpr&, StateItem &)> visit_node = [this, &primaryTable, &visit_node](const ultparser::DMLQueryExpr &expr, StateItem &parent) {
+            if (expr.operator_() == ultparser::DMLQueryExpr::AND || expr.operator_() == ultparser::DMLQueryExpr::OR) {
+                assert(parent.function_type == FUNCTION_NONE);
+                parent.condition_type = expr.operator_() == ultparser::DMLQueryExpr::AND ? EN_CONDITION_AND : EN_CONDITION_OR;
+                
+                for (const auto &child: expr.expressions()) {
+                    StateItem item;
+                    visit_node(child, item);
+                    
+                    parent.arg_list.emplace_back(std::move(item));
+                }
+            } else {
+                assert(parent.condition_type == EN_CONDITION_NONE);
+                std::cout << expr.left().DebugString() << " " << expr.operator_() << " " << expr.right().DebugString() << std::endl;
+                
+                if (expr.left().type() != ultparser::DMLQueryExprValue::IDENTIFIER) {
+                    _logger->warn("left side of where expression is not an identifier: {}", expr.left().DebugString());
+                    return;
+                }
+                
+                std::string left = expr.left().identifier();
+                const auto &right = expr.right();
+                
+                if (left.find('.') == std::string::npos) {
+                    left = primaryTable + "." + left;
+                }
+                
+                parent.name = left;
+                
+                
+                switch (expr.operator_()) {
+                    case ultparser::DMLQueryExpr_Operator_EQ:
+                        parent.function_type = FUNCTION_EQ;
+                        break;
+                    case ultparser::DMLQueryExpr_Operator_NEQ:
+                        parent.function_type = FUNCTION_NE;
+                        break;
+                    case ultparser::DMLQueryExpr_Operator_LT:
+                        parent.function_type = FUNCTION_LT;
+                        break;
+                    case ultparser::DMLQueryExpr_Operator_LTE:
+                        parent.function_type = FUNCTION_LE;
+                        break;
+                    case ultparser::DMLQueryExpr_Operator_GT:
+                        parent.function_type = FUNCTION_GT;
+                        break;
+                    case ultparser::DMLQueryExpr_Operator_GTE:
+                        parent.function_type = FUNCTION_GE;
+                        break;
+                    case ultparser::DMLQueryExpr_Operator_LIKE:
+                        _logger->warn("LIKE operator is not supported yet");
+                        parent.function_type = FUNCTION_EQ;
+                        break;
+                    case ultparser::DMLQueryExpr_Operator_NOT_LIKE:
+                        _logger->warn("NOT LIKE operator is not supported yet");
+                        parent.function_type = FUNCTION_NE;
+                        break;
+                    
+                    case ultparser::DMLQueryExpr_Operator_IN:
+                        // treat as (a = 1 or a = 2 or a = 3)
+                        parent.function_type = FUNCTION_EQ;
+                        break;
+                        
+                    case ultparser::DMLQueryExpr_Operator_NOT_IN:
+                        // treat as (a != 1 and a != 2 and a != 3)
+                        parent.function_type = FUNCTION_NE;
+                        break;
+                    
+                    case ultparser::DMLQueryExpr_Operator_BETWEEN:
+                        // treat as (a >= 1 and a <= 3)
+                        parent.function_type = FUNCTION_EQ;
+                        break;
+                        
+                    case ultparser::DMLQueryExpr_Operator_NOT_BETWEEN:
+                        // treat as (a < 1 or a > 3)
+                        parent.function_type = FUNCTION_NE;
+                        break;
+                    default:
+                        _logger->warn("unsupported operator: {}", expr.operator_());
+                        return;
+                }
+                
+                processRValue(parent, right);
+                this->_readSet.insert(left);
+            }
+        };
+        
+        StateItem rootItem;
+        visit_node(expr, rootItem);
+        
+        _whereSet.emplace_back(std::move(rootItem));
+    }
+    
+    void QueryEventBase::processRValue(StateItem &item, const ultparser::DMLQueryExprValue &right) {
+        switch (right.type()) {
+            case ultparser::DMLQueryExprValue::IDENTIFIER:
+                _logger->warn("right side of where expression is an identifier: {}", right.DebugString());
+                return;
+            case ultparser::DMLQueryExprValue::INTEGER: {
+                StateData data;
+                data.Set(right.integer());
+                item.data_list.emplace_back(std::move(data));
+            }
+                break;
+            case ultparser::DMLQueryExprValue::DOUBLE: {
+                StateData data;
+                data.Set(right.double_());
+                item.data_list.emplace_back(std::move(data));
+            }
+                break;
+            case ultparser::DMLQueryExprValue::STRING: {
+                StateData data;
+                data.Set(right.string().c_str(), right.string().size());
+                item.data_list.emplace_back(std::move(data));
+            }
+                break;
+            case ultparser::DMLQueryExprValue::BOOL: {
+                StateData data;
+                data.Set(right.bool_() ? (int64_t) 1 : 0);
+                item.data_list.emplace_back(std::move(data));
+            }
+                break;
+            case ultparser::DMLQueryExprValue::NULL_: {
+                _logger->error("putting NULL value in StateData is not supported yet");
+                throw std::runtime_error("putting NULL value in StateData is not supported yet");
+            }
+                break;
+            case ultparser::DMLQueryExprValue::LIST: {
+                for (const auto &child: right.list()) {
+                    processRValue(item, child);
+                }
+            }
+                break;
+            default:
+                _logger->error("unsupported right side of where expression: {}", right.DebugString());
+                throw std::runtime_error("unsupported right side of where expression");
+        }
+    }
+    
     bool QueryEventBase::parseSelect() {
         static const auto tolower = [](unsigned char c) { return std::tolower(c); };
 

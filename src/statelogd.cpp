@@ -9,6 +9,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <libultparser/libultparser.h>
+#include <ultparser_query.pb.h>
+
 #include "mariadb/state/new/Transaction.hpp"
 #include "mariadb/state/new/ColumnDependencyGraph.hpp"
 #include "mariadb/state/new/StateLogWriter.hpp"
@@ -31,7 +34,7 @@
 #include "utils/StringUtil.hpp"
 #include "Application.hpp"
 
-#include <libultparser/libultparser.h>
+
 
 using namespace ultraverse;
 
@@ -106,6 +109,13 @@ public:
 
         sql::PySQLParser::finalize();
         return 0;
+    }
+    
+    int64_t currentThreadId() {
+        auto threadId = std::this_thread::get_id();
+        std::hash<std::thread::id> hasher;
+        
+        return hasher(threadId);
     }
     
     void writerMain() {
@@ -551,6 +561,7 @@ public:
             candidateSet.begin(), candidateSet.end()
         );
         
+        
         if (!(event->flags() & 1)) {
             pendingQuery->setFlags(pendingQuery->flags() | state::v2::Query::FLAG_IS_CONTINUOUS);
         }
@@ -772,5 +783,8 @@ int main(int argc, char **argv) {
     signal(SIGINT, sigintHandler);
     
     ult_sql_parser_init();
-    return application.exec(argc, argv);
+    int retval = application.exec(argc, argv);
+    
+    ult_sql_parser_deinit();
+    return retval;
 }

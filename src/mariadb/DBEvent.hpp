@@ -135,9 +135,10 @@ namespace ultraverse::mariadb {
          */
         std::string changeSet(int at);
         
-        const std::vector<StateItem> &candidateSet() const;
+        const std::vector<StateItem> &itemSet() const;
+        const std::vector<StateItem> &updateSet() const;
     private:
-        std::pair<std::string, int> readRow(TableMapEvent &tableMapEvent, int basePos);
+        std::pair<std::string, int> readRow(TableMapEvent &tableMapEvent, int basePos, bool isUpdate);
         
         template <typename T>
         inline T readValue(int offset) {
@@ -163,7 +164,8 @@ namespace ultraverse::mariadb {
         std::vector<std::string> _rowSet;
         std::vector<std::string> _changeSet;
         
-        std::vector<StateItem> _candidateSet;
+        std::vector<StateItem> _itemSet;
+        std::vector<StateItem> _updateSet;
     };
     
     class RowQueryEvent: public base::DBEvent {

@@ -16,7 +16,7 @@ pkg_check_modules(PROTOBUF REQUIRED protobuf)
 
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-add_compile_options(-msse4.2 -O2)
+# add_compile_options(-msse4.2 -O2)
 # add_link_options(-fsanitize=leak)
 
 set(ULTRAVERSE_DEPENDENCIES

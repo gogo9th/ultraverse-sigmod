@@ -11,6 +11,8 @@
 #include <string>
 #include <unordered_set>
 
+#include <ultparser_query.pb.h>
+
 #include "SQLParser.h"
 #include "mariadb/state/state_log_hdr.h"
 #include "mariadb/state/StateItem.h"
@@ -108,6 +110,17 @@ namespace ultraverse::base {
     protected:
         LoggerPtr _logger;
         
+        bool processDDL(const ultparser::DDLQuery &ddlQuery);
+        bool processDML(const ultparser::DMLQuery &dmlQuery);
+        
+        bool processSelect(const ultparser::DMLQuery &dmlQuery);
+        bool processInsert(const ultparser::DMLQuery &dmlQuery);
+        bool processUpdate(const ultparser::DMLQuery &dmlQuery);
+        bool processDelete(const ultparser::DMLQuery &dmlQuery);
+        
+        bool processWhere(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr);
+        
+        void processRValue(StateItem &item, const ultparser::DMLQueryExprValue &right);
     private:
         void extractReadWriteSet(const hsql::InsertStatement *insert);
         void extractReadWriteSet(const hsql::DeleteStatement *del);
@@ -124,7 +137,11 @@ namespace ultraverse::base {
         std::unordered_set<std::string> _readSet;
         std::unordered_set<std::string> _writeSet;
     
+        /** @deprecated use _insertSet, _deleteSet instead. */
         std::vector<StateItem> _itemSet;
+        
+        std::vector<StateItem> _insertSet;
+        std::vector<StateItem> _deleteSet;
         std::vector<StateItem> _whereSet;
         
         std::unordered_map<std::string, StateData> _sqlVarMap;

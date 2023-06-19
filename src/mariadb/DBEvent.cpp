@@ -169,7 +169,7 @@ namespace ultraverse::mariadb {
         
         while (pos < _dataSize) {
             {
-                auto retval = readRow(tableMapEvent, pos);
+                auto retval = readRow(tableMapEvent, pos, false);
                 auto &rowData = retval.first;
                 auto rowSize = retval.second;
                 _rowSet.push_back(rowData);
@@ -177,7 +177,7 @@ namespace ultraverse::mariadb {
             }
             
             if (_type == UPDATE) {
-                auto retval = readRow(tableMapEvent, pos);
+                auto retval = readRow(tableMapEvent, pos, true);
                 auto &rowData = retval.first;
                 auto rowSize = retval.second;
                 _changeSet.push_back(rowData);
@@ -188,7 +188,7 @@ namespace ultraverse::mariadb {
         _affectedRows = _rowSet.size();
     }
     
-    std::pair<std::string, int> RowEvent::readRow(TableMapEvent &tableMapEvent, int basePos) {
+    std::pair<std::string, int> RowEvent::readRow(TableMapEvent &tableMapEvent, int basePos, bool isUpdate) {
         uint64_t nullFields = 0;
         int nullFieldsSize = (_columns + 7) / 8;
 
@@ -253,7 +253,11 @@ namespace ultraverse::mariadb {
                     candidateItem.function_type = FUNCTION_EQ;
                     candidateItem.name = tableMapEvent.table() + "." + columnName;
                     
-                    _candidateSet.emplace_back(std::move(candidateItem));
+                    if (isUpdate) {
+                        _updateSet.emplace_back(std::move(candidateItem));
+                    } else {
+                        _itemSet.emplace_back(std::move(candidateItem));
+                    }
                 }
                 
                 rowSize += strLength + strLengthSize;
@@ -272,8 +276,12 @@ namespace ultraverse::mariadb {
                     candidateItem.data_list.emplace_back(std::move(data));
                     candidateItem.function_type = FUNCTION_EQ;
                     candidateItem.name = tableMapEvent.table() + "." + columnName;
-        
-                    _candidateSet.emplace_back(std::move(candidateItem));
+                    
+                    if (isUpdate) {
+                        _updateSet.emplace_back(std::move(candidateItem));
+                    } else {
+                        _itemSet.emplace_back(std::move(candidateItem));
+                    }
                 }
     
                 rowSize += columnSize;
@@ -331,7 +339,11 @@ namespace ultraverse::mariadb {
                 candidateItem.function_type = FUNCTION_EQ;
                 candidateItem.name = tableMapEvent.table() + "." + columnName;
     
-                _candidateSet.emplace_back(std::move(candidateItem));
+                if (isUpdate) {
+                    _updateSet.emplace_back(std::move(candidateItem));
+                } else {
+                    _itemSet.emplace_back(std::move(candidateItem));
+                }
     
                 sstream << columnName << "=" << replVal;
                 
@@ -385,7 +397,11 @@ namespace ultraverse::mariadb {
                 candidateItem.function_type = FUNCTION_EQ;
                 candidateItem.name = tableMapEvent.table() + "." + columnName;
                 
-                _candidateSet.emplace_back(std::move(candidateItem));
+                if (isUpdate) {
+                    _updateSet.emplace_back(std::move(candidateItem));
+                } else {
+                    _itemSet.emplace_back(std::move(candidateItem));
+                }
                 
                 rowSize += columnSize;
             }
@@ -412,7 +428,11 @@ namespace ultraverse::mariadb {
         return _changeSet[at];
     }
     
-    const std::vector<StateItem> &RowEvent::candidateSet() const {
-        return _candidateSet;
+    const std::vector<StateItem> &RowEvent::itemSet() const {
+        return _itemSet;
+    }
+    
+    const std::vector<StateItem> &RowEvent::updateSet() const {
+        return _updateSet;
     }
 }
