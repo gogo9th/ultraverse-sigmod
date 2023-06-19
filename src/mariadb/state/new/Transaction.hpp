@@ -8,6 +8,8 @@
 #include <memory>
 #include <unordered_map>
 
+#include "CombinedIterator.hpp"
+
 #include "mariadb/state/StateHash.hpp"
 
 #include "Query.hpp"
@@ -67,7 +69,47 @@ namespace ultraverse::state::v2 {
         TransactionHeader header();
         
         std::vector<std::shared_ptr<Query>> &queries();
-    
+        
+        CombinedIterator<StateItem> whereSet_begin();
+        
+        /**
+         * @note 성능 이슈가 발생할 수 있으므로 너무 자주 호출하지 마십시오. (아래 예시 참조)
+         * @example
+         *      // 나쁜 사용예
+         *      auto it = transaction.whereSet_begin();
+         *      while (it != transaction.whereSet_end()) {
+         *          //       ^^^^^^^^^^^^^^^^^^^^^^^^^^ 매번 호출되면서 transaction.query를 순회하며 새 vector를 내부적으로 만듬
+         *      }
+         *
+         *      // 좋은 사용예
+         *      auto it = transaction.whereSet_begin();
+         *      auto itEnd = transaction.whereSet_end();
+         *
+         *      while (it != itEnd) {
+         *          // ...
+         *      }
+         */
+        CombinedIterator<StateItem> whereSet_end();
+        
+        CombinedIterator<StateItem> itemSet_begin();
+        /**
+         * @note 성능 이슈가 발생할 수 있으므로 너무 자주 호출하지 마십시오. (아래 예시 참조)
+         * @example
+         *      // 나쁜 사용예
+         *      auto it = transaction.itemSet_begin();
+         *      while (it != transaction.itemSet_end()) {
+         *          //       ^^^^^^^^^^^^^^^^^^^^^^^^^ 매번 호출되면서 transaction.query를 순회하며 새 vector를 내부적으로 만듬
+         *      }
+         *
+         *      // 좋은 사용예
+         *      auto it = transaction.itemSet_begin();
+         *      auto itEnd = transaction.itemSet_end();
+         *
+         *      while (it != itEnd) {
+         *          // ...
+         *      }
+         */
+        CombinedIterator<StateItem> itemSet_end();
         
         /**
          * appends query object to transaction.
@@ -93,15 +135,7 @@ namespace ultraverse::state::v2 {
         uint64_t _nextPos;
         
         std::vector<gid_t> _dependencies;
-        
-        // Pair<TABLE_NAME, HASH>
-        std::unordered_map<std::string, StateHash> _beforeHash;
-        std::unordered_map<std::string, StateHash> _afterHash;
     
-        // binlog reference
-        std::string _referenceFile;
-        uint64_t _referencePos;
-        
         std::vector<std::shared_ptr<Query>> _queries;
     
         std::unordered_set<std::string> _readSet;

@@ -77,6 +77,38 @@ namespace ultraverse::state::v2 {
         return _queries;
     }
     
+    CombinedIterator<StateItem> Transaction::whereSet_begin() {
+        std::vector<std::reference_wrapper<std::vector<StateItem>>> containers;
+        
+        std::transform(
+            std::begin(_queries), std::end(_queries),
+            std::back_inserter(containers),
+            [](std::shared_ptr<Query> &query) { return std::reference_wrapper<std::vector<StateItem>>(query->whereSet()); }
+        );
+        
+        return CombinedIterator<StateItem>(containers);
+    }
+    
+    CombinedIterator<StateItem> Transaction::whereSet_end() {
+        return whereSet_begin().end();
+    }
+    
+    CombinedIterator<StateItem> Transaction::itemSet_begin() {
+        std::vector<std::reference_wrapper<std::vector<StateItem>>> containers;
+        
+        std::transform(
+            std::begin(_queries), std::end(_queries),
+            std::back_inserter(containers),
+            [](std::shared_ptr<Query> &query) { return std::reference_wrapper<std::vector<StateItem>>(query->itemSet()); }
+        );
+        
+        return CombinedIterator<StateItem>(containers);
+    }
+    
+    CombinedIterator<StateItem> Transaction::itemSet_end() {
+        return itemSet_begin().end();
+    }
+    
     Transaction &Transaction::operator<<(std::shared_ptr<Query> &query) {
         _queries.push_back(query);
         

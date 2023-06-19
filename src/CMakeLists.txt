@@ -55,7 +55,7 @@ set(LIBULTRAVERSE_BASE_SRCS
     sql/PySQLParser.hpp
     
     ${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen/ultparser_query.pb.cc
-)
+    mariadb/state/new/CombinedIterator.cpp mariadb/state/new/CombinedIterator.hpp)
 
 set(LIBULTRAVERSE_STATE_SRCS
     mariadb/state/StateThreadPool.cpp
