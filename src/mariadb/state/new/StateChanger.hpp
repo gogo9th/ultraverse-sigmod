@@ -43,6 +43,10 @@ namespace ultraverse::state::v2 {
         std::string findCandidateColumn();
         
         void prepare();
+        void prepareCluster();
+        
+        
+        void prepare_old();
         void start();
         void fullReplay();
         

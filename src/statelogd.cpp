@@ -554,13 +554,16 @@ public:
 
         pendingQuery->setDatabase(table->database());
 
-        const auto &candidateSet = event->candidateSet();
-
         pendingQuery->itemSet().insert(
             pendingQuery->itemSet().begin(),
-            candidateSet.begin(), candidateSet.end()
+            event->itemSet().begin(), event->itemSet().end()
         );
         
+        // FIXME
+        pendingQuery->itemSet().insert(
+            pendingQuery->itemSet().begin(),
+            event->updateSet().begin(), event->updateSet().end()
+        );
         
         if (!(event->flags() & 1)) {
             pendingQuery->setFlags(pendingQuery->flags() | state::v2::Query::FLAG_IS_CONTINUOUS);

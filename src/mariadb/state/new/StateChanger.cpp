@@ -16,8 +16,11 @@
 #include "GIDIndexReader.hpp"
 #include "cluster/RowCluster.hpp"
 
+#include "cluster/StateCluster.hpp"
+
 #include "base/TaskExecutor.hpp"
 #include "utils/StringUtil.hpp"
+
 
 #include "StateChanger.hpp"
 
@@ -169,8 +172,51 @@ namespace ultraverse::state::v2 {
         return resultCols;
     }
     
-    
     void StateChanger::prepare() {
+        TaskExecutor taskExecutor(_plan.threadNum());
+        StateCluster cluster(_plan.keyColumns());
+        
+        GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
+        
+        createIntermediateDB();
+        
+        if (!_plan.dbDumpPath().empty()) {
+            loadBackup(_intermediateDBName, _plan.dbDumpPath());
+            
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle.get(), 0);
+            updateForeignKeys(dbHandle.get(), 0);
+        }
+        
+        _reader.open();
+        
+        _logger->info("[prepare()] phase 1: building cluster");
+        
+        while (_reader.nextHeader()) {
+            auto header = _reader.txnHeader();
+            auto pos = _reader.pos() - sizeof(TransactionHeader);
+            
+            _reader.nextTransaction();
+            auto transaction = _reader.txnBody();
+            
+            gidIndexWriter.append(pos);
+            
+            taskExecutor.post<int>([this, &cluster, transaction]() {
+                auto gid = transaction->gid();
+                cluster << transaction;
+                
+                return 0;
+            });
+        }
+        
+        taskExecutor.shutdown();
+    }
+    
+    void StateChanger::prepareCluster() {
+    
+    }
+    
+    void StateChanger::prepare_old() {
         _mode = OperationMode::PREPARE;
         
         std::mutex mutex;

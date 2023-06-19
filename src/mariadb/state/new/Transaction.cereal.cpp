@@ -17,16 +17,11 @@ namespace ultraverse::state::v2 {
             _gid,
             _xid,
             _isSuccessful,
+            
             _flags,
             _nextPos,
             
             _dependencies,
-            
-            _beforeHash,
-            _afterHash,
-            
-            _referenceFile,
-            _referencePos,
             
             _queries,
             

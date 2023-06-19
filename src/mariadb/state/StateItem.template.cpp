@@ -7,17 +7,46 @@
 
 #include "StateItem.h"
 
-template<>
-struct std::hash<StateData>
-{
-    size_t operator()(StateData const& data) const noexcept
-    {
-        size_t hashVal = 0;
+template <>
+struct std::hash<StateData> {
+    std::size_t operator()(const StateData &data) const {
+        if (data.Type() == en_column_data_double) {
+            double fval = 0.0;
+            data.Get(fval);
+            return (
+                std::hash<en_state_log_column_data_type>()(data.Type()) ^
+                std::hash<decltype(fval)>()(fval)
+            );
+        }
         
-        std::string strVal;
-        data.Get(strVal);
-        hashVal = std::hash<std::string>{}(strVal);
-       
-        return hashVal;
+        if (data.Type() == en_column_data_int) {
+            int64_t ival = 0.0;
+            data.Get(ival);
+            return (
+                std::hash<en_state_log_column_data_type>()(data.Type()) ^
+                std::hash<decltype(ival)>()(ival)
+            );
+        }
+        if (data.Type() == en_column_data_uint) {
+            uint64_t uval = 0.0;
+            data.Get(uval);
+            return (
+                std::hash<en_state_log_column_data_type>()(data.Type()) ^
+                std::hash<decltype(uval)>()(uval)
+            );
+        }
+        
+        if (data.Type() == en_column_data_string) {
+            std::string sval = "";
+            data.Get(sval);
+            return (
+                std::hash<en_state_log_column_data_type>()(data.Type()) ^
+                std::hash<decltype(sval)>()(sval)
+            );
+        }
+        
+        // en_column_data_null
+        return std::hash<en_state_log_column_data_type>()(data.Type());
     }
 };
+
