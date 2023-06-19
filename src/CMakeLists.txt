@@ -133,7 +133,7 @@ set(LIBULTRAVERSE_MARIADB_SRCS
     mariadb/binlog/BinaryLogReader.cpp
     mariadb/binlog/BinaryLogSequentialReader.hpp
     mariadb/binlog/BinaryLogSequentialReader.cpp
-)
+    mariadb/state/new/cluster/StateCluster.cpp mariadb/state/new/cluster/StateCluster.hpp)
 
 
 set(LIBULTRAVERSE_SRCS

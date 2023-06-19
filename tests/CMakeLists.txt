@@ -1,4 +1,5 @@
 include(CTest)
+set(CMAKE_CXX_STANDARD 17)
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 
@@ -12,12 +13,7 @@ include_directories(${PYTHON3_INCLUDE_DIRS})
 
 include_directories(../src)
 
-add_executable(sqlparser-test sqlparser-test.cpp)
-target_link_libraries(sqlparser-test sqlparser)
+add_executable(cluster-test cluster-test.cpp)
+target_link_libraries(cluster-test ultraverse )
 
-add_test(NAME sqlparser-test COMMAND sqlparser-test)
-
-add_executable(pysqlparser-test pysqlparser-test.cpp )
-target_link_libraries(pysqlparser-test ultraverse)
-
-add_test(NAME pysqlparser-test COMMAND pysqlparser-test)
+add_test(NAME cluster-test COMMAND cluster-test)
