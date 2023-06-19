@@ -1,5 +1,6 @@
 syntax = "proto3";
 
+package ultparser;
 
 /*
   SELECT * FROM table WHERE id = 1;

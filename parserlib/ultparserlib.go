@@ -35,16 +35,16 @@ func parse_sql(sql string, threadId int64) (*ast.StmtNode, []error, error) {
 	return &stmtNodes[0], warns, nil
 }
 
-func protobuf_to_cstr(message proto.Message) *C.char {
+func protobuf_to_cstr(message proto.Message) (*C.char, int64) {
 	// returns a C string representation of the given protobuf message
 
 	data, err := proto.Marshal(message)
 
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 
-	return C.CString(string(data))
+	return C.CString(string(data)), int64(len(data))
 }
 
 func process_expr_value(expr *ast.ExprNode) *pb.DMLQueryExprValue {
@@ -137,10 +137,10 @@ func process_expr_node(query *pb.DMLQuery, expr *ast.ExprNode) *pb.DMLQueryExpr 
 		case opcode.IsNull:
 			expr_out.Operator = pb.DMLQueryExpr_IS_NULL
 			break
-		case opcode.And:
+		case opcode.LogicAnd:
 			expr_out.Operator = pb.DMLQueryExpr_AND
 			break
-		case opcode.Or:
+		case opcode.LogicOr:
 			expr_out.Operator = pb.DMLQueryExpr_OR
 			break
 		default:
@@ -169,7 +169,14 @@ func process_expr_node(query *pb.DMLQuery, expr *ast.ExprNode) *pb.DMLQueryExpr 
 
 func process_select_stmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 	query.Type = pb.DMLQuery_SELECT
-	query.Table = (*stmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O
+	// FIXME
+	query.Table = &pb.AliasedIdentifier{
+		Alias: (*stmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
+		Real: &pb.DMLQueryExprValue{
+			Type:       pb.DMLQueryExprValue_IDENTIFIER,
+			Identifier: (*stmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
+		},
+	}
 	query.Where = process_expr_node(query, &stmt.Where)
 	query.Select = make([]*pb.AliasedIdentifier, len(stmt.Fields.Fields))
 
@@ -183,7 +190,14 @@ func process_select_stmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 
 func process_insert_stmt(query *pb.DMLQuery, stmt *ast.InsertStmt) {
 	query.Type = pb.DMLQuery_INSERT
-	query.Table = (*stmt).Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O
+	// FIXME
+	query.Table = &pb.AliasedIdentifier{
+		Alias: (*stmt).Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
+		Real: &pb.DMLQueryExprValue{
+			Type:       pb.DMLQueryExprValue_IDENTIFIER,
+			Identifier: (*stmt).Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
+		},
+	}
 
 	query.UpdateOrWrite = make([]*pb.DMLQueryExpr, len(stmt.Lists[0]))
 
@@ -206,8 +220,16 @@ func process_insert_stmt(query *pb.DMLQuery, stmt *ast.InsertStmt) {
 
 func process_update_stmt(query *pb.DMLQuery, stmt *ast.UpdateStmt) {
 	query.Type = pb.DMLQuery_UPDATE
-	query.Table = (*stmt).TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O
+	// FIXME
+	query.Table = &pb.AliasedIdentifier{
+		Alias: (*stmt).TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
+		Real: &pb.DMLQueryExprValue{
+			Type:       pb.DMLQueryExprValue_IDENTIFIER,
+			Identifier: (*stmt).TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
+		},
+	}
 
+	query.Where = process_expr_node(query, &stmt.Where)
 	query.UpdateOrWrite = make([]*pb.DMLQueryExpr, len(stmt.List))
 
 	for i, assignment := range stmt.List {
@@ -224,7 +246,15 @@ func process_update_stmt(query *pb.DMLQuery, stmt *ast.UpdateStmt) {
 
 func process_delete_stmt(query *pb.DMLQuery, stmt *ast.DeleteStmt) {
 	query.Type = pb.DMLQuery_DELETE
-	query.Table = (*stmt).TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O
+	// FIXME
+	query.Table = &pb.AliasedIdentifier{
+		Alias: (*stmt).TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
+		Real: &pb.DMLQueryExprValue{
+			Type:       pb.DMLQueryExprValue_IDENTIFIER,
+			Identifier: (*stmt).TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
+		},
+	}
+
 	query.Where = process_expr_node(query, &stmt.Where)
 }
 
@@ -255,10 +285,11 @@ func ult_sql_parser_deinit() {
 }
 
 //export ult_sql_parse
-func ult_sql_parse(sql_cstr *C.char, threadId int64) *C.char {
+func ult_sql_parse(sql_cstr *C.char, threadId int64, output **C.char) int64 {
 	var result = pb.ParseResult{
 		Result: pb.ParseResult_UNKNOWN,
 	}
+	var size int64
 
 	sql := C.GoString(sql_cstr)
 
@@ -273,7 +304,9 @@ func ult_sql_parse(sql_cstr *C.char, threadId int64) *C.char {
 			result.Warnings[i] = warn.Error()
 		}
 
-		return protobuf_to_cstr(&result)
+		*output, size = protobuf_to_cstr(&result)
+
+		return size
 	}
 
 	result.Result = pb.ParseResult_SUCCESS
@@ -288,7 +321,9 @@ func ult_sql_parse(sql_cstr *C.char, threadId int64) *C.char {
 	result.Dml = &query
 	process_node(&query, ast_node)
 
-	return protobuf_to_cstr(&result)
+	*output, size = protobuf_to_cstr(&result)
+
+	return size
 }
 
 //export ult_map_insert
