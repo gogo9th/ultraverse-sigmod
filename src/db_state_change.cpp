@@ -263,7 +263,6 @@ namespace ultraverse {
             auto keyColumns = buildKeyColumnList(getArg('k'));
         
             changePlan.keyColumns().insert(
-                changePlan.keyColumns().begin(),
                 keyColumns.begin(), keyColumns.end()
             );
         } // @end (keyColumns)

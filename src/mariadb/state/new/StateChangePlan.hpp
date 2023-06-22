@@ -69,7 +69,7 @@ namespace ultraverse::state::v2 {
         int threadNum() const;
         void setThreadNum(int threadNum);
         
-        std::vector<std::string> &keyColumns();
+        std::set<std::string> &keyColumns();
         std::vector<std::pair<std::string, std::string>> &columnAliases();
         
         std::vector<uint64_t> &skipGids();
@@ -96,7 +96,7 @@ namespace ultraverse::state::v2 {
 
         bool _writeStateLog;
         
-        std::vector<std::string> _keyColumns;
+        std::set<std::string> _keyColumns;
         std::vector<std::pair<std::string, std::string>> _columnAliases;
     
         std::vector<uint64_t> _skipGids;

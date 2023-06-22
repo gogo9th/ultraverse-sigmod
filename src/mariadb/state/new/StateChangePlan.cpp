@@ -169,7 +169,7 @@ namespace ultraverse::state::v2 {
         _threadNum = threadNum;
     }
     
-    std::vector<std::string> &StateChangePlan::keyColumns() {
+    std::set<std::string> &StateChangePlan::keyColumns() {
         return _keyColumns;
     }
     

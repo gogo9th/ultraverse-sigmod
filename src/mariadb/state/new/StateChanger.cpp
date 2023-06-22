@@ -946,7 +946,7 @@ namespace ultraverse::state::v2 {
             return std::find_if_not(
                 filteredKeyColumns.begin(), filteredKeyColumns.end(),
                 isRWSetContains
-            ) != keyColumns.end();
+            ) != filteredKeyColumns.end();
         } else {
             // 이 쿼리는 모든 다중 클러스터컬럼들에 대한 키값을 사용해야 한다
             // (구체적으로, INSERT 절에서 이 모든 다중클러스터컬럼들에 대하여 상수값을 집어넣거나, 또는 WHERE절에서 각 클러스터키에 대해 정하는 구문들이 AND로 연속해서 묶여야 한다).
