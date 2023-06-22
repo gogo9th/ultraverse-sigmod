@@ -31,6 +31,9 @@ namespace ultraverse::state::v2 {
             std::unordered_map<StateData, RowAlias>
         >;
         
+        /**
+         * @deprecated
+         */
         static std::string resolveForeignKey(std::string exprName, const std::vector<ForeignKey> &foreignKeys);
         
         RowCluster();

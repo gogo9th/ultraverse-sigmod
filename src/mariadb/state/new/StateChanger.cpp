@@ -817,6 +817,45 @@ namespace ultraverse::state::v2 {
         taskExecutor.shutdown();
     }
     
+    std::string StateChanger::resolveAlias(const std::string &exprName) {
+        auto it = std::find_if(
+            _plan.columnAliases().begin(), _plan.columnAliases().end(),
+            [&exprName] (const auto &pair) { return utility::toLower(pair.first) == utility::toLower(exprName); }
+        );
+        
+        if (it == _plan.columnAliases().end()) {
+            return std::move(utility::toLower(exprName));
+        } else {
+            return resolveAlias(it->second);
+        }
+    }
+    
+    std::string StateChanger::resolveForeignKey(const std::string &exprName) {
+        auto vec = utility::splitTableName(exprName);
+        auto tableName  = std::move(utility::toLower(vec.first));
+        auto columnName = std::move(utility::toLower(vec.second));
+        
+        auto it = std::find_if(_context->foreignKeys.cbegin(), _context->foreignKeys.cend(), [&tableName, &columnName](auto &foreignKey) {
+            if (foreignKey.fromTable->getCurrentName() == tableName && columnName == foreignKey.fromColumn) {
+                return true;
+            }
+            return false;
+        });
+        
+        if (it == _context->foreignKeys.end()) {
+            return std::move(utility::toLower(exprName));
+        } else {
+            return resolveForeignKey(it->toTable->getCurrentName() + "." + it->toColumn);
+        }
+    }
+    
+    std::string StateChanger::resolveColumnName(const std::string &exprName) {
+        std::string resolvedAlias = resolveAlias(exprName);
+        std::string resolvedForeignKey = resolveForeignKey(resolvedAlias);
+        
+        return resolvedForeignKey;
+    }
+    
     bool StateChanger::isQueryRelatedWithKeyColumns(Query &query) {
         const auto &keyColumns = _plan.keyColumns();
         

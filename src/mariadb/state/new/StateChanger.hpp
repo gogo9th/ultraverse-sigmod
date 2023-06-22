@@ -57,6 +57,15 @@ namespace ultraverse::state::v2 {
         constexpr static int CLUSTER_EXPAND_FLAG_WILDCARD    = 0b100;
         constexpr static int CLUSTER_EXPAND_FLAG_DONT_EXPAND = 0b1000;
         
+        
+        std::string resolveAlias(const std::string &columnName);
+        std::string resolveForeignKey(const std::string &columnName);
+        /**
+         * @param columnName table.column_name
+         * @return
+         */
+        std::string resolveColumnName(const std::string &columnName);
+        
         void expandClusterMap(RowCluster &rowCluster, Transaction &transaction, int flags);
         
         void processDDLTransaction(std::shared_ptr<Transaction> transaction);
