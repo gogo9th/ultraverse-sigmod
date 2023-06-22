@@ -13,6 +13,9 @@
 
 #include "../../StateItem.h"
 #include "../Transaction.hpp"
+#include "../CombinedIterator.hpp"
+
+#include "./StateRelationshipResolver.hpp"
 
 #include "utils/log.hpp"
 
@@ -37,9 +40,6 @@ namespace ultraverse::state::v2 {
     
     class StateCluster {
     public:
-        /**
-         * TODO: StateRange는 계속 사용함: StateData를 StateRange로 변경할 것
-         */
         class Cluster {
         public:
             std::map<StateRange, std::vector<gid_t>> read;
@@ -48,13 +48,22 @@ namespace ultraverse::state::v2 {
             bool operator&(const Transaction &transaction) const;
         };
         
+        enum InsertionType {
+            READ,
+            WRITE
+        };
     public:
         StateCluster(const std::set<std::string> &keyColumns);
         
         const std::set<std::string> &keyColumns() const;
         const std::map<std::string, Cluster> &clusters() const;
         
-        void operator<<(const std::shared_ptr<Transaction> &transaction);
+        bool isKeyColumnItem(const RelationshipResolver &resolver, const StateItem& item) const;
+        
+        void insert(InsertionType type, const std::string &columnName, const StateRange &range, gid_t gid);
+        void insert(InsertionType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver);
+        void insert(const std::shared_ptr<Transaction>& transaction, const RelationshipResolver &resolver);
+        
     private:
         LoggerPtr _logger;
         

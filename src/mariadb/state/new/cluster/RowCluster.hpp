@@ -13,18 +13,11 @@
 #include "mariadb/state/new/Transaction.hpp"
 #include "mariadb/state/new/StateChangeContext.hpp"
 
+#include "StateRelationshipResolver.hpp"
+
 #include "utils/log.hpp"
 
 namespace ultraverse::state::v2 {
-    
-    struct RowAlias {
-        StateItem alias;
-        StateItem real;
-    
-        template <typename Archive>
-        void serialize(Archive &archive);
-    };
-    
     class RowCluster {
     public:
         using AliasMap = std::unordered_map<std::string,
