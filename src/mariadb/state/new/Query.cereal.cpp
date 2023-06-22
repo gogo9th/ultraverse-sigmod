@@ -33,6 +33,7 @@ namespace ultraverse::state::v2 {
             _foreignKeySet,
             
             _itemSet,
+            _updateSet,
             _whereSet,
             
             _affectedRows,

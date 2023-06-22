@@ -169,7 +169,9 @@ namespace ultraverse::mariadb {
         
         while (pos < _dataSize) {
             {
-                auto retval = readRow(tableMapEvent, pos, false);
+                // type이 UPDATE면 변경 전 row를 updateSet에 넣는다.
+                // (항상 변경된 row를 itemSet에 넣도록 한다)
+                auto retval = readRow(tableMapEvent, pos, (_type == UPDATE) ? true : false);
                 auto &rowData = retval.first;
                 auto rowSize = retval.second;
                 _rowSet.push_back(rowData);
@@ -177,7 +179,7 @@ namespace ultraverse::mariadb {
             }
             
             if (_type == UPDATE) {
-                auto retval = readRow(tableMapEvent, pos, true);
+                auto retval = readRow(tableMapEvent, pos, false);
                 auto &rowData = retval.first;
                 auto rowSize = retval.second;
                 _changeSet.push_back(rowData);

@@ -110,6 +110,10 @@ namespace ultraverse::state::v2 {
         return _itemSet;
     }
     
+    std::vector<StateItem> &Query::updateSet() {
+        return _updateSet;
+    }
+    
     std::vector<StateItem> &Query::whereSet() {
         return _whereSet;
     }

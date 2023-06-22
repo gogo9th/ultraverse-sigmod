@@ -76,6 +76,7 @@ namespace ultraverse::state::v2 {
         std::unordered_set<std::string> &foreignKeySet();
         
         std::vector<StateItem> &itemSet();
+        std::vector<StateItem> &updateSet();
         std::vector<StateItem> &whereSet();
         
         std::vector<std::string> &rowSet();
@@ -109,6 +110,7 @@ namespace ultraverse::state::v2 {
         std::unordered_set<std::string> _foreignKeySet;
     
         std::vector<StateItem> _itemSet;
+        std::vector<StateItem> _updateSet;
         std::vector<StateItem> _whereSet;
         std::unordered_map<std::string, StateData> _sqlVarMap;
         

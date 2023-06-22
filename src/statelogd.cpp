@@ -559,9 +559,8 @@ public:
             event->itemSet().begin(), event->itemSet().end()
         );
         
-        // FIXME
-        pendingQuery->itemSet().insert(
-            pendingQuery->itemSet().begin(),
+        pendingQuery->updateSet().insert(
+            pendingQuery->updateSet().begin(),
             event->updateSet().begin(), event->updateSet().end()
         );
         
