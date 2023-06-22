@@ -9,6 +9,7 @@
 #include <vector>
 #include <set>
 #include <map>
+#include <mutex>
 
 #include "../../StateItem.h"
 #include "../Transaction.hpp"
@@ -42,16 +43,18 @@ namespace ultraverse::state::v2 {
         };
         
     public:
-        StateCluster(const std::vector<std::string> &keyColumns);
+        StateCluster(const std::set<std::string> &keyColumns);
         
-        const std::vector<std::string> &keyColumns() const;
+        const std::set<std::string> &keyColumns() const;
         const std::map<std::string, Cluster> &clusters() const;
         
         void operator<<(const std::shared_ptr<Transaction> &transaction);
     private:
         LoggerPtr _logger;
         
-        std::vector<std::string> _keyColumns;
+        std::mutex _clusterInsertionLock;
+        
+        std::set<std::string> _keyColumns;
         std::map<std::string, Cluster> _clusters;
     };
 }
