@@ -537,25 +537,43 @@ bool StateRange::IsIntersection(const ST_RANGE &a, const ST_RANGE &b)
  */
 bool StateRange::operator==(const StateRange &c) const
 {
-  if (range->size() != c.range->size())
-    return false;
-
-  for (size_t idx = 0; idx < range->size(); ++idx)
-  {
-    if ((*range)[idx].begin.IsNone() != (*c.range)[idx].begin.IsNone())
-      return false;
-      
-    if ((*range)[idx].begin.IsEqual() != (*c.range)[idx].begin.IsEqual())
-      return false;
+    /*
+    if (range->size() != c.range->size())
+        return false;
     
-    if ((*range)[idx].begin != (*c.range)[idx].begin)
-      return false;
+    for (size_t idx = 0; idx < range->size(); ++idx)
+    {
+        if ((*range)[idx].begin.IsNone() != (*c.range)[idx].begin.IsNone())
+            return false;
+        
+        if ((*range)[idx].begin.IsEqual() != (*c.range)[idx].begin.IsEqual())
+            return false;
+        
+        if ((*range)[idx].begin != (*c.range)[idx].begin)
+            return false;
+        
+        if ((*range)[idx].end != (*c.range)[idx].end)
+            return false;
+    }
+    
+    return true;
+     */
+    
+    return std::hash<StateRange>()(*this) == std::hash<StateRange>()(c);
+}
 
-    if ((*range)[idx].end != (*c.range)[idx].end)
-      return false;
-  }
+bool StateRange::operator!=(const StateRange &other) const {
+    return !(*this == other);
+}
 
-  return true;
+bool StateRange::operator<(const StateRange &other) const {
+    // @copilot:
+    //   Q: i have defined operator< to use StateRange as key of std::map.
+    //      is it ok to use std::hash<StateRange>()(*this) < std::hash<StateRange>()(other) ?
+    //   A: yes, it is ok.
+    //   OK, thanks.
+    
+    return std::hash<StateRange>()(*this) < std::hash<StateRange>()(other);
 }
 
 bool StateRange::wildcard() const {
@@ -1111,102 +1129,197 @@ std::shared_ptr<StateRange> StateItem::MakeRange(const std::string &column_name,
   return MakeRange(*this);
 }
 
-std::shared_ptr<StateRange> StateItem::MakeRange(const StateItem &item)
-{
-  if (item.condition_type != EN_CONDITION_NONE)
-  {
-    if (item.arg_list.size() == 1)
-    {
-      return MakeRange(item.arg_list[0]);
-    }
-
-    switch (item.condition_type)
-    {
-    case EN_CONDITION_AND:
-      if (item.arg_list.size() > 1)
-      {
-        auto range = StateRange::AND(*MakeRange(item.arg_list[0]), *MakeRange(item.arg_list[1]));
-
-        for (size_t i = 2; i < item.arg_list.size(); ++i)
-        {
-          range = StateRange::AND(*range, *MakeRange(item.arg_list[i]));
+/**
+ * @brief
+ * @copilot please implement this function:
+ *
+ * - when condition_type is not EN_CONDITION_NONE (this means this item is a AND / OR condition),
+ *   you must call MakeRange2() for each item in arg_list, and then call AND / OR function of StateRange
+ *   to combine all the ranges.
+ *
+ *   for example (pseudo code):
+ *      std::vector<StateRange> ranges;
+ *      StateRange output;
+ *      std::transform(arg_list.begin(), arg_list.end(), std::back_inserter(ranges), [](const StateItem &item) { item.MakeRange2(); });
+ *
+ *      if (condition_type == EN_CONDITION_AND) {
+ *          output = ranges.shift();
+ *          for (auto &range : ranges) {
+ *              output = StateRange::AND(output, range);
+*           }
+ *      } else if (condition_type == EN_CONDITION_OR) {
+ *          output = ranges.shift();
+ *          for (auto &range : ranges) {
+ *              output = StateRange::OR(output, range);
+ *          }
+ *      }
+ *
+ *
+ */
+StateRange StateItem::MakeRange2() const {
+    if (condition_type != EN_CONDITION_NONE) {
+        std::vector<StateRange> ranges;
+        StateRange output;
+        
+        std::transform(
+            arg_list.begin(), arg_list.end(),
+            std::back_inserter(ranges),
+            [](const StateItem &item) { return item.MakeRange2(); }
+        );
+        
+        if (condition_type == EN_CONDITION_AND) {
+            output = ranges.back();
+            ranges.pop_back();
+            
+            for (auto &range : ranges) {
+                output = *StateRange::AND(output, range);
+            }
+        } else if (condition_type == EN_CONDITION_OR) {
+            output = ranges.back();
+            ranges.pop_back();
+            
+            for (auto &range : ranges) {
+                output = *StateRange::OR(output, range);
+            }
         }
-
-        return range;
-      }
-      break;
-
-    case EN_CONDITION_OR:
-      if (item.arg_list.size() > 1)
-      {
-        auto range = StateRange::OR(*MakeRange(item.arg_list[0]), *MakeRange(item.arg_list[1]));
-
-        for (size_t i = 2; i < item.arg_list.size(); ++i)
-        {
-          range = StateRange::OR(*range, *MakeRange(item.arg_list[i]));
+        
+        return std::move(output);
+    } else {
+        StateRange range;
+        
+        switch (function_type) {
+            case FUNCTION_BETWEEN:
+                range.SetBetween(data_list[0], data_list[1]);
+                return range;
+            
+            case FUNCTION_EQ:
+                range.SetValue(data_list[0], true);
+                return range;
+            
+            case FUNCTION_NE:
+                range.SetValue(data_list[0], false);
+                return range;
+            
+            case FUNCTION_LT:
+                range.SetEnd(data_list[0], false);
+                return range;
+            
+            case FUNCTION_LE:
+                range.SetEnd(data_list[0], true);
+                return range;
+            
+            case FUNCTION_GT:
+                range.SetBegin(data_list[0], false);
+                return range;
+            
+            case FUNCTION_GE:
+                range.SetBegin(data_list[0], true);
+                return range;
+            
+            default:
+                break;
         }
-
-        return range;
-      }
-      break;
-
-    default:
-      break;
+        
+        return std::move(range);
     }
+}
 
-    return std::make_shared<StateRange>();
-  }
-
-  if (item.function_type != FUNCTION_NONE && is_data_ok(item) == true)
-  {
-    auto range = std::make_shared<StateRange>();
-
-    switch (item.function_type)
+std::shared_ptr<StateRange> StateItem::MakeRange(const StateItem &item) {
+    
+    if (item.condition_type != EN_CONDITION_NONE)
     {
-    case FUNCTION_BETWEEN:
-      range->SetBetween(item.data_list[0], item.data_list[1]);
-      return range;
-
-    case FUNCTION_EQ:
-      range->SetValue(item.data_list[0], true);
-      return range;
-
-    case FUNCTION_NE:
-      range->SetValue(item.data_list[0], false);
-      return range;
-
-    case FUNCTION_LT:
-      range->SetEnd(item.data_list[0], false);
-      return range;
-
-    case FUNCTION_LE:
-      range->SetEnd(item.data_list[0], true);
-      return range;
-
-    case FUNCTION_GT:
-      range->SetBegin(item.data_list[0], false);
-      return range;
-
-    case FUNCTION_GE:
-      range->SetBegin(item.data_list[0], true);
-      return range;
-
-    default:
-      break;
+        if (item.arg_list.size() == 1)
+        {
+            return MakeRange(item.arg_list[0]);
+        }
+        
+        switch (item.condition_type)
+        {
+            case EN_CONDITION_AND:
+                if (item.arg_list.size() > 1)
+                {
+                    auto range = StateRange::AND(*MakeRange(item.arg_list[0]), *MakeRange(item.arg_list[1]));
+                    
+                    for (size_t i = 2; i < item.arg_list.size(); ++i)
+                    {
+                        range = StateRange::AND(*range, *MakeRange(item.arg_list[i]));
+                    }
+                    
+                    return range;
+                }
+                break;
+            
+            case EN_CONDITION_OR:
+                if (item.arg_list.size() > 1)
+                {
+                    auto range = StateRange::OR(*MakeRange(item.arg_list[0]), *MakeRange(item.arg_list[1]));
+                    
+                    for (size_t i = 2; i < item.arg_list.size(); ++i)
+                    {
+                        range = StateRange::OR(*range, *MakeRange(item.arg_list[i]));
+                    }
+                    
+                    return range;
+                }
+                break;
+            
+            default:
+                break;
+        }
+        
+        return std::make_shared<StateRange>();
     }
-
-    return std::make_shared<StateRange>();
-  }
-
-  if (item.condition_type == EN_CONDITION_NONE && item.function_type == FUNCTION_NONE)
-  {
-    if (item.data_list.size() == 1)
+    
+    if (item.function_type != FUNCTION_NONE && is_data_ok(item) == true)
     {
-      auto range = std::make_shared<StateRange>();
-      range->SetValue(item.data_list[0], true);
-      return range;
+        auto range = std::make_shared<StateRange>();
+        
+        switch (item.function_type)
+        {
+            case FUNCTION_BETWEEN:
+                range->SetBetween(item.data_list[0], item.data_list[1]);
+                return range;
+            
+            case FUNCTION_EQ:
+                range->SetValue(item.data_list[0], true);
+                return range;
+            
+            case FUNCTION_NE:
+                range->SetValue(item.data_list[0], false);
+                return range;
+            
+            case FUNCTION_LT:
+                range->SetEnd(item.data_list[0], false);
+                return range;
+            
+            case FUNCTION_LE:
+                range->SetEnd(item.data_list[0], true);
+                return range;
+            
+            case FUNCTION_GT:
+                range->SetBegin(item.data_list[0], false);
+                return range;
+            
+            case FUNCTION_GE:
+                range->SetBegin(item.data_list[0], true);
+                return range;
+            
+            default:
+                break;
+        }
+        
+        return std::make_shared<StateRange>();
     }
-  }
-
-  return std::make_shared<StateRange>();
+    
+    if (item.condition_type == EN_CONDITION_NONE && item.function_type == FUNCTION_NONE)
+    {
+        if (item.data_list.size() == 1)
+        {
+            auto range = std::make_shared<StateRange>();
+            range->SetValue(item.data_list[0], true);
+            return range;
+        }
+    }
+    
+    return std::make_shared<StateRange>();
 }

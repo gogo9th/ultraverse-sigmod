@@ -197,6 +197,12 @@ public:
   ~StateRange();
 
   bool operator==(const StateRange &c) const;
+  bool operator!=(const StateRange &other) const;
+  
+  /**
+   * std::map에서 key로 사용하기 위한 비교 연산자
+   */
+  bool operator<(const StateRange &other) const;
   
   bool wildcard() const;
   void setWildcard(bool wildcard);
@@ -222,6 +228,7 @@ public:
   void serialize(Archive &archive);
 
   void arrangeSelf();
+  
 
 private:
   enum EN_VALID
@@ -256,7 +263,15 @@ public:
   StateItem();
   ~StateItem();
 
+  /**
+   * @deprecated use ::MakeRange2().
+   */
   std::shared_ptr<StateRange> MakeRange();
+  StateRange MakeRange2() const;
+  
+  /**
+   * @deprecated use ::MakeRange2().
+   */
   std::shared_ptr<StateRange> MakeRange(const std::string &column_name, bool &is_valid);
   static std::shared_ptr<StateRange> MakeRange(const StateItem &item);
 
