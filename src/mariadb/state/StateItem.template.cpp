@@ -50,3 +50,21 @@ struct std::hash<StateData> {
     }
 };
 
+template <>
+struct std::hash<StateRange> {
+    std::size_t operator()(const StateRange &range) const {
+        std::size_t hash = 0;
+        
+        if (range.wildcard()) {
+            return (std::size_t) UINT64_MAX;
+        }
+        
+        for (const auto &st_range: *range.GetRange()) {
+            hash ^= std::hash<StateData>()(st_range.begin);
+            hash ^= std::hash<StateData>()(st_range.end);
+        }
+        
+        return hash;
+    }
+};
+
