@@ -5,6 +5,8 @@
 #include "StateCluster.hpp"
 
 namespace ultraverse::state::v2 {
+    
+    
     StateCluster::StateCluster(const std::set<std::string> &keyColumns):
         _keyColumns(keyColumns)
     {
@@ -38,10 +40,11 @@ namespace ultraverse::state::v2 {
                 
                 auto &item = *it;
                 auto &columnName = item.name;
+                auto range = item.MakeRange2();
                 
                 {
                     std::scoped_lock lock(_clusterInsertionLock);
-                    _clusters[columnName].read[item.data_list.front()].emplace_back(transaction->gid());
+                    _clusters[columnName].read[range].emplace_back(transaction->gid());
                 }
                 
                 ++it;
@@ -61,10 +64,11 @@ namespace ultraverse::state::v2 {
                 
                 auto &item = *it;
                 auto &columnName = item.name;
+                auto range = item.MakeRange2();
                 
                 {
                     std::scoped_lock lock(_clusterInsertionLock);
-                    _clusters[columnName].write[item.data_list.front()].emplace_back(transaction->gid());
+                    _clusters[columnName].write[range].emplace_back(transaction->gid());
                 }
                 
                 ++it;

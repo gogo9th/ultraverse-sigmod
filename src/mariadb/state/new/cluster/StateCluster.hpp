@@ -19,8 +19,7 @@
 /**
  * @brief Row-level clustering을 위한 클래스
  *
- * TODO: alias 지원
- * TODO: foreign key 지원
+ * TODO: StateRowCluster로 이름 바꿔야 하지 않을까??
  *
  * +-----------------------+
  * | users.id              |
@@ -32,14 +31,21 @@
  * | | write = {2, 4, 6} | |
  * | +-------------------+ |
  * +-----------------------+
+ *
  */
 namespace ultraverse::state::v2 {
     
     class StateCluster {
     public:
-        struct Cluster {
-            std::map<StateData, std::vector<gid_t>> read;
-            std::map<StateData, std::vector<gid_t>> write;
+        /**
+         * TODO: StateRange는 계속 사용함: StateData를 StateRange로 변경할 것
+         */
+        class Cluster {
+        public:
+            std::map<StateRange, std::vector<gid_t>> read;
+            std::map<StateRange, std::vector<gid_t>> write;
+            
+            bool operator&(const Transaction &transaction) const;
         };
         
     public:
