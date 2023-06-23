@@ -40,17 +40,17 @@ namespace ultraverse::state::v2 {
     
     class StateCluster {
     public:
+        enum ClusterType {
+            READ,
+            WRITE
+        };
+        
         class Cluster {
         public:
             std::map<StateRange, std::vector<gid_t>> read;
             std::map<StateRange, std::vector<gid_t>> write;
             
-            bool operator&(const Transaction &transaction) const;
-        };
-        
-        enum InsertionType {
-            READ,
-            WRITE
+            static std::optional<StateRange> match(const std::string &columnName, const std::map<StateRange, std::vector<gid_t>> &cluster, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end);
         };
     public:
         StateCluster(const std::set<std::string> &keyColumns);
@@ -60,9 +60,11 @@ namespace ultraverse::state::v2 {
         
         bool isKeyColumnItem(const RelationshipResolver &resolver, const StateItem& item) const;
         
-        void insert(InsertionType type, const std::string &columnName, const StateRange &range, gid_t gid);
-        void insert(InsertionType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver);
-        void insert(const std::shared_ptr<Transaction>& transaction, const RelationshipResolver &resolver);
+        void insert(ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid);
+        void insert(ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver);
+        void insert(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
+        
+        std::optional<StateRange> match(ClusterType type, const std::string &columnName, const std::shared_ptr<Transaction> &transaction) const;
         
     private:
         LoggerPtr _logger;

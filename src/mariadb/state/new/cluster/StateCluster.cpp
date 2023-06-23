@@ -8,6 +8,26 @@
 
 namespace ultraverse::state::v2 {
     
+    std::optional<StateRange> StateCluster::Cluster::match(const std::string &columnName,
+                                                           const std::map<StateRange, std::vector<gid_t>> &cluster,
+                                                           CombinedIterator<StateItem> begin,
+                                                           CombinedIterator<StateItem> end) {
+        
+        auto it = std::find_if(cluster.begin(), cluster.end(), [&columnName, &begin, &end](const auto &pair) {
+            const StateRange &range = pair.first;
+            return std::find_if(begin, end, [&columnName, &range](const StateItem &item) {
+                // FIXME: 이거 개느릴거같은데;;
+                return item.name == columnName && StateRange::isIntersects(item.MakeRange2(), range);
+            }) != end;
+        });
+        
+        if (it == cluster.end()) {
+            return std::nullopt;
+        }
+        
+        return it->first;
+    }
+    
     
     StateCluster::StateCluster(const std::set<std::string> &keyColumns):
         _keyColumns(keyColumns)
@@ -36,7 +56,7 @@ namespace ultraverse::state::v2 {
         ) != _keyColumns.end();
     }
     
-    void StateCluster::insert(StateCluster::InsertionType type, const std::string &columnName, const StateRange &range, gid_t gid) {
+    void StateCluster::insert(StateCluster::ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid) {
         std::scoped_lock lock(_clusterInsertionLock);
         if (type == READ) {
             _clusters[columnName].read[range].emplace_back(gid);
@@ -45,7 +65,7 @@ namespace ultraverse::state::v2 {
         }
     }
     
-    void StateCluster::insert(StateCluster::InsertionType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver) {
+    void StateCluster::insert(StateCluster::ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver) {
         const auto isKeyColumnItem = [&resolver, this](const StateItem &item) {
             return this->isKeyColumnItem(resolver, item);
         };
@@ -82,5 +102,25 @@ namespace ultraverse::state::v2 {
     void StateCluster::insert(const std::shared_ptr<Transaction>& transaction, const RelationshipResolver &resolver) {
         insert(READ, transaction->whereSet_begin(), transaction->whereSet_end(), transaction->gid(), resolver);
         insert(WRITE, transaction->itemSet_begin(), transaction->itemSet_end(), transaction->gid(), resolver);
+    }
+    
+    std::optional<StateRange> StateCluster::match(StateCluster::ClusterType type, const std::string &columnName,
+                                                  const std::shared_ptr<Transaction> &transaction) const {
+        
+        if (_clusters.find(columnName) == _clusters.end()) {
+            return std::nullopt;
+        }
+        
+        const auto &cluster = _clusters.at(columnName);
+        
+        if (type == READ) {
+            return StateCluster::Cluster::match(columnName, cluster.read, transaction->whereSet_begin(), transaction->whereSet_end());
+        }
+        
+        if (type == WRITE) {
+            return StateCluster::Cluster::match(columnName, cluster.write, transaction->itemSet_begin(), transaction->itemSet_end());
+        }
+        
+        return std::nullopt;
     }
 }
