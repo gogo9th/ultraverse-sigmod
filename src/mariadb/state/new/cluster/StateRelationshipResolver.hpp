@@ -61,7 +61,7 @@ namespace ultraverse::state::v2 {
          *              }
          *          }
          */
-        virtual std::optional<std::string> resolveChain(const std::string &columnExpr);
+        virtual std::optional<std::string> resolveChain(const std::string &columnExpr) const;
         
         /**
          * @brief 주어진 Row Element와 연관된 "실제 컬럼"의 Row Element를 반환한다.

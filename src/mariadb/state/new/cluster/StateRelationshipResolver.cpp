@@ -8,7 +8,7 @@
 
 namespace ultraverse::state::v2 {
     
-    std::optional<std::string> RelationshipResolver::resolveChain(const std::string &columnExpr) {
+    std::optional<std::string> RelationshipResolver::resolveChain(const std::string &columnExpr) const {
         std::string _columnExpr = columnExpr;
         
         while (true) {
