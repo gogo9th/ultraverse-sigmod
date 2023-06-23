@@ -295,5 +295,56 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
         }
     }
     
+    SECTION("should match transactions correctly") {
+        auto txn1 = sampleTransaction1();
+        auto txn2 = sampleTransaction2();
+        auto txn3 = sampleTransaction3();
+        
+        StateCluster cluster({"users.id", "posts.id"});
+        
+        cluster.insert(txn1, resolver);
+        cluster.insert(txn2, resolver);
+        cluster.insert(txn3, resolver);
+        
+        auto match1 = cluster.match(StateCluster::WRITE, "users.id", txn1);
+        
+        REQUIRE(match1.has_value());
+        REQUIRE(match1.value() == StateRange { 1 });
+        
+        auto gids1 = cluster.clusters()
+            .at("users.id")
+            .write
+            .at(match1.value());
+        
+        REQUIRE(std::find(gids1.begin(), gids1.end(), txn1->gid()) != gids1.end());
+        
+        auto match2 = cluster.match(StateCluster::READ, "users.id", txn2);
+        
+        REQUIRE(match2.has_value());
+        REQUIRE(match2.value() == StateRange { 1 });
+        
+        auto gids2 = cluster.clusters()
+            .at("users.id")
+            .read
+            .at(match2.value());
+        
+        REQUIRE(std::find(gids2.begin(), gids2.end(), txn2->gid()) != gids2.end());
+        
+        
+        auto match3 = cluster.match(StateCluster::WRITE, "posts.id", txn3);
+        
+        REQUIRE(match3.has_value());
+        REQUIRE(match3.value() == StateRange { 1 });
+        
+        auto gids3 = cluster.clusters()
+            .at("posts.id")
+            .write
+            .at(match3.value());
+        
+        REQUIRE(std::find(gids3.begin(), gids3.end(), txn3->gid()) != gids3.end());
+        
+        auto bad_match = cluster.match(StateCluster::WRITE, "users.id", txn3);
+        REQUIRE_FALSE(bad_match.has_value());
+    }
     
 }
