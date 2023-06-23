@@ -44,10 +44,31 @@ namespace ultraverse::state::v2 {
         
         /**
          * @brief 주어진 Row Element와 연관된 "실제 컬럼"의 Row Element를 반환한다.
+         * @copilot 위 resolveColumnAlias(), resolveForeignKey() 함수를 사용하여 "실제 컬럼"을 찾는다.
+         *          예시 의사 코드를 여기다 적어둘테니, 참고하면서 구현하면 좋을 것 같다. (적절히 수정해서)
          *
-         * @example orders.user_id_str => users.id 로 alias 관계가 설정된 경우 상태 전환 프로그램이 동작하면서 내부적으로 다음과 같은 매핑 테이블이 생성된다.
+         *          var columnExpr = columnExpr;
+         *
+         *          while (true) {
+         *              var alias = resolveColumnAlias(columnExpr);
+         *              var foreignKey = resolveForeignKey(alias.isPresent() ? alias.get() : columnExpr);
+         *
+         *              if (foreignKey.isPresent()) {
+         *                  columnExpr = foreignKey.get();
+         *                  continue;
+         *              } else {
+         *                  return alias.isPresent() ? alias.get() : columnExpr;
+         *              }
+         *          }
+         */
+        virtual std::optional<std::string> resolveChain(const std::string &columnExpr);
+        
+        /**
+         * @brief 주어진 Row Element와 연관된 "실제 컬럼"의 Row Element를 반환한다.
+         *
+         * @example users.user_id_str => users.id 로 alias 관계가 설정된 경우 상태 전환 프로그램이 동작하면서 내부적으로 다음과 같은 매핑 테이블이 생성된다.
          *      +-----------------------+----------------+
-         *      | orders.user_id_str    | users.id       |
+         *      | users.user_id_str     | users.id       |
          *      +-----------------------+----------------+
          *      | "000042"              | 42             |
          *      +-----------------------+----------------+
@@ -57,7 +78,7 @@ namespace ultraverse::state::v2 {
          *      +-----------------------+----------------+
          *
          *      따라서,
-         *      resolveRowAlias(StateItem { orders.user_id_str EQ "000042" }) 를 호출하면
+         *      resolveRowAlias(StateItem { users.user_id_str EQ "000042" }) 를 호출하면
          *          => StateItem { users.id EQ 42 } 를 반환한다
          *
          * @return 매핑된 "실제 컬럼"의 Row Element. (optional)

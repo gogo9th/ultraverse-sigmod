@@ -7,6 +7,27 @@
 #include "utils/StringUtil.hpp"
 
 namespace ultraverse::state::v2 {
+    
+    std::optional<std::string> RelationshipResolver::resolveChain(const std::string &columnExpr) {
+        std::string _columnExpr = columnExpr;
+        
+        while (true) {
+            auto alias = resolveColumnAlias(_columnExpr);
+            auto foreignKey = resolveForeignKey(alias.has_value() ? alias.value() : _columnExpr);
+            
+            if (foreignKey.has_value()) {
+                _columnExpr = foreignKey.value();
+                continue;
+            }
+            
+            if (_columnExpr == columnExpr) {
+                return std::nullopt;
+            } else {
+                return alias.has_value() ? alias.value() : _columnExpr;
+            }
+        }
+    }
+    
     StateRelationshipResolver::StateRelationshipResolver(const StateChangePlan &plan, const StateChangeContext &context):
         _plan(plan),
         _context(context)
