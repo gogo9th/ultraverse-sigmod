@@ -39,7 +39,7 @@ namespace ultraverse::state::v2 {
                 // Alias -> FK -> Alias -> Real ...
                 // Alias -> FK -> Real
                 
-                auto fkItem = alias.value();
+                auto fkItem = alias.has_value() ? alias.value() : _item;
                 fkItem.name = foreignKey.value();
                 _item = fkItem;
                 continue;
