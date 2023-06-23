@@ -164,14 +164,16 @@ std::shared_ptr<Transaction> sampleTransaction4() {
     std::shared_ptr<Query> query = std::make_shared<Query>();
     {
         query->setDatabase("test");
-        query->setStatement("INSERT INTO `posts` (author, author_str, uuid, content) VALUES (1, '000001', '4443d265-fb0a-4dca-8f71-e82b176118df', '집가고 싶어 ㅠㅠ')");
+        query->setStatement("UPDATE `posts` SET `content` = '이 포스트는 검열되었습니다.' WHERE `uuid` = '4443d265-fb0a-4dca-8f71-e82b176118df'");
         query->setAffectedRows(1);
         
         query->itemSet().emplace_back(StateItem::EQ("posts.id", (int64_t) 1));
         query->itemSet().emplace_back(StateItem::EQ("posts.author", (int64_t) 1));
         query->itemSet().emplace_back(StateItem::EQ("posts.author_str", StateData { "000001" }));
         query->itemSet().emplace_back(StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" }));
-        query->itemSet().emplace_back(StateItem::EQ("posts.content", StateData { "집가고 싶어 ㅠㅠ" }));
+        query->itemSet().emplace_back(StateItem::EQ("posts.content", StateData { "이 포스트는 검열되었습니다." }));
+        
+        query->whereSet().emplace_back(StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" }));
     }
     
     *transaction << query;
@@ -295,6 +297,24 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
         }
     }
     
+    SECTION("should insert transaction into cluster correctly, with aliases") {
+        auto txn4 = sampleTransaction4();
+        
+        StateCluster cluster({"users.id", "posts.id"});
+        
+        cluster.insert(txn4, resolver);
+        
+        REQUIRE(cluster.clusters().find("posts.id") != cluster.clusters().end());
+        
+        {
+            auto &postsIdCluster = cluster.clusters().at("posts.id");
+            auto readGids = postsIdCluster.read.at(StateRange{1});
+            
+            // 4번은 alias를 통해 posts.id를 간접적으로 레퍼런싱 하고 있지만 alias가 해결된 채로 클러스터에 포함되어 있어야 한다.
+            REQUIRE(std::find(readGids.begin(), readGids.end(), txn4->gid()) != readGids.end());
+        }
+    }
+    
     SECTION("should match transactions correctly") {
         /*
          * 이 테스트에서는 다음과 같이 클러스터가 구성되어 있어야 한다.
@@ -308,7 +328,7 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
          *
          * Cluster[posts.id] {
          *     [posts.id = 1] {
-         *         READ  { }
+         *         READ  { gid(4) }
          *         WRITE { gid(3) }
          *     }
          * }
@@ -318,66 +338,95 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
         auto txn1 = sampleTransaction1();
         auto txn2 = sampleTransaction2();
         auto txn3 = sampleTransaction3();
+        auto txn4 = sampleTransaction4();
         
         StateCluster cluster({"users.id", "posts.id"});
         
         cluster.insert(txn1, resolver);
         cluster.insert(txn2, resolver);
         cluster.insert(txn3, resolver);
+        cluster.insert(txn4, resolver);
         
-        // 1번 트랜잭션과 users.id 클러스터의 WRITE 섹션을 매칭 시도한다.
-        auto match1 = cluster.match(StateCluster::WRITE, "users.id", txn1);
+        {
+            // 1번 트랜잭션과 users.id 클러스터의 WRITE 섹션을 매칭 시도한다.
+            auto match1 = cluster.match(StateCluster::WRITE, "users.id", txn1, resolver);
+            
+            // 매칭은 성공적으로 이루어져야 한다.
+            REQUIRE(match1.has_value());
+            // 매칭된 클러스터의 범위는 1이어야 한다. (users.id = 1을 건드리기 때문에)
+            REQUIRE(match1.value() == StateRange{1});
+            
+            auto gids1 = cluster.clusters()
+                .at("users.id")
+                .write
+                .at(match1.value());
+            
+            // 클러스터의 gid 목록에는 1번 트랜잭션의 gid가 포함되어야 한다.
+            REQUIRE(std::find(gids1.begin(), gids1.end(), txn1->gid()) != gids1.end());
+        }
         
-        // 매칭은 성공적으로 이루어져야 한다.
-        REQUIRE(match1.has_value());
-        // 매칭된 클러스터의 범위는 1이어야 한다. (users.id = 1을 건드리기 때문에)
-        REQUIRE(match1.value() == StateRange { 1 });
+        {
+            // 2번 트랜잭션과 users.id 클러스터의 READ 섹션을 매칭 시도한다.
+            auto match2 = cluster.match(StateCluster::READ, "users.id", txn2, resolver);
+            
+            // 매칭은 성공적으로 이루어져야 한다.
+            REQUIRE(match2.has_value());
+            // 매칭된 클러스터의 범위는 1이어야 한다. (users.id = 1을 건드리기 때문에)
+            REQUIRE(match2.value() == StateRange{1});
+            
+            auto gids2 = cluster.clusters()
+                .at("users.id")
+                .read
+                .at(match2.value());
+            
+            // 클러스터의 gid 목록에는 2번 트랜잭션의 gid가 포함되어야 한다.
+            REQUIRE(std::find(gids2.begin(), gids2.end(), txn2->gid()) != gids2.end());
+        }
         
-        auto gids1 = cluster.clusters()
-            .at("users.id")
-            .write
-            .at(match1.value());
+        {
+            // 3번 트랜잭션과 posts.id 클러스터의 WRITE 섹션을 매칭 시도한다.
+            auto match3 = cluster.match(StateCluster::WRITE, "posts.id", txn3, resolver);
+            
+            // 매칭은 성공적으로 이루어져야 한다.
+            REQUIRE(match3.has_value());
+            // 매칭된 클러스터의 범위는 1이어야 한다. (posts.id = 1을 건드리기 때문에)
+            REQUIRE(match3.value() == StateRange{1});
+            
+            auto gids3 = cluster.clusters()
+                .at("posts.id")
+                .write
+                .at(match3.value());
+            
+            // 클러스터의 gid 목록에는 3번 트랜잭션의 gid가 포함되어야 한다.
+            REQUIRE(std::find(gids3.begin(), gids3.end(), txn3->gid()) != gids3.end());
+        }
         
-        // 클러스터의 gid 목록에는 1번 트랜잭션의 gid가 포함되어야 한다.
-        REQUIRE(std::find(gids1.begin(), gids1.end(), txn1->gid()) != gids1.end());
+        {
+            // 4번 트랜잭션과 posts.id 클러스터의 READ 섹션을 매칭 시도한다.
+            auto match4 = cluster.match(StateCluster::READ, "posts.id", txn4, resolver);
+            
+            // 4번은 alias를 통해 posts.id를 간접적으로 레퍼런싱 하고 있지만 매칭은 성공적으로 이루어져야 한다.
+            REQUIRE(match4.has_value());
+            // 매칭된 클러스터의 범위는 1이어야 한다. (posts.id = 1을 건드리기 때문에)
+            REQUIRE(match4.value() == StateRange{1});
+            
+            auto gids4 = cluster.clusters()
+                .at("posts.id")
+                .read
+                .at(match4.value());
+            
+            // 클러스터의 gid 목록에는 4번 트랜잭션의 gid가 포함되어야 한다.
+            REQUIRE(std::find(gids4.begin(), gids4.end(), txn4->gid()) != gids4.end());
+        }
         
-        // 2번 트랜잭션과 users.id 클러스터의 READ 섹션을 매칭 시도한다.
-        auto match2 = cluster.match(StateCluster::READ, "users.id", txn2);
-        
-        // 매칭은 성공적으로 이루어져야 한다.
-        REQUIRE(match2.has_value());
-        // 매칭된 클러스터의 범위는 1이어야 한다. (users.id = 1을 건드리기 때문에)
-        REQUIRE(match2.value() == StateRange { 1 });
-        
-        auto gids2 = cluster.clusters()
-            .at("users.id")
-            .read
-            .at(match2.value());
-        
-        // 클러스터의 gid 목록에는 2번 트랜잭션의 gid가 포함되어야 한다.
-        REQUIRE(std::find(gids2.begin(), gids2.end(), txn2->gid()) != gids2.end());
-        
-        // 3번 트랜잭션과 posts.id 클러스터의 WRITE 섹션을 매칭 시도한다.
-        auto match3 = cluster.match(StateCluster::WRITE, "posts.id", txn3);
-        
-        // 매칭은 성공적으로 이루어져야 한다.
-        REQUIRE(match3.has_value());
-        // 매칭된 클러스터의 범위는 1이어야 한다. (posts.id = 1을 건드리기 때문에)
-        REQUIRE(match3.value() == StateRange { 1 });
-        
-        auto gids3 = cluster.clusters()
-            .at("posts.id")
-            .write
-            .at(match3.value());
-        
-        // 클러스터의 gid 목록에는 3번 트랜잭션의 gid가 포함되어야 한다.
-        REQUIRE(std::find(gids3.begin(), gids3.end(), txn3->gid()) != gids3.end());
-        
-        // 3번 트랜잭션과 users.id 클러스터의 READ 섹션을 매칭 시도한다.
-        auto bad_match = cluster.match(StateCluster::WRITE, "users.id", txn3);
-        
-        // 3번 트랜잭션은 users.id = 1을 읽는 쿼리가 없으므로 매칭이 실패해야 한다.
-        REQUIRE_FALSE(bad_match.has_value());
+        {
+            // 3번 트랜잭션과 users.id 클러스터의 READ 섹션을 매칭 시도한다.
+            // HELP: 이 매칭은 실패하는게 맞나요?
+            auto bad_match = cluster.match(StateCluster::WRITE, "users.id", txn3, resolver);
+            
+            // 3번 트랜잭션은 users.id = 1을 읽는 쿼리가 없으므로 매칭이 실패해야 한다.
+            REQUIRE_FALSE(bad_match.has_value());
+        }
     }
     
 }

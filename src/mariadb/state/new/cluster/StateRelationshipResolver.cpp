@@ -193,7 +193,7 @@ namespace ultraverse::state::v2 {
         _cacheLock.unlock();
         
         if (!found) {
-            auto retval = RelationshipResolver::resolveRowAlias(item);
+            auto retval = _resolver.resolveRowAlias(item);
             
             if (retval.has_value()) {
                 std::scoped_lock _lock(_cacheLock);
@@ -219,7 +219,7 @@ namespace ultraverse::state::v2 {
         _cacheLock.unlock();
         
         if (!found) {
-            auto retval = RelationshipResolver::resolveRowAlias(item);
+            auto retval = _resolver.resolveRowAlias(item);
             
             if (retval.has_value()) {
                 std::scoped_lock _lock(_cacheLock);
