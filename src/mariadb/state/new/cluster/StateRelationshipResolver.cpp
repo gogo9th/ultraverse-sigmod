@@ -20,10 +20,12 @@ namespace ultraverse::state::v2 {
                 continue;
             }
             
-            if (_columnExpr == columnExpr) {
+            if (alias.has_value()) {
+                return alias.value();
+            } else if (_columnExpr == columnExpr) {
                 return std::nullopt;
             } else {
-                return alias.has_value() ? alias.value() : _columnExpr;
+                return _columnExpr;
             }
         }
     }
@@ -45,10 +47,12 @@ namespace ultraverse::state::v2 {
                 continue;
             }
             
-            if (_item.name == item.name) {
+            if (alias.has_value()) {
+                return alias.value();
+            } else if (_item.name == item.name) {
                 return std::nullopt;
             } else {
-                return alias.has_value() ? alias.value() : _item;
+                return _item;
             }
         }
     }
