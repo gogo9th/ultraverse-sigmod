@@ -134,4 +134,144 @@ namespace ultraverse::state::v2 {
         
         _rowAliasTable[name].insert(std::make_pair(range, RowAlias { alias, real }));
     }
+    
+    CachedRelationshipResolver::CachedRelationshipResolver(const RelationshipResolver &resolver, int maxRowElements):
+        _resolver(resolver),
+        _maxRowElements(maxRowElements)
+    {
+    }
+    
+    std::optional<std::string> CachedRelationshipResolver::resolveColumnAlias(const std::string &columnExpr) const {
+        _cacheLock.lock();
+        auto it = _aliasCache.find(columnExpr);
+        bool found = it != _aliasCache.end();
+        _cacheLock.unlock();
+        
+        if (!found) {
+            auto retval = _resolver.resolveColumnAlias(columnExpr);
+            if (retval.has_value()) {
+                std::scoped_lock _lock(_cacheLock);
+                _aliasCache.emplace(columnExpr, retval.value());
+            }
+            
+            return retval;
+        }
+        
+        return it->second;
+    }
+    
+    std::optional<std::string> CachedRelationshipResolver::resolveForeignKey(const std::string &columnExpr) const {
+        return _resolver.resolveForeignKey(columnExpr);
+    }
+    
+    std::optional<std::string> CachedRelationshipResolver::resolveChain(const std::string &columnExpr) const {
+        _cacheLock.lock();
+        auto it = _chainCache.find(columnExpr);
+        bool found = it != _chainCache.end();
+        _cacheLock.unlock();
+        
+        if (!found) {
+            auto retval = _resolver.resolveColumnAlias(columnExpr);
+            if (retval.has_value()) {
+                std::scoped_lock _lock(_cacheLock);
+                _chainCache.emplace(columnExpr, retval.value());
+            }
+            
+            return retval;
+        }
+        
+        return it->second;
+    }
+    
+    std::optional<StateItem> CachedRelationshipResolver::resolveRowAlias(const StateItem &item) const {
+        auto range = item.MakeRange2();
+        
+        _cacheLock.lock();
+        auto &cacheMap = _rowAliasCache[item.name];
+        auto it = cacheMap.find(range);
+        bool found = it != cacheMap.end();
+        _cacheLock.unlock();
+        
+        if (!found) {
+            auto retval = RelationshipResolver::resolveRowAlias(item);
+            
+            if (retval.has_value()) {
+                std::scoped_lock _lock(_cacheLock);
+                
+                if (isGCRequired(cacheMap)) {
+                    gc(cacheMap);
+                }
+                
+                cacheMap.emplace(range, std::make_pair(1, retval.value()));
+            }
+        }
+        
+        return it->second.second;
+    }
+    
+    std::optional<StateItem> CachedRelationshipResolver::resolveRowChain(const StateItem &item) const {
+        auto range = item.MakeRange2();
+        
+        _cacheLock.lock();
+        auto &cacheMap = _rowChainCache[item.name];
+        auto it = cacheMap.find(range);
+        bool found = it != cacheMap.end();
+        _cacheLock.unlock();
+        
+        if (!found) {
+            auto retval = RelationshipResolver::resolveRowAlias(item);
+            
+            if (retval.has_value()) {
+                std::scoped_lock _lock(_cacheLock);
+                
+                if (isGCRequired(cacheMap)) {
+                    gc(cacheMap);
+                }
+                
+                cacheMap.emplace(range, std::make_pair(1, retval.value()));
+            }
+        }
+        
+        return it->second.second;
+
+    }
+    
+    void CachedRelationshipResolver::clearCache() {
+        std::scoped_lock _lock(_cacheLock);
+        _aliasCache.clear();
+        _chainCache.clear();
+        _rowAliasCache.clear();
+    }
+    
+    bool CachedRelationshipResolver::isGCRequired(const CachedRelationshipResolver::RowCacheMap &rowCacheMap) const {
+        return rowCacheMap.size() > _maxRowElements;
+    }
+    
+    void CachedRelationshipResolver::gc(CachedRelationshipResolver::RowCacheMap &rowCacheMap) {
+        std::vector<const StateRange *> keys;
+        keys.reserve(rowCacheMap.size());
+        
+        std::transform(
+            rowCacheMap.begin(), rowCacheMap.end(), std::back_inserter(keys),
+            [](auto &pair) -> const StateRange * { return &pair.first; }
+        );
+        
+        std::sort(
+            keys.begin(), keys.end(),
+            [&rowCacheMap](const auto &lhs, const auto &rhs) {
+                return rowCacheMap.at(*lhs).first < rowCacheMap.at(*rhs).first;
+            }
+        );
+        
+        // 하위 5% 제거
+        int keysToRemove = (int) ((double) keys.size() * 0.05);
+        for (int i = 0; i <= keysToRemove; i++) {
+            rowCacheMap.erase(*keys[i]);
+        }
+        
+        // 모든 카운터를 0으로 리셋 (다음 GC를 위해)
+        for (auto &pair: rowCacheMap) {
+            pair.second.first = 0;
+        }
+    }
 }

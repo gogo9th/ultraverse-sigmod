@@ -119,6 +119,59 @@ namespace ultraverse::state::v2 {
         
         RowAliasTable _rowAliasTable;
     };
+    
+    /**
+     * @brief 캐시 레이어를 추가한 RelationshipResolver
+     * @details RelationshipResolver의 resolveColumnAlias(), resolveChain() 함수는 매번 동일한 결과를 반환한다.
+     *         따라서, 이를 캐시하여 성능을 향상시킨다.
+     */
+    class CachedRelationshipResolver: public RelationshipResolver {
+    public:
+        using RowCacheMap = std::unordered_map<StateRange, std::pair<int, StateItem>>;
+        
+        CachedRelationshipResolver(const RelationshipResolver &resolver, int maxRowElements);
+        
+        /**
+         * @brief 캐시된 결과를 반환 시도한다. (없으면 원 구현체의 함수를 호출한다.)
+         */
+        virtual std::optional<std::string> resolveColumnAlias(const std::string &columnExpr) const override;
+        /**
+         * @brief 단순 FK 테이블 조회이므로 캐시하지 않고 원 구현체의 함수를 호출한다.
+         */
+        virtual std::optional<std::string> resolveForeignKey(const std::string &columnExpr) const override;
+        /**
+         * @brief 캐시된 결과를 반환 시도한다. (없으면 원 구현체의 함수를 호출한다.)
+         */
+        virtual std::optional<std::string> resolveChain(const std::string &columnExpr) const override;
+        /**
+         * @brief 원 구현체의 함수를 호출한다.
+         */
+        virtual std::optional<StateItem> resolveRowAlias(const StateItem &item) const override;
+        /**
+         * @brief 원 구현체의 함수를 호출한다.
+         */
+        virtual std::optional<StateItem> resolveRowChain(const StateItem &item) const override;
+        
+        void clearCache();
+        
+    private:
+        bool isGCRequired(const RowCacheMap &rowCacheMap) const;
+        /**
+         * @brief 레퍼런스 카운트 단위로 정렬하여 하위 5%를 제거한다.
+         * @note 이 메소드는 락을 걸지 않으므로 호출하는 쪽에서 락을 걸어야 한다.
+         */
+        static void gc(RowCacheMap &rowCacheMap) ;
+        
+        const RelationshipResolver &_resolver;
+        
+        int _maxRowElements;
+        
+        mutable std::mutex _cacheLock;
+        mutable std::unordered_map<std::string, std::optional<std::string>> _aliasCache;
+        mutable std::unordered_map<std::string, std::optional<std::string>> _chainCache;
+        mutable std::unordered_map<std::string, RowCacheMap> _rowAliasCache;
+        mutable std::unordered_map<std::string, RowCacheMap> _rowChainCache;
+    };
 }
 
 
