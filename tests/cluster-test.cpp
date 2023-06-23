@@ -300,13 +300,17 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
          * 이 테스트에서는 다음과 같이 클러스터가 구성되어 있어야 한다.
          *
          * Cluster[users.id] {
-         *     READ  { gid(2) }
-         *     WRITE { gid(1) }
+         *     [users.id = 1] {
+         *         READ  { gid(2) }
+         *         WRITE { gid(1) }
+         *     }
          * }
          *
          * Cluster[posts.id] {
-         *     READ  { }
-         *     WRITE { gid(3) }
+         *     [posts.id = 1] {
+         *         READ  { }
+         *         WRITE { gid(3) }
+         *     }
          * }
          */
         
