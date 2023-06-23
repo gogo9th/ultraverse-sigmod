@@ -51,7 +51,7 @@ namespace ultraverse::utility {
             value.replace(pos, from.length(), to);
         }
         
-        return value;
+        return std::move(value);
     }
     
     std::string normalizeColumnName(const std::string &columnName) {
@@ -67,7 +67,7 @@ namespace ultraverse::utility {
             value = replaceAll(value, pair.first, pair.second);
         }
         
-        return value;
+        return std::move(value);
     }
 
     std::string toLower(const std::string &source) {

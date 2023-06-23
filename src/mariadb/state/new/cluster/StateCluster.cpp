@@ -26,10 +26,10 @@ namespace ultraverse::state::v2 {
                 const auto &realColumn = resolver.resolveChain(item.name);
                 const auto &real = resolver.resolveRowChain(item);
                 
-                if (real.has_value()) {
-                    return real.value().name == columnName && StateRange::isIntersects(real->MakeRange2(), range);
-                } else if (realColumn.has_value()) {
-                    return realColumn.value() == columnName && StateRange::isIntersects(item.MakeRange2(), range);
+                if (real != nullptr) {
+                    return real->name == columnName && StateRange::isIntersects(real->MakeRange2(), range);
+                } else if (!realColumn.empty()) {
+                    return realColumn == columnName && StateRange::isIntersects(item.MakeRange2(), range);
                 } else {
                     return item.name == columnName && StateRange::isIntersects(item.MakeRange2(), range);
                 }
@@ -66,7 +66,7 @@ namespace ultraverse::state::v2 {
                 auto realColumn = resolver.resolveChain(item.name);
                 
                 return (item.name == keyColumn) ||
-                       (realColumn.has_value() && realColumn.value() == keyColumn);
+                       (!realColumn.empty() && realColumn == keyColumn);
             }
         ) != _keyColumns.end();
     }
@@ -100,11 +100,11 @@ namespace ultraverse::state::v2 {
             const auto &realColumn = resolver.resolveChain(item.name);
             const auto &real = resolver.resolveRowChain(item);
             
-            if (real.has_value()) {
+            if (real != nullptr) {
                 insert(type, real->name, real->MakeRange2(), gid);
-            } else if (realColumn.has_value()) {
+            } else if (!realColumn.empty()) {
                 // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
-                insert(type, realColumn.value(), item.MakeRange2(), gid);
+                insert(type, realColumn, item.MakeRange2(), gid);
             } else {
                 // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
                 insert(type, columnName, item.MakeRange2(), gid);

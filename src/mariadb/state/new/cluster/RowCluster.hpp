@@ -8,6 +8,8 @@
 #include <string>
 #include <unordered_map>
 
+#include <boost/graph/adjacency_list.hpp>
+
 #include "mariadb/state/StateItem.h"
 #include "mariadb/state/new/Query.hpp"
 #include "mariadb/state/new/Transaction.hpp"

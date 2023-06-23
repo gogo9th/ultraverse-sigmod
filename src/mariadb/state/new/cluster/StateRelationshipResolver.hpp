@@ -32,7 +32,7 @@ namespace ultraverse::state::v2 {
          * @returns "실제" 컬럼 이름. (optional)
          * @note 'null'을 표현하기 위해 std::optional을 사용한다.
          */
-        virtual std::optional<std::string> resolveColumnAlias(const std::string &columnExpr) const = 0;
+        virtual std::string resolveColumnAlias(const std::string &columnExpr) const = 0;
         
         /**
          * @brief 주어진 컬럼이 외래 키 관계로 레퍼런싱 하고 있는 컬럼 이름을 반환한다.
@@ -40,7 +40,7 @@ namespace ultraverse::state::v2 {
          * @returns 외래 키 관계로 참조된 컬럼 이름. (optional)
          * @note 'null'을 표현하기 위해 std::optional을 사용한다.
          */
-        virtual std::optional<std::string> resolveForeignKey(const std::string &columnExpr) const = 0;
+        virtual std::string resolveForeignKey(const std::string &columnExpr) const = 0;
         
         /**
          * @brief 주어진 Row Element와 연관된 "실제 컬럼"의 Row Element를 반환한다.
@@ -61,7 +61,7 @@ namespace ultraverse::state::v2 {
          *              }
          *          }
          */
-        virtual std::optional<std::string> resolveChain(const std::string &columnExpr) const;
+        virtual std::string resolveChain(const std::string &columnExpr) const;
         
         /**
          * @brief 주어진 Row Element와 연관된 "실제 컬럼"의 Row Element를 반환한다.
@@ -84,9 +84,9 @@ namespace ultraverse::state::v2 {
          * @return 매핑된 "실제 컬럼"의 Row Element. (optional)
          * @note 'null'을 표현하기 위해 std::optional을 사용한다.
          */
-        virtual std::optional<StateItem> resolveRowAlias(const StateItem &item) const = 0;
+        virtual std::shared_ptr<StateItem> resolveRowAlias(const StateItem &item) const = 0;
         
-        virtual std::optional<StateItem> resolveRowChain(const StateItem &item) const;
+        virtual std::shared_ptr<StateItem> resolveRowChain(const StateItem &item) const;
     };
     
     class StateRelationshipResolver: public RelationshipResolver {
@@ -106,10 +106,10 @@ namespace ultraverse::state::v2 {
     public:
         StateRelationshipResolver(const StateChangePlan &plan, const StateChangeContext &context);
 
-        virtual std::optional<std::string> resolveColumnAlias(const std::string &columnExpr) const override;
-        virtual std::optional<std::string> resolveForeignKey(const std::string &columnExpr) const override;
+        virtual std::string resolveColumnAlias(const std::string &columnExpr) const override;
+        virtual std::string resolveForeignKey(const std::string &columnExpr) const override;
         
-        virtual std::optional<StateItem> resolveRowAlias(const StateItem &alias) const override;
+        virtual std::shared_ptr<StateItem> resolveRowAlias(const StateItem &alias) const override;
         
         void addRowAlias(StateItem &alias, StateItem &real);
         
@@ -127,30 +127,30 @@ namespace ultraverse::state::v2 {
      */
     class CachedRelationshipResolver: public RelationshipResolver {
     public:
-        using RowCacheMap = std::unordered_map<StateRange, std::pair<int, StateItem>>;
+        using RowCacheMap = std::unordered_map<size_t, std::pair<int, std::shared_ptr<StateItem>>>;
         
         CachedRelationshipResolver(const RelationshipResolver &resolver, int maxRowElements);
         
         /**
          * @brief 캐시된 결과를 반환 시도한다. (없으면 원 구현체의 함수를 호출한다.)
          */
-        virtual std::optional<std::string> resolveColumnAlias(const std::string &columnExpr) const override;
+        virtual std::string resolveColumnAlias(const std::string &columnExpr) const override;
         /**
          * @brief 단순 FK 테이블 조회이므로 캐시하지 않고 원 구현체의 함수를 호출한다.
          */
-        virtual std::optional<std::string> resolveForeignKey(const std::string &columnExpr) const override;
+        virtual std::string resolveForeignKey(const std::string &columnExpr) const override;
         /**
          * @brief 캐시된 결과를 반환 시도한다. (없으면 원 구현체의 함수를 호출한다.)
          */
-        virtual std::optional<std::string> resolveChain(const std::string &columnExpr) const override;
+        virtual std::string resolveChain(const std::string &columnExpr) const override;
         /**
          * @brief 원 구현체의 함수를 호출한다.
          */
-        virtual std::optional<StateItem> resolveRowAlias(const StateItem &item) const override;
+        virtual std::shared_ptr<StateItem> resolveRowAlias(const StateItem &item) const override;
         /**
          * @brief 원 구현체의 함수를 호출한다.
          */
-        virtual std::optional<StateItem> resolveRowChain(const StateItem &item) const override;
+        virtual std::shared_ptr<StateItem> resolveRowChain(const StateItem &item) const override;
         
         void clearCache();
         
@@ -167,8 +167,8 @@ namespace ultraverse::state::v2 {
         int _maxRowElements;
         
         mutable std::mutex _cacheLock;
-        mutable std::unordered_map<std::string, std::optional<std::string>> _aliasCache;
-        mutable std::unordered_map<std::string, std::optional<std::string>> _chainCache;
+        mutable std::unordered_map<std::string, std::string> _aliasCache;
+        mutable std::unordered_map<std::string, std::string> _chainCache;
         mutable std::unordered_map<std::string, RowCacheMap> _rowAliasCache;
         mutable std::unordered_map<std::string, RowCacheMap> _rowChainCache;
     };
