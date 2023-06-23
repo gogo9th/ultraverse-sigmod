@@ -3,6 +3,7 @@
 //
 
 #define CATCH_CONFIG_MAIN
+#define CATCH_CONFIG_ENABLE_BENCHMARKING
 
 #include <memory>
 
@@ -11,6 +12,7 @@
 #include "../src/mariadb/state/new/Query.hpp"
 #include "../src/mariadb/state/new/Transaction.hpp"
 #include "../src/mariadb/state/new/cluster/StateCluster.hpp"
+#include "../src/mariadb/state/new/cluster/RowCluster.hpp"
 
 using namespace ultraverse::state::v2;
 
@@ -19,8 +21,8 @@ using namespace ultraverse::state::v2;
  */
 class MockedRelationshipResolver: public RelationshipResolver {
 public:
-    std::optional<std::string> resolveColumnAlias(const std::string &columnExpr) const override {
-        static const std::map<std::string, std::string> aliases {
+    std::string resolveColumnAlias(const std::string &columnExpr) const override {
+        static const std::unordered_map<std::string, std::string> aliases {
             { "users.id_str", "users.id" },
             { "posts.uuid", "posts.id" }
         };
@@ -28,14 +30,14 @@ public:
         auto it = aliases.find(columnExpr);
         
         if (it == aliases.end()) {
-            return std::nullopt;
+            return std::move(std::string());
         } else {
-            return it->second;
+            return std::move(it->second);
         }
     }
     
-    std::optional<std::string> resolveForeignKey(const std::string &columnExpr) const override {
-        static const std::map<std::string, std::string> foreignKeys {
+    std::string resolveForeignKey(const std::string &columnExpr) const override {
+        static const std::unordered_map<std::string, std::string> foreignKeys {
             { "posts.author", "users.id" },
             { "posts.author_str", "users.id_str" }
         };
@@ -43,14 +45,29 @@ public:
         auto it = foreignKeys.find(columnExpr);
         
         if (it == foreignKeys.end()) {
-            return std::nullopt;
+            return std::move(std::string());
         } else {
-            return it->second;
+            return std::move(it->second);
         }
     }
     
-    std::optional<StateItem> resolveRowAlias(const StateItem &item) const override {
-        static const std::map<
+    std::string resolveForeignKey2(const std::string &columnExpr) const {
+        static const std::unordered_map<std::string, std::string> foreignKeys {
+            { "posts.author", "users.id" },
+            { "posts.author_str", "users.id_str" }
+        };
+        
+        auto it = foreignKeys.find(columnExpr);
+        
+        if (it == foreignKeys.end()) {
+            return std::move(std::string());
+        } else {
+            return std::move(it->second);
+        }
+    }
+    
+    std::shared_ptr<StateItem> resolveRowAlias(const StateItem &item) const override {
+        static const std::unordered_map<
             std::string,
             std::unordered_map<StateRange, RowAlias>
         > rowAliasTable {
@@ -77,16 +94,16 @@ public:
         auto keyIt = rowAliasTable.find(item.name);
         
         if (keyIt == rowAliasTable.end()) {
-            return std::nullopt;
+            return nullptr;
         }
         
-        auto rangeIt = keyIt->second.find(item.MakeRange2());
+        auto rangeIt = keyIt->second.find(std::move(item.MakeRange2()));
         
         if (rangeIt == keyIt->second.end()) {
-            return std::nullopt;
+            return nullptr;
         }
         
-        return rangeIt->second.real;
+        return std::make_shared<StateItem>(rangeIt->second.real);
     }
 };
 
@@ -428,5 +445,85 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
             REQUIRE_FALSE(bad_match.has_value());
         }
     }
+}
+
+TEST_CASE("Tests for CachedRelationshipResolver", "[CachedRelationshipResolver]") {
+    MockedRelationshipResolver resolver;
+    CachedRelationshipResolver cachedResolver(resolver, 100);
     
+    REQUIRE(cachedResolver.resolveForeignKey("posts.author") == "users.id");
+    REQUIRE(cachedResolver.resolveColumnAlias("posts.uuid") == "posts.id");
+    
+    {
+        auto resolvedItem = cachedResolver.resolveRowAlias(
+            StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" })
+        );
+        
+        REQUIRE(resolvedItem != nullptr);
+        REQUIRE(resolvedItem->name == "posts.id");
+        REQUIRE(resolvedItem->MakeRange2() == StateRange { (int64_t) 1 });
+    }
+    
+}
+
+TEST_CASE("Benchmarks for CachedRelationshipResolver", "[!benchmark]") {
+    MockedRelationshipResolver resolver;
+    CachedRelationshipResolver cachedResolver(resolver, 100);
+    
+    RowCluster oldCluster;
+    oldCluster.addAlias(
+        "posts.uuid",
+        StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" }),
+        StateItem::EQ("posts.id", StateData { (int64_t) 1 })
+    );
+    
+    oldCluster.addKeyRange(
+        "users.id",
+        std::make_shared<StateRange>((int64_t) 1),
+        1
+    );
+    
+    
+    REQUIRE(resolver.resolveChain("posts.author_str") == "users.id");
+    REQUIRE(resolver.resolveRowChain(StateItem::EQ("posts.author_str", StateData { "000001" })) != nullptr);
+    
+    BENCHMARK("RowCluster::resolveAliasName") {
+        return RowCluster::resolveAliasName(oldCluster.aliasMap(), "posts.uuid");
+    };
+    
+    BENCHMARK("resolveColumnAlias (with cachedResolver)") {
+        return cachedResolver.resolveColumnAlias("posts.uuid");
+    };
+    
+    BENCHMARK("resolveChain (without cachedResolver)") {
+        return resolver.resolveChain("posts.author_str");
+    };
+    
+    BENCHMARK("resolveChain (with cachedResolver)") {
+        return cachedResolver.resolveChain("posts.author_str");
+    };
+    
+    StateItem item = StateItem::EQ("users.id_str", StateData { "000001" });
+    StateItem item2 = StateItem::EQ("posts.author_str", StateData { "000001" });
+    StateItem itemForOldCluster = StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" });
+    
+    BENCHMARK("RowCluster::resolveAlias") {
+        return RowCluster::resolveAlias(itemForOldCluster, oldCluster.aliasMap());
+    };
+    
+    BENCHMARK("resolveRowAlias (without cachedResolver)") {
+        return resolver.resolveRowAlias(item);
+    };
+    
+    BENCHMARK("resolveRowAlias (with cachedResolver)") {
+        return cachedResolver.resolveRowAlias(item);
+    };
+    
+    BENCHMARK("resolveRowChain (without cachedResolver)") {
+        return resolver.resolveRowChain(item2);
+    };
+   
+    BENCHMARK("resolveRowChain (with cachedResolver)") {
+        return cachedResolver.resolveRowChain(item2);
+    };
 }
