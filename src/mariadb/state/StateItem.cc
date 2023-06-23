@@ -8,6 +8,30 @@ StateData::StateData()
   type = en_column_data_null;
 }
 
+StateData::StateData(int64_t &val):
+    StateData()
+{
+    Set(val);
+}
+
+StateData::StateData(uint64_t &val):
+    StateData()
+{
+    Set(val);
+}
+
+StateData::StateData(double &val):
+    StateData()
+{
+    Set(val);
+}
+
+StateData::StateData(const std::string &val):
+    StateData()
+{
+    Set(val.c_str(), val.size());
+}
+
 StateData::StateData(const StateData &c)
 {
   memset(this, 0, sizeof(StateData));
@@ -453,6 +477,18 @@ StateRange::StateRange():
     range(std::make_shared<std::vector<ST_RANGE>>()),
     _wildcard(false)
 {
+}
+
+StateRange::StateRange(int64_t singleValue):
+    StateRange()
+{
+    SetValue(StateData { singleValue }, true);
+}
+
+StateRange::StateRange(const std::string &singleValue):
+    StateRange()
+{
+    SetValue(StateData { singleValue }, true);
 }
 
 StateRange::~StateRange()

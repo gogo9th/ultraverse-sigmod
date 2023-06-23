@@ -34,6 +34,12 @@ class StateData
 {
 public:
   StateData();
+  
+  StateData(int64_t &val);
+  StateData(uint64_t &val);
+  StateData(double &val);
+  StateData(const std::string &val);
+  
   StateData(const StateData &c);
   ~StateData();
 
@@ -194,6 +200,12 @@ public:
   };
 
   StateRange();
+  
+  /** unit test를 위한 생성자 */
+  StateRange(int64_t singleValue);
+  /** unit test를 위한 생성자 */
+  StateRange(const std::string &singleValue);
+  
   ~StateRange();
 
   bool operator==(const StateRange &c) const;
