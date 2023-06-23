@@ -8,19 +8,19 @@ StateData::StateData()
   type = en_column_data_null;
 }
 
-StateData::StateData(int64_t &val):
+StateData::StateData(int64_t val):
     StateData()
 {
     Set(val);
 }
 
-StateData::StateData(uint64_t &val):
+StateData::StateData(uint64_t val):
     StateData()
 {
     Set(val);
 }
 
-StateData::StateData(double &val):
+StateData::StateData(double val):
     StateData()
 {
     Set(val);
@@ -1358,4 +1358,14 @@ std::shared_ptr<StateRange> StateItem::MakeRange(const StateItem &item) {
     }
     
     return std::make_shared<StateRange>();
+}
+
+StateItem StateItem::EQ(const std::string &name, const StateData &data) {
+    StateItem item;
+    item.name = name;
+    item.function_type = FUNCTION_EQ;
+    
+    item.data_list.emplace_back(data);
+    
+    return item;
 }

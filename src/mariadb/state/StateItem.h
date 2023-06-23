@@ -35,9 +35,9 @@ class StateData
 public:
   StateData();
   
-  StateData(int64_t &val);
-  StateData(uint64_t &val);
-  StateData(double &val);
+  StateData(int64_t val);
+  StateData(uint64_t val);
+  StateData(double val);
   StateData(const std::string &val);
   
   StateData(const StateData &c);
@@ -274,6 +274,8 @@ class StateItem
 public:
   StateItem();
   ~StateItem();
+  
+  static StateItem EQ(const std::string &name, const StateData &data);
 
   /**
    * @deprecated use ::MakeRange2().
