@@ -296,6 +296,21 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
     }
     
     SECTION("should match transactions correctly") {
+        /*
+         * 이 테스트에서는 다음과 같이 클러스터가 구성되어 있어야 한다.
+         *
+         * Cluster[users.id] {
+         *     READ  { gid(2) }
+         *     WRITE { gid(1) }
+         * }
+         *
+         * Cluster[posts.id] {
+         *     READ  { }
+         *     WRITE { gid(3) }
+         * }
+         */
+        
+        
         auto txn1 = sampleTransaction1();
         auto txn2 = sampleTransaction2();
         auto txn3 = sampleTransaction3();
@@ -306,9 +321,12 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
         cluster.insert(txn2, resolver);
         cluster.insert(txn3, resolver);
         
+        // 1번 트랜잭션과 users.id 클러스터의 WRITE 섹션을 매칭 시도한다.
         auto match1 = cluster.match(StateCluster::WRITE, "users.id", txn1);
         
+        // 매칭은 성공적으로 이루어져야 한다.
         REQUIRE(match1.has_value());
+        // 매칭된 클러스터의 범위는 1이어야 한다. (users.id = 1을 건드리기 때문에)
         REQUIRE(match1.value() == StateRange { 1 });
         
         auto gids1 = cluster.clusters()
@@ -316,11 +334,15 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
             .write
             .at(match1.value());
         
+        // 클러스터의 gid 목록에는 1번 트랜잭션의 gid가 포함되어야 한다.
         REQUIRE(std::find(gids1.begin(), gids1.end(), txn1->gid()) != gids1.end());
         
+        // 2번 트랜잭션과 users.id 클러스터의 READ 섹션을 매칭 시도한다.
         auto match2 = cluster.match(StateCluster::READ, "users.id", txn2);
         
+        // 매칭은 성공적으로 이루어져야 한다.
         REQUIRE(match2.has_value());
+        // 매칭된 클러스터의 범위는 1이어야 한다. (users.id = 1을 건드리기 때문에)
         REQUIRE(match2.value() == StateRange { 1 });
         
         auto gids2 = cluster.clusters()
@@ -328,12 +350,15 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
             .read
             .at(match2.value());
         
+        // 클러스터의 gid 목록에는 2번 트랜잭션의 gid가 포함되어야 한다.
         REQUIRE(std::find(gids2.begin(), gids2.end(), txn2->gid()) != gids2.end());
         
-        
+        // 3번 트랜잭션과 posts.id 클러스터의 WRITE 섹션을 매칭 시도한다.
         auto match3 = cluster.match(StateCluster::WRITE, "posts.id", txn3);
         
+        // 매칭은 성공적으로 이루어져야 한다.
         REQUIRE(match3.has_value());
+        // 매칭된 클러스터의 범위는 1이어야 한다. (posts.id = 1을 건드리기 때문에)
         REQUIRE(match3.value() == StateRange { 1 });
         
         auto gids3 = cluster.clusters()
@@ -341,9 +366,13 @@ TEST_CASE("StateCluster::insert()", "[StateCluster]") {
             .write
             .at(match3.value());
         
+        // 클러스터의 gid 목록에는 3번 트랜잭션의 gid가 포함되어야 한다.
         REQUIRE(std::find(gids3.begin(), gids3.end(), txn3->gid()) != gids3.end());
         
+        // 3번 트랜잭션과 users.id 클러스터의 READ 섹션을 매칭 시도한다.
         auto bad_match = cluster.match(StateCluster::WRITE, "users.id", txn3);
+        
+        // 3번 트랜잭션은 users.id = 1을 읽는 쿼리가 없으므로 매칭이 실패해야 한다.
         REQUIRE_FALSE(bad_match.has_value());
     }
     
