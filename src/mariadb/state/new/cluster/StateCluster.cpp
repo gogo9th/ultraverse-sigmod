@@ -9,7 +9,7 @@
 namespace ultraverse::state::v2 {
     
     std::optional<StateRange> StateCluster::Cluster::match(const std::string &columnName,
-                                                           const std::map<StateRange, std::vector<gid_t>> &cluster,
+                                                           const std::map<StateRange, std::unordered_set<gid_t>> &cluster,
                                                            CombinedIterator<StateItem> begin,
                                                            CombinedIterator<StateItem> end) {
         
@@ -59,9 +59,9 @@ namespace ultraverse::state::v2 {
     void StateCluster::insert(StateCluster::ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid) {
         std::scoped_lock lock(_clusterInsertionLock);
         if (type == READ) {
-            _clusters[columnName].read[range].emplace_back(gid);
+            _clusters[columnName].read[range].emplace(gid);
         } else if (type == WRITE) {
-            _clusters[columnName].write[range].emplace_back(gid);
+            _clusters[columnName].write[range].emplace(gid);
         }
     }
     
