@@ -11,13 +11,28 @@ namespace ultraverse::state::v2 {
     std::optional<StateRange> StateCluster::Cluster::match(const std::string &columnName,
                                                            const ClusterMap &cluster,
                                                            CombinedIterator<StateItem> begin,
-                                                           CombinedIterator<StateItem> end) {
+                                                           CombinedIterator<StateItem> end,
+                                                           const RelationshipResolver &resolver) {
         
-        auto it = std::find_if(cluster.begin(), cluster.end(), [&columnName, &begin, &end](const auto &pair) {
+        auto it = std::find_if(cluster.begin(), cluster.end(), [&resolver, &columnName, &begin, &end](const auto &pair) {
             const StateRange &range = pair.first;
-            return std::find_if(begin, end, [&columnName, &range](const StateItem &item) {
+            return std::find_if(begin, end, [&resolver, &columnName, &range](const StateItem &item) {
                 // FIXME: 이거 개느릴거같은데;;
-                return item.name == columnName && StateRange::isIntersects(item.MakeRange2(), range);
+                
+                // Q: 이거 std::move 해야 하지 않나?
+                // A: 아니야. 그냥 const & 로 해야해. 그래야 더 빠르거든.
+                // Q: 왜?
+                // A: std::move 는 rvalue 로 바꿔주는거야. 그래서 이동 생성자를 호출하거든.
+                const auto &realColumn = resolver.resolveChain(item.name);
+                const auto &real = resolver.resolveRowChain(item);
+                
+                if (real.has_value()) {
+                    return real.value().name == columnName && StateRange::isIntersects(real->MakeRange2(), range);
+                } else if (realColumn.has_value()) {
+                    return realColumn.value() == columnName && StateRange::isIntersects(item.MakeRange2(), range);
+                } else {
+                    return item.name == columnName && StateRange::isIntersects(item.MakeRange2(), range);
+                }
             }) != end;
         });
         
@@ -82,8 +97,8 @@ namespace ultraverse::state::v2 {
             auto &item = *it;
             auto &columnName = item.name;
             
-            auto realColumn = resolver.resolveChain(item.name);
-            auto real = resolver.resolveRowChain(item);
+            const auto &realColumn = resolver.resolveChain(item.name);
+            const auto &real = resolver.resolveRowChain(item);
             
             if (real.has_value()) {
                 insert(type, real->name, real->MakeRange2(), gid);
@@ -105,7 +120,8 @@ namespace ultraverse::state::v2 {
     }
     
     std::optional<StateRange> StateCluster::match(StateCluster::ClusterType type, const std::string &columnName,
-                                                  const std::shared_ptr<Transaction> &transaction) const {
+                                                  const std::shared_ptr<Transaction> &transaction,
+                                                  const RelationshipResolver &resolver) const {
         
         if (_clusters.find(columnName) == _clusters.end()) {
             return std::nullopt;
@@ -114,11 +130,11 @@ namespace ultraverse::state::v2 {
         const auto &cluster = _clusters.at(columnName);
         
         if (type == READ) {
-            return StateCluster::Cluster::match(columnName, cluster.read, transaction->whereSet_begin(), transaction->whereSet_end());
+            return StateCluster::Cluster::match(columnName, cluster.read, transaction->whereSet_begin(), transaction->whereSet_end(), resolver);
         }
         
         if (type == WRITE) {
-            return StateCluster::Cluster::match(columnName, cluster.write, transaction->itemSet_begin(), transaction->itemSet_end());
+            return StateCluster::Cluster::match(columnName, cluster.write, transaction->itemSet_begin(), transaction->itemSet_end(), resolver);
         }
         
         return std::nullopt;

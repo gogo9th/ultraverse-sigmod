@@ -51,7 +51,7 @@ namespace ultraverse::state::v2 {
             ClusterMap read;
             ClusterMap write;
             
-            static std::optional<StateRange> match(const std::string &columnName, const ClusterMap &cluster, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end);
+            static std::optional<StateRange> match(const std::string &columnName, const ClusterMap &cluster, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver);
         };
     public:
         StateCluster(const std::set<std::string> &keyColumns);
@@ -65,7 +65,7 @@ namespace ultraverse::state::v2 {
         void insert(ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver);
         void insert(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
         
-        std::optional<StateRange> match(ClusterType type, const std::string &columnName, const std::shared_ptr<Transaction> &transaction) const;
+        std::optional<StateRange> match(ClusterType type, const std::string &columnName, const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver) const;
         
     private:
         LoggerPtr _logger;
