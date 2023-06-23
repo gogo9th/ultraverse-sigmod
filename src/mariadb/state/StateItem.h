@@ -70,6 +70,9 @@ public:
   bool operator<=(const StateData &c) const;
   StateData &operator=(const StateData &c);
   
+  void calculateHash();
+  std::size_t hash() const;
+  
   template <typename Archive>
   void save(Archive &archive) const;
   
@@ -79,6 +82,7 @@ public:
 private:
   void Clear();
   void Copy(const StateData &c);
+  
 
   union UNION_RAW_DATA {
     int64_t ival;
@@ -93,6 +97,8 @@ private:
   bool is_equal;
   en_state_log_column_data_type type;
   UNION_RAW_DATA d;
+  
+  std::size_t _hash;
 };
 
 

@@ -55,6 +55,8 @@ void StateData::Clear()
   memset(this, 0, sizeof(StateData));
   str_len = 0;
   type = en_column_data_null;
+  
+  calculateHash();
 }
 
 void StateData::Copy(const StateData &c)
@@ -70,6 +72,8 @@ void StateData::Copy(const StateData &c)
   {
     d = c.d;
   }
+  
+  calculateHash();
 }
 
 bool StateData::SetData(en_state_log_column_data_type _type, void *_data, size_t _length)
@@ -176,6 +180,8 @@ bool StateData::ConvertData(en_state_log_column_data_type _type)
 void StateData::SetEqual()
 {
   is_equal = true;
+  
+  calculateHash();
 }
 
 bool StateData::IsEqual() const
@@ -204,6 +210,8 @@ void StateData::Set(int64_t val)
 
   type = en_column_data_int;
   d.ival = val;
+  
+  calculateHash();
 }
 
 void StateData::Set(uint64_t val)
@@ -212,6 +220,8 @@ void StateData::Set(uint64_t val)
 
   type = en_column_data_uint;
   d.uval = val;
+  
+  calculateHash();
 }
 
 void StateData::Set(double val)
@@ -220,6 +230,8 @@ void StateData::Set(double val)
 
   type = en_column_data_double;
   d.fval = val;
+  
+  calculateHash();
 }
 
 void StateData::Set(const char *val, size_t length)
@@ -231,6 +243,8 @@ void StateData::Set(const char *val, size_t length)
   memcpy(d.str, val, length);
   d.str[length] = 0;
   str_len = length;
+  
+  calculateHash();
 }
 
 bool StateData::Get(int64_t &val) const
@@ -471,6 +485,50 @@ StateData &StateData::operator=(const StateData &c)
   Clear();
   Copy(c);
   return *this;
+}
+
+void StateData::calculateHash() {
+    if (Type() == en_column_data_double) {
+        double fval = 0.0;
+        Get(fval);
+        _hash = (
+            std::hash<en_state_log_column_data_type>()(Type()) ^
+            std::hash<decltype(fval)>()(fval)
+        );
+    }
+    
+    if (Type() == en_column_data_int) {
+        int64_t ival = 0.0;
+        Get(ival);
+        _hash = (
+            std::hash<en_state_log_column_data_type>()(Type()) ^
+            std::hash<decltype(ival)>()(ival)
+        );
+    }
+    if (Type() == en_column_data_uint) {
+        uint64_t uval = 0.0;
+        Get(uval);
+        _hash = (
+            std::hash<en_state_log_column_data_type>()(Type()) ^
+            std::hash<decltype(uval)>()(uval)
+        );
+    }
+    
+    if (Type() == en_column_data_string) {
+        std::string sval = "";
+        Get(sval);
+        _hash = (
+            std::hash<en_state_log_column_data_type>()(Type()) ^
+            std::hash<decltype(sval)>()(sval)
+        );
+    }
+    
+    // en_column_data_null
+    _hash = std::hash<en_state_log_column_data_type>()(Type());
+}
+
+std::size_t StateData::hash() const {
+    return _hash;
 }
 
 StateRange::StateRange():
