@@ -14,6 +14,6 @@ include_directories(${PYTHON3_INCLUDE_DIRS})
 include_directories(../src)
 
 add_executable(cluster-test cluster-test.cpp)
-target_link_libraries(cluster-test ultraverse )
+target_link_libraries(cluster-test ultraverse)
 
 add_test(NAME cluster-test COMMAND cluster-test)
