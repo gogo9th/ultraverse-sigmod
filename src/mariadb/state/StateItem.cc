@@ -6,6 +6,7 @@ StateData::StateData()
 {
   memset(this, 0, sizeof(StateData));
   type = en_column_data_null;
+  calculateHash();
 }
 
 StateData::StateData(int64_t val):
@@ -73,7 +74,7 @@ void StateData::Copy(const StateData &c)
     d = c.d;
   }
   
-  calculateHash();
+  _hash = c._hash;
 }
 
 bool StateData::SetData(en_state_log_column_data_type _type, void *_data, size_t _length)
@@ -181,7 +182,7 @@ void StateData::SetEqual()
 {
   is_equal = true;
   
-  calculateHash();
+  // calculateHash();
 }
 
 bool StateData::IsEqual() const
@@ -488,47 +489,48 @@ StateData &StateData::operator=(const StateData &c)
 }
 
 void StateData::calculateHash() {
+    static const size_t null_hash = std::hash<en_state_log_column_data_type>()(Type());
+    
+    if (Type() == en_column_data_null) {
+        _hash = null_hash;
+        return;
+    }
+    
     if (Type() == en_column_data_double) {
-        double fval = 0.0;
-        Get(fval);
         _hash = (
             std::hash<en_state_log_column_data_type>()(Type()) ^
-            std::hash<decltype(fval)>()(fval)
+            std::hash<decltype(d.fval)>()(d.fval)
         );
         return;
     }
     
     if (Type() == en_column_data_int) {
-        int64_t ival = 0.0;
-        Get(ival);
         _hash = (
             std::hash<en_state_log_column_data_type>()(Type()) ^
-            std::hash<decltype(ival)>()(ival)
+            std::hash<decltype(d.ival)>()(d.ival)
         );
         return;
     }
     if (Type() == en_column_data_uint) {
-        uint64_t uval = 0.0;
-        Get(uval);
         _hash = (
             std::hash<en_state_log_column_data_type>()(Type()) ^
-            std::hash<decltype(uval)>()(uval)
+            std::hash<decltype(d.uval)>()(d.uval)
         );
         return;
     }
     
     if (Type() == en_column_data_string) {
-        std::string sval = "";
+        std::string sval;
         Get(sval);
         _hash = (
             std::hash<en_state_log_column_data_type>()(Type()) ^
-            std::hash<decltype(sval)>()(sval)
+            std::hash<std::string>()(sval)
         );
         return;
     }
     
     // en_column_data_null
-    _hash = std::hash<en_state_log_column_data_type>()(Type());
+    _hash = null_hash;
 }
 
 std::size_t StateData::hash() const {
@@ -537,8 +539,10 @@ std::size_t StateData::hash() const {
 
 StateRange::StateRange():
     range(std::make_shared<std::vector<ST_RANGE>>()),
-    _wildcard(false)
+    _wildcard(false),
+    _hash(0)
 {
+    range->reserve(2);
 }
 
 StateRange::StateRange(int64_t singleValue):
@@ -562,6 +566,8 @@ void StateRange::SetBegin(const StateData &_begin, bool _add_equal)
   range->emplace_back(ST_RANGE{_begin, StateData()});
   if (_add_equal)
     range->back().begin.SetEqual();
+  
+  calculateHash();
 }
 
 void StateRange::SetEnd(const StateData &_end, bool _add_equal)
@@ -569,6 +575,8 @@ void StateRange::SetEnd(const StateData &_end, bool _add_equal)
   range->emplace_back(ST_RANGE{StateData(), _end});
   if (_add_equal)
     range->back().end.SetEqual();
+    
+  calculateHash();
 }
 
 void StateRange::SetBetween(const StateData &_begin, const StateData &_end)
@@ -580,6 +588,8 @@ void StateRange::SetBetween(const StateData &_begin, const StateData &_end)
 
   range->back().begin.SetEqual();
   range->back().end.SetEqual();
+  
+  calculateHash();
 }
 
 void StateRange::SetValue(const StateData &_value, bool _add_equal)
@@ -595,6 +605,8 @@ void StateRange::SetValue(const StateData &_value, bool _add_equal)
     range->emplace_back(ST_RANGE{StateData(), _value});
     range->emplace_back(ST_RANGE{_value, StateData()});
   }
+  
+  calculateHash();
 }
 
 StateRange::EN_VALID StateRange::IsValid(const StateRange &a, const StateRange &b)
@@ -680,6 +692,8 @@ bool StateRange::wildcard() const {
 
 void StateRange::setWildcard(bool wildcard) {
     _wildcard = wildcard;
+    
+    calculateHash();
 }
 
 std::string StateRange::MakeWhereQuery() {
@@ -796,6 +810,8 @@ std::shared_ptr<std::vector<StateRange>> StateRange::OR_ARRANGE(const std::vecto
     range._wildcard |= i.wildcard();
   }
   range.range = OR_ARRANGE(range.range);
+  
+  range.calculateHash();
 
   auto vec = std::make_shared<std::vector<StateRange>>();
 
@@ -885,6 +901,8 @@ std::shared_ptr<StateRange> StateRange::AND(const StateRange &a, const StateRang
             }
         }
     }
+    
+    range->calculateHash();
   
     return range;
 }
@@ -928,6 +946,8 @@ void StateRange::OR_FAST(const StateRange &b, bool ignoreIntersect) {
         range2.erase(range2.begin());
     }
     
+    calculateHash();
+    
     true;
 }
 
@@ -939,7 +959,7 @@ std::shared_ptr<StateRange> StateRange::OR(const StateRange &a, const StateRange
     
     auto range = std::make_shared<StateRange>(a);
     range->OR_FAST(b, ignoreIntersect);
-  
+    
     return std::move(range);
 }
 
@@ -1021,6 +1041,7 @@ std::shared_ptr<std::vector<StateRange::ST_RANGE>> StateRange::OR_ARRANGE(const 
     new_range->emplace_back(curr);
     curr_range = std::make_shared<std::vector<ST_RANGE>>(*new_range);
   }
+  
 
   return std::move(new_range);
 }
@@ -1108,11 +1129,62 @@ int StateRange::MAX(const StateData &a, const StateData &b)
 
 void StateRange::arrangeSelf() {
     range = OR_ARRANGE2(range);
+    
+    calculateHash();
 }
 
-StateItem::StateItem()
-    : condition_type(EN_CONDITION_NONE), function_type(FUNCTION_NONE)
+void StateRange::calculateHash() {
+    std::size_t hash = 0;
+    
+    if (wildcard()) {
+        _hash = (std::size_t) UINT64_MAX;
+        return;
+    }
+    
+    for (const auto &st_range: *range) {
+        /*
+         * @copilot: please improve this hash function.
+         * this will make collision when the range is like:
+         *  (st_range.begin = 1, st_range.end = 2)
+         *  (st_range.begin = 2, st_range.end = 1)
+         *
+         *  the hash will be the same.
+         */
+        
+        hash ^= std::hash<StateData>()(st_range.begin);
+        // this will make the hash function better.
+        hash ^= std::hash<StateData>()(st_range.end) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+    }
+    
+    _hash = hash;
+}
+
+std::size_t StateRange::hash() const {
+    return _hash;
+}
+
+StateItem::StateItem():
+    condition_type(EN_CONDITION_NONE),
+    function_type(FUNCTION_NONE),
+    _isRangeCacheBuilt(false)
 {
+}
+
+/**
+ * COPY CONSTRUCTOR
+ *
+ * @param other
+ */
+StateItem::StateItem(const StateItem &other):
+    condition_type(other.condition_type),
+    function_type(other.function_type),
+    name(other.name),
+    arg_list(other.arg_list),
+    data_list(other.data_list),
+    _rangeCache(other._rangeCache),
+    _isRangeCacheBuilt(other._isRangeCacheBuilt)
+{
+
 }
 
 StateItem::~StateItem()
@@ -1255,6 +1327,10 @@ std::shared_ptr<StateRange> StateItem::MakeRange(const std::string &column_name,
  *
  */
 StateRange StateItem::MakeRange2() const {
+    if (_isRangeCacheBuilt) {
+        return _rangeCache;
+    }
+    
     if (condition_type != EN_CONDITION_NONE) {
         std::vector<StateRange> ranges;
         StateRange output;
@@ -1281,45 +1357,49 @@ StateRange StateItem::MakeRange2() const {
             }
         }
         
-        return std::move(output);
+        _isRangeCacheBuilt = true;
+        _rangeCache = output;
     } else {
         StateRange range;
         
         switch (function_type) {
             case FUNCTION_BETWEEN:
                 range.SetBetween(data_list[0], data_list[1]);
-                return range;
+                break;
             
             case FUNCTION_EQ:
                 range.SetValue(data_list[0], true);
-                return range;
+                break;
             
             case FUNCTION_NE:
                 range.SetValue(data_list[0], false);
-                return range;
+                break;
             
             case FUNCTION_LT:
                 range.SetEnd(data_list[0], false);
-                return range;
+                break;
             
             case FUNCTION_LE:
                 range.SetEnd(data_list[0], true);
-                return range;
+                break;
             
             case FUNCTION_GT:
                 range.SetBegin(data_list[0], false);
-                return range;
+                break;
             
             case FUNCTION_GE:
                 range.SetBegin(data_list[0], true);
-                return range;
+                break;
             
             default:
                 break;
         }
         
-        return std::move(range);
+        _isRangeCacheBuilt = true;
+        _rangeCache = range;
     }
+    
+    return _rangeCache;
 }
 
 std::shared_ptr<StateRange> StateItem::MakeRange(const StateItem &item) {
@@ -1431,3 +1511,4 @@ StateItem StateItem::EQ(const std::string &name, const StateData &data) {
     
     return item;
 }
+

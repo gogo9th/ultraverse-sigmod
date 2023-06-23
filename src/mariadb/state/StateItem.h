@@ -247,6 +247,8 @@ public:
 
   void arrangeSelf();
   
+  void calculateHash();
+  std::size_t hash() const;
 
 private:
   enum EN_VALID
@@ -268,6 +270,8 @@ private:
 
   std::shared_ptr<std::vector<ST_RANGE>> range;
   bool _wildcard;
+  
+  std::size_t _hash;
 };
 
 /**
@@ -279,6 +283,7 @@ class StateItem
 {
 public:
   StateItem();
+  StateItem(const StateItem &other);
   ~StateItem();
   
   static StateItem EQ(const std::string &name, const StateData &data);
@@ -311,6 +316,9 @@ public:
   // rvalue
   std::vector<StateData> data_list;
   std::vector<StateItem> sub_query_list;
+  
+  mutable StateRange _rangeCache;
+  mutable bool _isRangeCacheBuilt;
 };
 
 #include "StateItem.cereal.cpp"
