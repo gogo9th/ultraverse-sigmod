@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 #include <unordered_set>
-#include <map>
+#include <unordered_map>
 #include <mutex>
 
 #include "../../StateItem.h"
@@ -47,10 +47,11 @@ namespace ultraverse::state::v2 {
         
         class Cluster {
         public:
-            std::map<StateRange, std::unordered_set<gid_t>> read;
-            std::map<StateRange, std::unordered_set<gid_t>> write;
+            using ClusterMap = std::unordered_map<StateRange, std::unordered_set<gid_t>>;
+            ClusterMap read;
+            ClusterMap write;
             
-            static std::optional<StateRange> match(const std::string &columnName, const std::map<StateRange, std::unordered_set<gid_t>> &cluster, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end);
+            static std::optional<StateRange> match(const std::string &columnName, const ClusterMap &cluster, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end);
         };
     public:
         StateCluster(const std::set<std::string> &keyColumns);

@@ -9,7 +9,7 @@
 namespace ultraverse::state::v2 {
     
     std::optional<StateRange> StateCluster::Cluster::match(const std::string &columnName,
-                                                           const std::map<StateRange, std::unordered_set<gid_t>> &cluster,
+                                                           const ClusterMap &cluster,
                                                            CombinedIterator<StateItem> begin,
                                                            CombinedIterator<StateItem> end) {
         
