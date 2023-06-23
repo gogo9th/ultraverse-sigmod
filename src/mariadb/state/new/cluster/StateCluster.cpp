@@ -28,14 +28,10 @@ namespace ultraverse::state::v2 {
             _keyColumns.begin(), _keyColumns.end(),
             [&resolver, &item](const auto &keyColumn) {
                 // 과연 이게 맞는가? alias + foreign key를 고려해야 하지 않을까?
-                auto realColumn = resolver.resolveColumnAlias(item.name);
-                auto foreignKey = resolver.resolveForeignKey(item.name);
+                auto realColumn = resolver.resolveChain(item.name);
                 
-                bool x = item.name == keyColumn;
-                bool y = realColumn.has_value() && realColumn.value() == keyColumn;
-                bool z = foreignKey.has_value() && foreignKey.value() == keyColumn;
-                
-                return x || y || z;
+                return (item.name == keyColumn) ||
+                       (realColumn.has_value() && realColumn.value() == keyColumn);
             }
         ) != _keyColumns.end();
     }
@@ -66,29 +62,19 @@ namespace ultraverse::state::v2 {
             auto &item = *it;
             auto &columnName = item.name;
             
-            // 과연 이게 맞는가? alias + foreign key를 고려해야 하지 않을까?
-            auto realColumn = resolver.resolveColumnAlias(columnName);
-            auto foreignKey = resolver.resolveForeignKey(columnName);
+            auto realColumn = resolver.resolveChain(item.name);
+            auto real = resolver.resolveRowChain(item);
             
-            if (realColumn.has_value()) {
-                auto real = resolver.resolveRowAlias(item);
-                if (!real.has_value()) {
-                    auto errorMessage = fmt::format(
-                        "column {} is alias of {}, but could not resolve row data of {}",
-                        columnName, realColumn.value(), item.MakeRange2().MakeWhereQuery(columnName)
-                    );
-                    
-                    _logger->error(errorMessage);
-                    throw std::runtime_error(errorMessage);
-                }
-                
-                insert(type, realColumn.value(), real->MakeRange2(), gid);
-            } else if (foreignKey.has_value()) {
-                insert(type, foreignKey.value(), item.MakeRange2(), gid);
+            if (real.has_value()) {
+                insert(type, real->name, real->MakeRange2(), gid);
+            } else if (realColumn.has_value()) {
+                // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
+                insert(type, realColumn.value(), item.MakeRange2(), gid);
             } else {
+                // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
                 insert(type, columnName, item.MakeRange2(), gid);
             }
-            
+           
             ++it;
         }
     }

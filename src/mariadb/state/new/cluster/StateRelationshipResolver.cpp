@@ -28,6 +28,32 @@ namespace ultraverse::state::v2 {
         }
     }
     
+    std::optional<StateItem> RelationshipResolver::resolveRowChain(const StateItem &item) const {
+        StateItem _item = item;
+        
+        while (true) {
+            auto alias = resolveRowAlias(_item);
+            auto foreignKey = resolveForeignKey(alias.has_value() ? alias.value().name : _item.name);
+            
+            if (foreignKey.has_value()) {
+                // Alias -> FK -> Alias -> Real ...
+                // Alias -> FK -> Real
+                
+                auto fkItem = alias.value();
+                fkItem.name = foreignKey.value();
+                _item = fkItem;
+                continue;
+            }
+            
+            if (_item.name == item.name) {
+                return std::nullopt;
+            } else {
+                return alias.has_value() ? alias.value() : _item;
+            }
+        }
+    }
+    
+    
     StateRelationshipResolver::StateRelationshipResolver(const StateChangePlan &plan, const StateChangeContext &context):
         _plan(plan),
         _context(context)

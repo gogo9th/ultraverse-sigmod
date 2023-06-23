@@ -85,6 +85,8 @@ namespace ultraverse::state::v2 {
          * @note 'null'을 표현하기 위해 std::optional을 사용한다.
          */
         virtual std::optional<StateItem> resolveRowAlias(const StateItem &item) const = 0;
+        
+        virtual std::optional<StateItem> resolveRowChain(const StateItem &item) const;
     };
     
     class StateRelationshipResolver: public RelationshipResolver {
