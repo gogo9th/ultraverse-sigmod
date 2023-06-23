@@ -495,6 +495,7 @@ void StateData::calculateHash() {
             std::hash<en_state_log_column_data_type>()(Type()) ^
             std::hash<decltype(fval)>()(fval)
         );
+        return;
     }
     
     if (Type() == en_column_data_int) {
@@ -504,6 +505,7 @@ void StateData::calculateHash() {
             std::hash<en_state_log_column_data_type>()(Type()) ^
             std::hash<decltype(ival)>()(ival)
         );
+        return;
     }
     if (Type() == en_column_data_uint) {
         uint64_t uval = 0.0;
@@ -512,6 +514,7 @@ void StateData::calculateHash() {
             std::hash<en_state_log_column_data_type>()(Type()) ^
             std::hash<decltype(uval)>()(uval)
         );
+        return;
     }
     
     if (Type() == en_column_data_string) {
@@ -521,6 +524,7 @@ void StateData::calculateHash() {
             std::hash<en_state_log_column_data_type>()(Type()) ^
             std::hash<decltype(sval)>()(sval)
         );
+        return;
     }
     
     // en_column_data_null
