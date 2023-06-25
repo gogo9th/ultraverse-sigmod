@@ -187,7 +187,6 @@ namespace ultraverse {
         StateChanger stateChanger(dbHandlePool, changePlan);
         
         if (makeClusterMap) {
-            stateChanger.prepare();
         } else if (fullReplay) {
             stateChanger.fullReplay();
         } else {
@@ -197,7 +196,8 @@ namespace ultraverse {
                 return 2;
             }
             
-            stateChanger.start();
+            stateChanger.prepare();
+            // stateChanger.start();
         }
        
         return 0;
@@ -360,7 +360,7 @@ namespace ultraverse {
             auto strArgs = pair.size() > 1 ? pair[1] : "";
             
             if (action == "make_cluster") {
-                actions.emplace_back(std::make_shared<MakeClusterAction>());
+                // actions.emplace_back(std::make_shared<MakeClusterAction>());
             } else if (action == "rollback") {
                 gid_t gid = std::stoll(strArgs);
                 actions.emplace_back(std::make_shared<RollbackAction>(gid));
@@ -373,7 +373,7 @@ namespace ultraverse {
                 gid_t gid = std::stoll(args[0]);
                 actions.emplace_back(std::make_shared<PrependAction>(gid, args[1]));
             } else if (action == "full-replay") {
-                actions.emplace_back(std::make_shared<FullReplayAction>());
+                // actions.emplace_back(std::make_shared<FullReplayAction>());
             } else {
                 throw std::runtime_error("invalid action");
             }

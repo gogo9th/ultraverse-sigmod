@@ -117,7 +117,7 @@ set(LIBULTRAVERSE_STATE_SRCS
     mariadb/state/new/ProcCall.cpp
     mariadb/state/new/ProcLogReader.cpp
     mariadb/state/new/ProcMatcher.cpp
-)
+    mariadb/state/new/cluster/StateRelationshipResolver.cpp mariadb/state/new/cluster/StateRelationshipResolver.hpp)
 
 set(LIBULTRAVERSE_MARIADB_SRCS
     mariadb/BinaryLog.cpp

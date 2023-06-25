@@ -174,9 +174,18 @@ namespace ultraverse::state::v2 {
     
     void StateChanger::prepare() {
         TaskExecutor taskExecutor(_plan.threadNum());
-        StateCluster cluster(_plan.keyColumns());
+        StateCluster rowCluster(_plan.keyColumns());
+        
+        StateRelationshipResolver relationshipResolver(_plan, *_context);
+        CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
         
         GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
+        
+        std::mutex txnListLock;
+        std::vector<std::shared_ptr<Transaction>> rollbackTargets {};
+        std::vector<std::pair<gid_t, std::shared_ptr<Transaction>>> prependTargets {};
+        
+        std::mutex graphLock;
         
         createIntermediateDB();
         
@@ -192,6 +201,8 @@ namespace ultraverse::state::v2 {
         
         _logger->info("[prepare()] phase 1: building cluster");
         
+        std::queue<std::shared_ptr<std::promise<int>>> tasks;
+        
         while (_reader.nextHeader()) {
             auto header = _reader.txnHeader();
             auto pos = _reader.pos() - sizeof(TransactionHeader);
@@ -201,15 +212,109 @@ namespace ultraverse::state::v2 {
             
             gidIndexWriter.append(pos);
             
-            taskExecutor.post<int>([this, &cluster, transaction]() {
-                auto gid = transaction->gid();
-                cluster << transaction;
+            auto promise = taskExecutor.post<int>([this, &txnListLock, &graphLock, &rollbackTargets, &prependTargets, &rowCluster, &cachedResolver, transaction]() {
+                if (!transaction->isRelatedToDatabase(_plan.dbName())) {
+                    _logger->trace("skipping transaction #{} because it is not related to database {}",
+                                   transaction->gid(), _plan.dbName());
+                    return 0;
+                }
+                
+                if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {
+                    _logger->warn("DDL statement found in transaction #{}, but this version of ultraverse does not support DDL statement yet",
+                                  transaction->gid());
+                    _logger->warn("transaction #{} will be skipped", transaction->gid());
+                    return 0;
+                }
+                
+                rowCluster.insert(transaction, cachedResolver);
+                
+                if (_plan.isRollbackGid(transaction->gid())) {
+                    // std::scoped_lock _lock(txnListLock);
+                    // rollbackTargets.emplace_back(transaction);
+                    rowCluster.addRollbackTarget(transaction, cachedResolver);
+                }
+                
+                if (_plan.hasUserQuery(transaction->gid())) {
+                    // std::scoped_lock _lock(txnListLock);
+                    // TODO: 이거 어떻게 처리할지 고민해야함
+                    rowCluster.addPrependTarget(transaction, cachedResolver);
+                }
+                
+                for (auto &query: transaction->queries()) {
+                    if (query->flags() & Query::FLAG_IS_PROCCALL_QUERY) {
+                        // FIXME: 프로시저 쿼리 어케할려고?
+                        continue;
+                    }
+                    
+                    std::scoped_lock _lock(graphLock);
+                    
+                    bool isColumnGraphChanged =
+                        _columnGraph->add(query->readSet(), READ, _context->foreignKeys) ||
+                        _columnGraph->add(query->writeSet(), WRITE, _context->foreignKeys);
+                    
+                    bool isTableGraphChanged =
+                        _tableGraph->addRelationship(query->readSet(), query->writeSet());
+                    
+                    if (isColumnGraphChanged) {
+                        _logger->info("updating column dependency graph");
+                        // stateLogWriter << *_columnGraph;
+                    }
+                    
+                    if (isTableGraphChanged) {
+                        _logger->info("updating table dependency graph");
+                        // stateLogWriter << *_tableGraph;
+                    }
+                }
+                
+                if (rowCluster.shouldReplay(transaction->gid())) {
+                    _logger->info("shouldReplay({}) returned true", transaction->gid());
+                }
                 
                 return 0;
             });
+            
+            tasks.emplace(promise);
+        }
+        
+        while (tasks.empty()) {
+            tasks.front()->get_future().wait();
+            tasks.pop();
         }
         
         taskExecutor.shutdown();
+        
+        // rowCluster.describe();
+        
+        std::set<gid_t> replayGids;
+        
+        for (const auto &keyColumn: _plan.keyColumns()) {
+            for (auto &transaction: rollbackTargets) {
+                {
+                    auto result = rowCluster.match(StateCluster::READ, keyColumn, transaction, cachedResolver);
+                    
+                    if (result.has_value()) {
+                        auto &range = result.value();
+                        const auto &gids = rowCluster.clusters().at(keyColumn).read.at(range);
+                        replayGids.insert(gids.begin(), gids.end());
+                    }
+                }
+                {
+                    auto result = rowCluster.match(StateCluster::WRITE, keyColumn, transaction, cachedResolver);
+                    
+                    if (result.has_value()) {
+                        auto &range = result.value();
+                        const auto &gids = rowCluster.clusters().at(keyColumn).read.at(range);
+                        replayGids.insert(gids.begin(), gids.end());
+                    }
+                }
+            }
+        }
+        
+        for (auto &gid: replayGids) {
+            _logger->info("TODO: replay transaction #{}", gid);
+        }
+        
+        dropIntermediateDB();
     }
     
     void StateChanger::prepareCluster() {
@@ -815,45 +920,6 @@ namespace ultraverse::state::v2 {
         _logger->info("main phase {}s", _phase2Time);
         
         taskExecutor.shutdown();
-    }
-    
-    std::string StateChanger::resolveAlias(const std::string &exprName) {
-        auto it = std::find_if(
-            _plan.columnAliases().begin(), _plan.columnAliases().end(),
-            [&exprName] (const auto &pair) { return utility::toLower(pair.first) == utility::toLower(exprName); }
-        );
-        
-        if (it == _plan.columnAliases().end()) {
-            return std::move(utility::toLower(exprName));
-        } else {
-            return resolveAlias(it->second);
-        }
-    }
-    
-    std::string StateChanger::resolveForeignKey(const std::string &exprName) {
-        auto vec = utility::splitTableName(exprName);
-        auto tableName  = std::move(utility::toLower(vec.first));
-        auto columnName = std::move(utility::toLower(vec.second));
-        
-        auto it = std::find_if(_context->foreignKeys.cbegin(), _context->foreignKeys.cend(), [&tableName, &columnName](auto &foreignKey) {
-            if (foreignKey.fromTable->getCurrentName() == tableName && columnName == foreignKey.fromColumn) {
-                return true;
-            }
-            return false;
-        });
-        
-        if (it == _context->foreignKeys.end()) {
-            return std::move(utility::toLower(exprName));
-        } else {
-            return resolveForeignKey(it->toTable->getCurrentName() + "." + it->toColumn);
-        }
-    }
-    
-    std::string StateChanger::resolveColumnName(const std::string &exprName) {
-        std::string resolvedAlias = resolveAlias(exprName);
-        std::string resolvedForeignKey = resolveForeignKey(resolvedAlias);
-        
-        return resolvedForeignKey;
     }
     
     bool StateChanger::isQueryRelatedWithKeyColumns(Query &query) {

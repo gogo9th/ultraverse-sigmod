@@ -75,7 +75,13 @@ namespace ultraverse::state::v2 {
         ColumnSet &writeSet();
         std::unordered_set<std::string> &foreignKeySet();
         
+        /**
+         * @brief Returns the set of 'row items' that were affected by the query.
+         */
         std::vector<StateItem> &itemSet();
+        /**
+         * @breif Returns the set of 'row items' before the update was applied.
+         */
         std::vector<StateItem> &updateSet();
         std::vector<StateItem> &whereSet();
         
