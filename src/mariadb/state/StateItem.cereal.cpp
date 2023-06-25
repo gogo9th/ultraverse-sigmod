@@ -12,7 +12,8 @@ void StateData::save(Archive &archive) const {
     archive(
         is_subselect,
         is_equal,
-        type
+        type,
+        _hash
     );
     
     if (type == en_column_data_int) {
@@ -32,7 +33,8 @@ void StateData::load(Archive &archive) {
     archive(
         is_subselect,
         is_equal,
-        type
+        type,
+        _hash
     );
     
     if (type == en_column_data_int) {
@@ -61,7 +63,8 @@ void StateRange::ST_RANGE::serialize(Archive &archive) {
 template <typename Archive>
 void StateRange::serialize(Archive &archive) {
     archive(
-        range
+        range,
+        _hash
     );
 }
 
@@ -73,6 +76,8 @@ void StateItem::serialize(Archive &archive) {
         name,
         arg_list,
         data_list,
-        sub_query_list
+        sub_query_list,
+        _rangeCache,
+        _isRangeCacheBuilt
     );
 }
