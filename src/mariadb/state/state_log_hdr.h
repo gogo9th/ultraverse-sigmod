@@ -307,10 +307,10 @@ enum en_state_log_column_item_type : uint16_t
 enum en_state_log_column_data_type : uint16_t
 {
   en_column_data_null = 0,
-  en_column_data_int,
-  en_column_data_uint,
-  en_column_data_double,
-  en_column_data_string,
+  en_column_data_int = 1,
+  en_column_data_uint = 2,
+  en_column_data_double = 3,
+  en_column_data_string = 4,
   en_column_data_from_subselect = 0x80,
 };
 inline en_state_log_column_data_type &operator|=(en_state_log_column_data_type &lhs, en_state_log_column_data_type rhs)
