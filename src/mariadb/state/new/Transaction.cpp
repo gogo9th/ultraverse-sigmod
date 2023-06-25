@@ -109,6 +109,12 @@ namespace ultraverse::state::v2 {
         return itemSet_begin().end();
     }
     
+    bool Transaction::isRelatedToDatabase(const std::string database) {
+        return std::any_of(_queries.begin(), _queries.end(), [&database](auto &query) {
+            return query->database() == database;
+        });
+    }
+    
     Transaction &Transaction::operator<<(std::shared_ptr<Query> &query) {
         _queries.push_back(query);
         

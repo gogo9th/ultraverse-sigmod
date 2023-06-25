@@ -85,6 +85,9 @@ namespace ultraverse::state::v2 {
             mariadb::DBHandle &dbHandle
         );
         
+        /**
+         * @deprecated use Transaction::isRelatedToDatabase() instead.
+         */
         bool isTransactionRelatedToPlan(std::shared_ptr<Transaction> transaction) const;
         bool isTransactionRelatedToCluster(std::shared_ptr<Transaction> transaction) const;
         
