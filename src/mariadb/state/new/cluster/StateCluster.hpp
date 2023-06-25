@@ -51,7 +51,12 @@ namespace ultraverse::state::v2 {
             ClusterMap read;
             ClusterMap write;
             
-            static std::optional<StateRange> match(const std::string &columnName, const ClusterMap &cluster, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver);
+            static std::optional<StateRange> match(ClusterType type,
+                                                   const std::string &columnName,
+                                                   const ClusterMap &cluster,
+                                                   CombinedIterator<StateItem> begin,
+                                                   CombinedIterator<StateItem> end,
+                                                   const RelationshipResolver &resolver);
         };
     public:
         StateCluster(const std::set<std::string> &keyColumns);
