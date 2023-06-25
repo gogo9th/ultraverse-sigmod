@@ -507,6 +507,10 @@ TEST_CASE("Benchmarks for CachedRelationshipResolver", "[!benchmark]") {
     StateItem item2 = StateItem::EQ("posts.author_str", StateData { "000001" });
     StateItem itemForOldCluster = StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" });
     
+    static const std::vector<ForeignKey> foreignKeysForOldCluster {
+        ForeignKey { std::make_shared<NamingHistory>("posts"), "author_str", std::make_shared<NamingHistory>("users"), "id_str" },
+    };
+    
     BENCHMARK("RowCluster::resolveAlias") {
         return RowCluster::resolveAlias(itemForOldCluster, oldCluster.aliasMap());
     };
@@ -517,6 +521,14 @@ TEST_CASE("Benchmarks for CachedRelationshipResolver", "[!benchmark]") {
     
     BENCHMARK("resolveRowAlias (with cachedResolver)") {
         return cachedResolver.resolveRowAlias(item);
+    };
+    
+    BENCHMARK("RowCluster::resolveRowChain (simulated)") {
+        StateItem _item = item2;
+        auto fk = RowCluster::resolveForeignKey("posts.author_str", foreignKeysForOldCluster);
+        _item.name = fk;
+        
+        return RowCluster::resolveAlias(_item, oldCluster.aliasMap());
     };
     
     BENCHMARK("resolveRowChain (without cachedResolver)") {
