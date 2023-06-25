@@ -71,6 +71,7 @@ namespace ultraverse::state::v2 {
         
         std::set<std::string> &keyColumns();
         std::vector<std::pair<std::string, std::string>> &columnAliases();
+        const std::vector<std::pair<std::string, std::string>> &columnAliases() const;
         
         std::vector<uint64_t> &skipGids();
         [[nodiscard]]

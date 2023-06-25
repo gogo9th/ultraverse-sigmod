@@ -177,6 +177,10 @@ namespace ultraverse::state::v2 {
         return _columnAliases;
     }
     
+    const std::vector<std::pair<std::string, std::string>> &StateChangePlan::columnAliases() const {
+        return _columnAliases;
+    }
+    
     std::vector<uint64_t> &StateChangePlan::skipGids() {
         return _skipGids;
     }
