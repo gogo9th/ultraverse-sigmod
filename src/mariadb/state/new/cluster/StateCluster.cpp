@@ -52,6 +52,7 @@ namespace ultraverse::state::v2 {
     
     
     StateCluster::StateCluster(const std::set<std::string> &keyColumns):
+        _logger(createLogger("StateCluster")),
         _keyColumns(keyColumns)
     {
     
@@ -147,5 +148,131 @@ namespace ultraverse::state::v2 {
         }
         
         return std::nullopt;
+    }
+    
+    void StateCluster::describe() {
+        std::cerr << "StateCluster::describe()" << std::endl;
+        
+        for (const auto &pair : _clusters) {
+            std::cerr << "[" << pair.first << "]" << std::endl;
+            std::cerr << "  READ" << std::endl;
+            for (const auto &pair2 : pair.second.read) {
+                std::cerr << "    " << pair2.first.MakeWhereQuery(pair.first) << " => ";
+                for (const auto &gid : pair2.second) {
+                    std::cerr << gid << ", ";
+                }
+                std::cerr << std::endl;
+            }
+            
+            std::cerr << "  WRITE" << std::endl;
+            for (const auto &pair2 : pair.second.read) {
+                std::cerr << "    " << pair2.first.MakeWhereQuery(pair.first) << " => ";
+                for (const auto &gid : pair2.second) {
+                    std::cerr << gid << ", ";
+                }
+                std::cerr << std::endl;
+            }
+            std::cerr << std::endl;
+        }
+    }
+    
+    void StateCluster::addRollbackTarget(const std::shared_ptr<Transaction> &transaction,
+                                         const RelationshipResolver &resolver) {
+        std::scoped_lock lock(_targetCacheLock);
+        
+        _rollbackTargets.insert(std::make_pair(transaction->gid(), TargetTransactionCache {
+            transaction,
+            {}, {}
+        }));
+        
+        invalidateTargetCache(_rollbackTargets, resolver);
+    }
+    
+    void StateCluster::addPrependTarget(const std::shared_ptr<Transaction> &transaction,
+                                        const RelationshipResolver &resolver) {
+        std::scoped_lock lock(_targetCacheLock);
+        
+        _prependTargets.insert(std::make_pair(transaction->gid(), TargetTransactionCache {
+            transaction,
+            {}, {}
+        }));
+        
+        invalidateTargetCache(_prependTargets, resolver);
+    }
+    
+    void StateCluster::invalidateTargetCache(std::unordered_map<gid_t, TargetTransactionCache> &targets, const RelationshipResolver &resolver) {
+        for (auto &pair: targets) {
+            auto &cache = pair.second;
+            
+            for (const auto &keyColumn: _keyColumns) {
+                auto readRange = match(READ, keyColumn, cache.transaction, resolver);
+                auto writeRange = match(READ, keyColumn, cache.transaction, resolver);
+                
+                if (readRange.has_value()) {
+                    cache.read[keyColumn] = readRange.value();
+                }
+                if (writeRange.has_value()) {
+                    cache.write[keyColumn] = writeRange.value();
+                }
+            }
+        }
+    }
+    
+    bool StateCluster::shouldReplay(gid_t gid) {
+        if (_rollbackTargets.find(gid) != _rollbackTargets.end()) {
+            // 롤백 타겟 자신은 재실행되어선 안된다
+            return false;
+        }
+        
+        return std::any_of(
+            _rollbackTargets.begin(), _rollbackTargets.end(),
+            [this, gid](const auto &pair) {
+                if (shouldReplay(gid, pair.second)) {
+                    _logger->debug("shouldReplay({}): related with rollback target {}", gid, pair.first);
+                    return true;
+                }
+                
+                return false;
+            }
+        );
+    }
+    
+    bool StateCluster::shouldReplay(gid_t gid, const StateCluster::TargetTransactionCache &cache) {
+        const auto &read = cache.read;
+        const auto &write = cache.write;
+        
+        const std::function<bool(ClusterType, const std::pair<std::string, StateRange> &)> containsGid = [this, gid](ClusterType type, const auto &pair) {
+            std::scoped_lock _lock(_clusterInsertionLock);
+            
+            const auto &columnName = pair.first;
+            const auto &range = pair.second;
+            
+            const auto &cluster = _clusters.at(columnName);
+            
+            if (cluster.read.find(range) != cluster.read.end()){
+                const auto &gids = _clusters.at(columnName).read.at(range);
+                if (gids.find(gid) != gids.end()) {
+                    // FIXME: 속도 졸라느려지므로 아래 로그 제거해야 함
+                    _logger->debug("shouldReplay({}): matched with {} ({} - READ)", gid, range.MakeWhereQuery(columnName), type == READ ? "READ" : "WRITE");
+                    return true;
+                }
+            }
+            
+            if (cluster.write.find(range) != cluster.write.end()) {
+                const auto &gids = _clusters.at(columnName).write.at(range);
+                if (gids.find(gid) != gids.end()) {
+                    // FIXME: 속도 졸라느려지므로 아래 로그 제거해야 함
+                    _logger->debug("shouldReplay({}): matched with {} ({} - WRITE)", gid, range.MakeWhereQuery(columnName), type == READ ? "READ" : "WRITE");
+                    return true;
+                }
+            }
+            
+            return false;
+        };
+        
+        return (
+            std::any_of(read.begin(), read.end(), [&containsGid](const auto &pair) { return containsGid(READ, pair); }) ||
+            std::any_of(write.begin(), write.end(), [&containsGid](const auto &pair) { return containsGid(WRITE, pair); })
+        );
     }
 }

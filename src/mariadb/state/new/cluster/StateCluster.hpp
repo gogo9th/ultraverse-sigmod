@@ -72,13 +72,37 @@ namespace ultraverse::state::v2 {
         
         std::optional<StateRange> match(ClusterType type, const std::string &columnName, const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver) const;
         
+        void describe();
+        
+        void addRollbackTarget(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
+        void addPrependTarget(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
+        
+        bool shouldReplay(gid_t gid);
+        
     private:
+        class TargetTransactionCache {
+        public:
+            std::shared_ptr<Transaction> transaction;
+            
+            std::unordered_map<std::string, StateRange> read;
+            std::unordered_map<std::string, StateRange> write;
+        };
+        
+    private:
+        void invalidateTargetCache(std::unordered_map<gid_t, TargetTransactionCache> &targets, const RelationshipResolver &resolver);
+        
+        bool shouldReplay(gid_t gid, const TargetTransactionCache &cache);
+        
         LoggerPtr _logger;
         
         std::mutex _clusterInsertionLock;
         
         std::set<std::string> _keyColumns;
         std::map<std::string, Cluster> _clusters;
+        
+        std::mutex _targetCacheLock;
+        std::unordered_map<gid_t, TargetTransactionCache> _rollbackTargets;
+        std::unordered_map<gid_t, TargetTransactionCache> _prependTargets;
     };
 }
             
