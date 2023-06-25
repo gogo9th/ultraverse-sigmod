@@ -35,10 +35,11 @@ StateData::StateData(const std::string &val):
 
 StateData::StateData(const StateData &c)
 {
-  memset(this, 0, sizeof(StateData));
-  type = en_column_data_null;
-
-  Copy(c);
+  if (c.type == en_column_data_string) {
+      Copy(c);
+  } else {
+      memcpy(this, &c, sizeof(StateData));
+  }
 }
 
 StateData::~StateData()
@@ -698,7 +699,7 @@ std::string StateRange::MakeWhereQuery() {
     return MakeWhereQuery("FIXME");
 }
 
-std::string StateRange::MakeWhereQuery(std::string columnName)
+std::string StateRange::MakeWhereQuery(std::string columnName) const
 {
   std::string full_name = columnName;
   auto pos = full_name.find_last_of('.');
@@ -1149,7 +1150,7 @@ void StateRange::calculateHash() {
          *  the hash will be the same.
          */
         
-        hash ^= std::hash<StateData>()(st_range.begin);
+        hash ^= std::hash<StateData>()(st_range.begin) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
         // this will make the hash function better.
         hash ^= std::hash<StateData>()(st_range.end) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
     }
@@ -1357,6 +1358,8 @@ StateRange StateItem::MakeRange2() const {
         
         _isRangeCacheBuilt = true;
         _rangeCache = output;
+        
+        _rangeCache.calculateHash();
     } else {
         StateRange range;
         
@@ -1395,6 +1398,8 @@ StateRange StateItem::MakeRange2() const {
         
         _isRangeCacheBuilt = true;
         _rangeCache = range;
+        
+        _rangeCache.calculateHash();
     }
     
     return _rangeCache;

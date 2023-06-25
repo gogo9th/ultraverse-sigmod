@@ -226,7 +226,7 @@ public:
   void setWildcard(bool wildcard);
 
   std::string MakeWhereQuery();
-  std::string MakeWhereQuery(std::string columnName);
+  std::string MakeWhereQuery(std::string columnName) const;
 
   void SetBegin(const StateData &_begin, bool _add_equal);
   void SetEnd(const StateData &_end, bool _add_equal);
