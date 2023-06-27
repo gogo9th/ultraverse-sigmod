@@ -16,7 +16,7 @@ pkg_check_modules(PROTOBUF REQUIRED protobuf)
 
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-# add_compile_options(-msse4.2 -O2)
+add_compile_options(-msse4.2 -O2)
 # add_link_options(-fsanitize=leak)
 
 set(ULTRAVERSE_DEPENDENCIES
@@ -176,6 +176,7 @@ set(DB_STATE_CHANGE_SRCS
     ${ULTRAVERSE_APP_BASE_SRCS}
     mariadb/state/new/StateChanger.cpp
     mariadb/state/new/StateChanger.hpp
+    mariadb/state/new/StateChanger.prepare.cpp
     mariadb/state/new/StateChangeContext.hpp
     db_state_change.cpp
 )

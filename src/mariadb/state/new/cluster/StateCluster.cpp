@@ -188,11 +188,12 @@ namespace ultraverse::state::v2 {
         invalidateTargetCache(_rollbackTargets, resolver);
     }
     
-    void StateCluster::addPrependTarget(const std::shared_ptr<Transaction> &transaction,
+    void StateCluster::addPrependTarget(gid_t gid,
+                                        const std::shared_ptr<Transaction> &transaction,
                                         const RelationshipResolver &resolver) {
         std::scoped_lock lock(_targetCacheLock);
         
-        _prependTargets.insert(std::make_pair(transaction->gid(), TargetTransactionCache {
+        _prependTargets.insert(std::make_pair(gid, TargetTransactionCache {
             transaction,
             {}, {}
         }));

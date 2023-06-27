@@ -75,7 +75,7 @@ namespace ultraverse::state::v2 {
         void describe();
         
         void addRollbackTarget(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
-        void addPrependTarget(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
+        void addPrependTarget(gid_t gid, const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
         
         bool shouldReplay(gid_t gid);
         
