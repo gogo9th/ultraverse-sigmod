@@ -14,7 +14,6 @@ package ultparser;
 message DMLQueryExpr {
   enum Operator {
     UNKNOWN = 0;
-    VALUE = 32;
 
     EQ = 1;
     NEQ = 2;
@@ -30,8 +29,17 @@ message DMLQueryExpr {
     IS_NOT_NULL = 12;
     BETWEEN = 13;
     NOT_BETWEEN = 14;
+
     AND = 15;
     OR = 16;
+
+    PLUS = 17;
+    MINUS = 18;
+    MUL = 19;
+    DIV = 20;
+    MOD = 21;
+
+    VALUE = 32;
   };
 
   enum ValueType {

@@ -41,6 +41,7 @@ func protobuf_to_cstr(message proto.Message) (*C.char, int64) {
 	data, err := proto.Marshal(message)
 
 	if err != nil {
+		fmt.Printf("protobuf_to_cstr: error marshalling protobuf message: %v\n", err.Error())
 		return nil, 0
 	}
 
@@ -139,8 +140,23 @@ func process_expr_node(query *pb.DMLQuery, expr *ast.ExprNode) *pb.DMLQueryExpr 
 		case opcode.LogicOr:
 			expr_out.Operator = pb.DMLQueryExpr_OR
 			break
+		case opcode.Plus:
+			expr_out.Operator = pb.DMLQueryExpr_PLUS
+			break
+		case opcode.Minus:
+			expr_out.Operator = pb.DMLQueryExpr_MINUS
+			break
+		case opcode.Mul:
+			expr_out.Operator = pb.DMLQueryExpr_MUL
+			break
+		case opcode.Div:
+			expr_out.Operator = pb.DMLQueryExpr_DIV
+			break
+		case opcode.Mod:
+			expr_out.Operator = pb.DMLQueryExpr_MOD
+			break
 		default:
-			fmt.Printf("FIXME: Unsupported binary operator: %T (%s)\n", binaryExpr.Op, query.Statement)
+			fmt.Printf("FIXME: Unsupported binary operator: %s\n", binaryExpr.Op.String())
 			break
 		}
 
@@ -157,7 +173,12 @@ func process_expr_node(query *pb.DMLQuery, expr *ast.ExprNode) *pb.DMLQueryExpr 
 	} else if parenExpr, ok := (*expr).(*ast.ParenthesesExpr); ok {
 		return process_expr_node(query, &parenExpr.Expr)
 	} else {
-		fmt.Printf("FIXME: Unsupported expression type: %T\n", expr)
+		fmt.Printf("FIXME: Unsupported expression type: %T\n", *expr)
+
+		return &pb.DMLQueryExpr{
+			Operator:  pb.DMLQueryExpr_UNKNOWN,
+			ValueType: pb.DMLQueryExpr_UNKNOWN_VALUE,
+		}
 	}
 
 	return nil
