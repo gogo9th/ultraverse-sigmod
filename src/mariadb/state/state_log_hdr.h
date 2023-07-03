@@ -1,7 +1,9 @@
 #ifndef STATE_LOG_HDR_INCLUDED
 #define STATE_LOG_HDR_INCLUDED
 
-#include <string.h>
+#include <cstdint>
+#include <cstring>
+
 #include <vector>
 #include <string>
 

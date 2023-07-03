@@ -5,6 +5,7 @@
 #ifndef ULTRAVERSE_NAMINGHISTORY_HPP
 #define ULTRAVERSE_NAMINGHISTORY_HPP
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <utility>
