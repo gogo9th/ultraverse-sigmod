@@ -11,38 +11,11 @@ package ultparser;
   DELETE FROM table WHERE id = 1;
  */
 
-message DMLQueryExprValue {
-  enum ExprType {
-    UNKNOWN = 0;
-    IDENTIFIER = 1;
-    STRING = 2;
-    INTEGER = 3;
-    DOUBLE = 4;
-    BOOL = 5;
-    NULL = 6;
-    LIST = 7;
-    MAP = 8;
-    FUNCTION = 9;
-  };
-
-  ExprType type = 1;
-
-  string identifier = 2;
-  string string = 3;
-  int64 integer = 4;
-  double double = 5;
-  bool bool = 6;
-  bool null = 7;
-
-  repeated DMLQueryExprValue list = 8;
-  map<string, DMLQueryExprValue> map = 9;
-
-  string function = 10;
-}
-
 message DMLQueryExpr {
   enum Operator {
     UNKNOWN = 0;
+    VALUE = 32;
+
     EQ = 1;
     NEQ = 2;
     GT = 3;
@@ -61,22 +34,47 @@ message DMLQueryExpr {
     OR = 16;
   };
 
+  enum ValueType {
+    UNKNOWN_VALUE = 0;
+    IDENTIFIER = 1;
+    STRING = 2;
+    INTEGER = 3;
+    DOUBLE = 4;
+    BOOL = 5;
+    NULL = 6;
+    LIST = 7;
+    MAP = 8;
+    FUNCTION = 9;
+  }
+
   Operator operator = 1;
 
-  /*
-    AND, OR이 아니면 left, right에 값이 들어감
-   */
-  DMLQueryExprValue left = 2;
-  DMLQueryExprValue right = 3;
+  /* AND, OR이 아닌 비교 연산자면 left, right에 값이 들어감 */
+  DMLQueryExpr left = 2;
+  DMLQueryExpr right = 3;
 
-  /*
-    AND, OR이면 expressions에 값이 들어감
-   */
+  /* AND, OR이면 expressions에 값이 들어감 */
   repeated DMLQueryExpr expressions = 4;
+
+  /* VALUES */
+  ValueType value_type = 5;
+
+  string identifier = 6;
+  string string = 7;
+  int64 integer = 8;
+  double double = 9;
+  bool bool = 10;
+  bool null = 11;
+
+  repeated DMLQueryExpr value_list = 12;
+  map<string, DMLQueryExpr> map = 13;
+
+  string function = 14;
 }
 
 message AliasedIdentifier {
-  DMLQueryExprValue real = 1;
+  /* 여기 들어가는 expr은 반드시 IDENTIFIER를 담고 있어야 한다 */
+  DMLQueryExpr real = 1;
   string alias = 2;
 }
 

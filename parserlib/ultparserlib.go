@@ -47,57 +47,6 @@ func protobuf_to_cstr(message proto.Message) (*C.char, int64) {
 	return C.CString(string(data)), int64(len(data))
 }
 
-func process_expr_value(expr *ast.ExprNode) *pb.DMLQueryExprValue {
-	// processes an expression value
-
-	if columnNameExpr, ok := (*expr).(*ast.ColumnNameExpr); ok {
-		return &pb.DMLQueryExprValue{
-			Type:       pb.DMLQueryExprValue_IDENTIFIER,
-			Identifier: columnNameExpr.Name.Name.O,
-		}
-	} else if valueExpr, ok := (*expr).(ast.ValueExpr); ok {
-		tp := valueExpr.GetType().GetType()
-
-		if types2.IsTypeVarchar(tp) {
-			return &pb.DMLQueryExprValue{
-				Type:    pb.DMLQueryExprValue_STRING,
-				String_: valueExpr.GetValue().(string),
-			}
-		} else if types2.IsTypeInteger(tp) {
-			return &pb.DMLQueryExprValue{
-				Type:    pb.DMLQueryExprValue_INTEGER,
-				Integer: valueExpr.GetValue().(int64),
-			}
-		} else if types2.IsTypeFloat(tp) {
-			return &pb.DMLQueryExprValue{
-				Type:   pb.DMLQueryExprValue_DOUBLE,
-				Double: valueExpr.GetValue().(float64),
-			}
-		} else {
-			return &pb.DMLQueryExprValue{
-				Type:    pb.DMLQueryExprValue_UNKNOWN,
-				String_: valueExpr.GetString(),
-			}
-		}
-	} else if functionCallExpr, ok := (*expr).(*ast.FuncCallExpr); ok {
-		expr_list := make([]*pb.DMLQueryExprValue, len(functionCallExpr.Args))
-
-		for i, arg := range functionCallExpr.Args {
-			expr_list[i] = process_expr_value(&arg)
-		}
-
-		return &pb.DMLQueryExprValue{
-			Type:     pb.DMLQueryExprValue_FUNCTION,
-			Function: functionCallExpr.FnName.O,
-			List:     expr_list,
-		}
-	} else {
-		fmt.Printf("FIXME: Unsupported expression type: %T\n", *expr)
-	}
-
-	return nil
-}
-
 func process_expr_node(query *pb.DMLQuery, expr *ast.ExprNode) *pb.DMLQueryExpr {
 	// processes the where clause of a select statement
 
@@ -105,9 +54,56 @@ func process_expr_node(query *pb.DMLQuery, expr *ast.ExprNode) *pb.DMLQueryExpr 
 		return nil
 	}
 
-	var expr_out = pb.DMLQueryExpr{}
+	if columnNameExpr, ok := (*expr).(*ast.ColumnNameExpr); ok {
+		return &pb.DMLQueryExpr{
+			Operator:   pb.DMLQueryExpr_VALUE,
+			ValueType:  pb.DMLQueryExpr_IDENTIFIER,
+			Identifier: columnNameExpr.Name.Name.O,
+		}
+	} else if valueExpr, ok := (*expr).(ast.ValueExpr); ok {
+		tp := valueExpr.GetType().GetType()
 
-	if binaryExpr, ok := (*expr).(*ast.BinaryOperationExpr); ok {
+		if types2.IsTypeVarchar(tp) {
+			return &pb.DMLQueryExpr{
+				Operator:  pb.DMLQueryExpr_VALUE,
+				ValueType: pb.DMLQueryExpr_STRING,
+				String_:   valueExpr.GetValue().(string),
+			}
+		} else if types2.IsTypeInteger(tp) {
+			return &pb.DMLQueryExpr{
+				Operator:  pb.DMLQueryExpr_VALUE,
+				ValueType: pb.DMLQueryExpr_INTEGER,
+				Integer:   valueExpr.GetValue().(int64),
+			}
+		} else if types2.IsTypeFloat(tp) {
+			return &pb.DMLQueryExpr{
+				Operator:  pb.DMLQueryExpr_VALUE,
+				ValueType: pb.DMLQueryExpr_DOUBLE,
+				Double:    valueExpr.GetValue().(float64),
+			}
+		} else {
+			return &pb.DMLQueryExpr{
+				Operator:  pb.DMLQueryExpr_VALUE,
+				ValueType: pb.DMLQueryExpr_UNKNOWN_VALUE,
+				String_:   valueExpr.GetString(),
+			}
+		}
+	} else if functionCallExpr, ok := (*expr).(*ast.FuncCallExpr); ok {
+		expr_list := make([]*pb.DMLQueryExpr, len(functionCallExpr.Args))
+
+		for i, arg := range functionCallExpr.Args {
+			expr_list[i] = process_expr_node(query, &arg)
+		}
+
+		return &pb.DMLQueryExpr{
+			Operator:  pb.DMLQueryExpr_VALUE,
+			ValueType: pb.DMLQueryExpr_FUNCTION,
+			Function:  functionCallExpr.FnName.O,
+			ValueList: expr_list,
+		}
+	} else if binaryExpr, ok := (*expr).(*ast.BinaryOperationExpr); ok {
+
+		var expr_out = pb.DMLQueryExpr{}
 
 		switch binaryExpr.Op {
 		case opcode.LT:
@@ -144,17 +140,17 @@ func process_expr_node(query *pb.DMLQuery, expr *ast.ExprNode) *pb.DMLQueryExpr 
 			expr_out.Operator = pb.DMLQueryExpr_OR
 			break
 		default:
-			fmt.Printf("FIXME: Unsupported binary operator: %s\n", binaryExpr.Op.String())
+			fmt.Printf("FIXME: Unsupported binary operator: %T (%s)\n", binaryExpr.Op, query.Statement)
 			break
 		}
 
-		if (binaryExpr.Op == opcode.And) || (binaryExpr.Op == opcode.Or) {
+		if (binaryExpr.Op == opcode.LogicAnd) || (binaryExpr.Op == opcode.LogicOr) {
 			expr_out.Expressions = make([]*pb.DMLQueryExpr, 2)
 			expr_out.Expressions[0] = process_expr_node(query, &binaryExpr.L)
 			expr_out.Expressions[1] = process_expr_node(query, &binaryExpr.R)
 		} else {
-			expr_out.Left = process_expr_value(&binaryExpr.L)
-			expr_out.Right = process_expr_value(&binaryExpr.R)
+			expr_out.Left = process_expr_node(query, &binaryExpr.L)
+			expr_out.Right = process_expr_node(query, &binaryExpr.R)
 		}
 
 		return &expr_out
@@ -172,8 +168,9 @@ func process_select_stmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 	// FIXME
 	query.Table = &pb.AliasedIdentifier{
 		Alias: (*stmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
-		Real: &pb.DMLQueryExprValue{
-			Type:       pb.DMLQueryExprValue_IDENTIFIER,
+		Real: &pb.DMLQueryExpr{
+			Operator:   pb.DMLQueryExpr_VALUE,
+			ValueType:  pb.DMLQueryExpr_IDENTIFIER,
 			Identifier: (*stmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
 		},
 	}
@@ -183,7 +180,7 @@ func process_select_stmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 	for i, field := range stmt.Fields.Fields {
 		query.Select[i] = &pb.AliasedIdentifier{
 			Alias: field.AsName.O,
-			Real:  process_expr_value(&field.Expr),
+			Real:  process_expr_node(query, &field.Expr),
 		}
 	}
 }
@@ -193,8 +190,9 @@ func process_insert_stmt(query *pb.DMLQuery, stmt *ast.InsertStmt) {
 	// FIXME
 	query.Table = &pb.AliasedIdentifier{
 		Alias: (*stmt).Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
-		Real: &pb.DMLQueryExprValue{
-			Type:       pb.DMLQueryExprValue_IDENTIFIER,
+		Real: &pb.DMLQueryExpr{
+			Operator:   pb.DMLQueryExpr_VALUE,
+			ValueType:  pb.DMLQueryExpr_IDENTIFIER,
 			Identifier: (*stmt).Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
 		},
 	}
@@ -206,12 +204,13 @@ func process_insert_stmt(query *pb.DMLQuery, stmt *ast.InsertStmt) {
 
 		query.UpdateOrWrite[i] = &pb.DMLQueryExpr{
 			Operator: pb.DMLQueryExpr_EQ,
-			Right:    process_expr_value(&expr),
+			Right:    process_expr_node(query, &expr),
 		}
 
 		if columnDef != nil {
-			query.UpdateOrWrite[i].Left = &pb.DMLQueryExprValue{
-				Type:       pb.DMLQueryExprValue_IDENTIFIER,
+			query.UpdateOrWrite[i].Left = &pb.DMLQueryExpr{
+				Operator:   pb.DMLQueryExpr_VALUE,
+				ValueType:  pb.DMLQueryExpr_IDENTIFIER,
 				Identifier: columnDef.Name.O,
 			}
 		}
@@ -223,8 +222,9 @@ func process_update_stmt(query *pb.DMLQuery, stmt *ast.UpdateStmt) {
 	// FIXME
 	query.Table = &pb.AliasedIdentifier{
 		Alias: (*stmt).TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
-		Real: &pb.DMLQueryExprValue{
-			Type:       pb.DMLQueryExprValue_IDENTIFIER,
+		Real: &pb.DMLQueryExpr{
+			Operator:   pb.DMLQueryExpr_VALUE,
+			ValueType:  pb.DMLQueryExpr_IDENTIFIER,
 			Identifier: (*stmt).TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
 		},
 	}
@@ -235,11 +235,12 @@ func process_update_stmt(query *pb.DMLQuery, stmt *ast.UpdateStmt) {
 	for i, assignment := range stmt.List {
 		query.UpdateOrWrite[i] = &pb.DMLQueryExpr{
 			Operator: pb.DMLQueryExpr_EQ,
-			Left: &pb.DMLQueryExprValue{
-				Type:       pb.DMLQueryExprValue_IDENTIFIER,
+			Left: &pb.DMLQueryExpr{
+				Operator:   pb.DMLQueryExpr_VALUE,
+				ValueType:  pb.DMLQueryExpr_IDENTIFIER,
 				Identifier: assignment.Column.Name.O,
 			},
-			Right: process_expr_value(&assignment.Expr),
+			Right: process_expr_node(query, &assignment.Expr),
 		}
 	}
 }
@@ -249,8 +250,9 @@ func process_delete_stmt(query *pb.DMLQuery, stmt *ast.DeleteStmt) {
 	// FIXME
 	query.Table = &pb.AliasedIdentifier{
 		Alias: (*stmt).TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
-		Real: &pb.DMLQueryExprValue{
-			Type:       pb.DMLQueryExprValue_IDENTIFIER,
+		Real: &pb.DMLQueryExpr{
+			Operator:   pb.DMLQueryExpr_VALUE,
+			ValueType:  pb.DMLQueryExpr_IDENTIFIER,
 			Identifier: (*stmt).TableRefs.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
 		},
 	}
