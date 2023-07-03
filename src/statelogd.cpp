@@ -53,8 +53,6 @@ public:
     }
     
     int main() override {
-        sql::PySQLParser::initialize();
-
         if (isArgSet('h')) {
             std::cout <<
             "statelogd - state-logging daemon\n"
@@ -106,8 +104,6 @@ public:
         }
         
         writerMain();
-
-        sql::PySQLParser::finalize();
         return 0;
     }
     

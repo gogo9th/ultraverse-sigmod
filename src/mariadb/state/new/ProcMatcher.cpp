@@ -6,7 +6,6 @@
 
 namespace ultraverse::state::v2 {
     ProcMatcher::ProcMatcher(const std::vector<std::string> &procedureCodes):
-        _sqlParser(),
         _procedureCodes(procedureCodes)
     {
     

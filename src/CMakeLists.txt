@@ -11,7 +11,6 @@ pkg_check_modules(MARIADB REQUIRED mariadb)
 pkg_check_modules(FMT REQUIRED fmt)
 pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
-pkg_check_modules(PYTHON3 REQUIRED python3)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
 
 
@@ -28,8 +27,6 @@ set(ULTRAVERSE_DEPENDENCIES
     ${GRAPHVIZ_LIBRARIES}
     
     ${PROTOBUF_LIBRARIES}
-    
-    python3
     
     sqlparser
     OpenSSL::SSL
@@ -50,9 +47,6 @@ set(LIBULTRAVERSE_BASE_SRCS
     utils/log.hpp
     utils/StringUtil.cpp
     utils/StringUtil.hpp
-    
-    sql/PySQLParser.cpp
-    sql/PySQLParser.hpp
     
     ${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen/ultparser_query.pb.cc
     mariadb/state/new/CombinedIterator.cpp mariadb/state/new/CombinedIterator.hpp)

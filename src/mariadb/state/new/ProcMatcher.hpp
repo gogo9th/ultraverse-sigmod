@@ -8,8 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "sql/PySQLParser.hpp"
-
 namespace ultraverse::state::v2 {
     class ProcMatcher {
     public:
@@ -26,8 +24,6 @@ namespace ultraverse::state::v2 {
         int matchForward(const std::string &statement, int fromIndex);
         
     private:
-        sql::PySQLParser _sqlParser;
-        
         const std::vector<std::string> &_procedureCodes;
     };
 }
