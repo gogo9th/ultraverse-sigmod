@@ -284,6 +284,7 @@ namespace ultraverse::state::v2 {
                 }
             }
             
+            /*
             if (cluster.write.find(range) != cluster.write.end()) {
                 const auto &gids = _clusters.at(columnName).write.at(range);
                 if (gids.find(gid) != gids.end()) {
@@ -292,12 +293,13 @@ namespace ultraverse::state::v2 {
                     return true;
                 }
             }
+            */
             
             return false;
         };
         
         return (
-            std::any_of(read.begin(), read.end(), [&containsGid](const auto &pair) { return containsGid(READ, pair); }) ||
+            // std::any_of(read.begin(), read.end(), [&containsGid](const auto &pair) { return containsGid(READ, pair); }) ||
             std::any_of(write.begin(), write.end(), [&containsGid](const auto &pair) { return containsGid(WRITE, pair); })
         );
     }
