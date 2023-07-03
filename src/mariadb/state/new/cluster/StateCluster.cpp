@@ -81,10 +81,35 @@ namespace ultraverse::state::v2 {
     
     void StateCluster::insert(StateCluster::ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid) {
         std::scoped_lock lock(_clusterInsertionLock);
-        if (type == READ) {
-            _clusters[columnName].read[range].emplace(gid);
-        } else if (type == WRITE) {
-            _clusters[columnName].write[range].emplace(gid);
+        
+        auto &cluster = type == READ ?
+            _clusters[columnName].read :
+            _clusters[columnName].write;
+        
+        auto it = std::find_if(cluster.begin(), cluster.end(), [&range](const auto &pair) {
+            return pair.first == range || StateRange::isIntersects(pair.first, range);
+        });
+        
+        if (it != cluster.end()) {
+            auto dstRange = it->first;
+            dstRange.OR_FAST(range);
+            
+            if (dstRange == range || it->first == dstRange) {
+                it->second.emplace(gid);
+            } else {
+                // replace key using std::extract (see https://en.cppreference.com/w/cpp/container/map/extract)
+                auto node = cluster.extract(it->first);
+                
+                _logger->trace("merging range: {} and {}", node.key().MakeWhereQuery(columnName),
+                               range.MakeWhereQuery(columnName));
+                
+                node.key() = dstRange;
+                node.mapped().emplace(gid);
+                
+                cluster.insert(std::move(node));
+            }
+        } else {
+            cluster[range].emplace(gid);
         }
     }
     

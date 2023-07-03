@@ -911,6 +911,10 @@ std::shared_ptr<StateRange> StateRange::AND(const StateRange &a, const StateRang
  * - this function is used for merging two StateRange objects. (e.g. a = a | b)
  */
 void StateRange::OR_FAST(const StateRange &b, bool ignoreIntersect) {
+    if (*this == b) {
+        return;
+    }
+    
     if (IsValid(*this, b) != EN_VALID_RANGE) {
         return;
     }
