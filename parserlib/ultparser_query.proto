@@ -150,6 +150,55 @@ message DDLQuery {
   string statement = 2;
 }
 
+message ProcedureIfBlock {
+  DMLQueryExpr condition = 1;
+  repeated Query then_block = 2;
+  repeated Query else_block = 3;
+}
+
+message ProcedureWhileBlock {
+  DMLQueryExpr condition = 1;
+  repeated Query block = 2;
+}
+
+message ProcedureVariable {
+  string name = 1;
+  string type = 2;
+  optional DMLQueryExpr default_value = 3;
+}
+
+message Query {
+  enum QueryType {
+    UNKNOWN = 0;
+    DML     = 1;
+    DDL     = 2;
+
+    PROCEDURE = 3;
+
+    IF      = 4;
+    WHILE   = 5;
+  };
+
+  QueryType type = 1;
+
+  DMLQuery dml = 2;
+  DDLQuery ddl = 3;
+
+  optional Procedure procedure = 4;
+
+  optional ProcedureIfBlock if_block = 5;
+  optional ProcedureWhileBlock while_block = 6;
+}
+
+message Procedure {
+  string name = 1;
+
+  repeated ProcedureVariable parameters = 2;
+  repeated ProcedureVariable variables = 3;
+
+  repeated Query statements = 4;
+}
+
 message ParseResult {
   enum ResultType {
     UNKNOWN = 0;
@@ -161,8 +210,7 @@ message ParseResult {
   string error = 2;
   repeated string warnings = 3;
 
-  DMLQuery dml = 4;
-  DDLQuery ddl = 5;
+  repeated Query statements = 4;
 }
 
 option go_package = ".";

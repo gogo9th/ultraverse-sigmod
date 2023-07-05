@@ -120,7 +120,7 @@ namespace ultraverse::base {
         
         bool processWhere(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr);
         
-        void processRValue(StateItem &item, const ultparser::DMLQueryExprValue &right);
+        void processRValue(StateItem &item, const ultparser::DMLQueryExpr &right);
     private:
         void extractReadWriteSet(const hsql::InsertStatement *insert);
         void extractReadWriteSet(const hsql::DeleteStatement *del);

@@ -66,15 +66,18 @@ namespace ultraverse::base {
             }
         }
         
-        if (parseResult.has_ddl()) {
-            return processDDL(parseResult.ddl());
+        assert(parseResult.statements().size() == 1);
+        auto &statement = parseResult.statements()[0];
+        
+        if (statement.has_ddl()) {
+            return processDDL(statement.ddl());
         }
         
-        if (parseResult.has_dml()) {
-            return processDML(parseResult.dml());
+        if (statement.has_dml()) {
+            return processDML(statement.dml());
         }
         
-        _logger->error("ASSERTION FAILURE: result has no errors but it contains no DDL or DML: {}", statement());
+        _logger->error("ASSERTION FAILURE: result has no errors but it contains no DDL or DML: {}", this->statement());
         return false;
     }
     
@@ -105,16 +108,16 @@ namespace ultraverse::base {
         // TODO: support join
         
         for (const auto &select: dmlQuery.select()) {
-            const auto &exprVal = select.real();
-            if (exprVal.type() == ultparser::DMLQueryExprValue::IDENTIFIER) {
-                const std::string &colName = exprVal.identifier();
+            const auto &expr = select.real();
+            if (expr.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+                const std::string &colName = expr.identifier();
                 if (colName.find('.') == std::string::npos) {
                     _readSet.insert(primaryTable + "." + colName);
                 } else {
                     _readSet.insert(colName);
                 }
             } else {
-                _logger->trace("not selecting column: {}", exprVal.DebugString());
+                _logger->trace("not selecting column: {}", expr.DebugString());
             }
         }
         
@@ -129,7 +132,7 @@ namespace ultraverse::base {
         const std::string primaryTable = dmlQuery.table().real().identifier();
         
         for (const auto &insertion: dmlQuery.update_or_write()) {
-            if (insertion.left().type() != ultparser::DMLQueryExprValue::IDENTIFIER) {
+            if (insertion.left().value_type() != ultparser::DMLQueryExpr::IDENTIFIER) {
                 _logger->error("call ult_map_insert_cols() to resolve column names");
                 return false;
             }
@@ -193,12 +196,13 @@ namespace ultraverse::base {
                 assert(parent.condition_type == EN_CONDITION_NONE);
                 std::cout << expr.left().DebugString() << " " << expr.operator_() << " " << expr.right().DebugString() << std::endl;
                 
-                if (expr.left().type() != ultparser::DMLQueryExprValue::IDENTIFIER) {
+                if (expr.left().value_type() != ultparser::DMLQueryExpr::IDENTIFIER) {
+                    // FIXME: CONCAT(users.id, users.name) = 'foo' is not supported yet.
                     _logger->warn("left side of where expression is not an identifier: {}", expr.left().DebugString());
                     return;
                 }
                 
-                std::string left = expr.left().identifier();
+                std::string left = utility::toLower(expr.left().identifier());
                 const auto &right = expr.right();
                 
                 if (left.find('.') == std::string::npos) {
@@ -269,44 +273,61 @@ namespace ultraverse::base {
         visit_node(expr, rootItem);
         
         _whereSet.emplace_back(std::move(rootItem));
+        
+        return true;
     }
     
-    void QueryEventBase::processRValue(StateItem &item, const ultparser::DMLQueryExprValue &right) {
-        switch (right.type()) {
-            case ultparser::DMLQueryExprValue::IDENTIFIER:
-                _logger->warn("right side of where expression is an identifier: {}", right.DebugString());
+    void QueryEventBase::processRValue(StateItem &item, const ultparser::DMLQueryExpr &right) {
+        if (right.operator_() != ultparser::DMLQueryExpr::VALUE || right.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+            _logger->trace("right side of where expression is not a value: {}", right.DebugString());
+            
+            auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&item](const StateItem &_item) {
+                return _item.name == item.name;
+            });
+            
+            if (it != _itemSet.end()) {
+                item.data_list.insert(item.data_list.end(), it->data_list.begin(), it->data_list.end());
+            } else {
+                _logger->warn("cannot map value for {}", item.name);
+            }
+            
+            return;
+        }
+        
+        switch (right.value_type()) {
+            case ultparser::DMLQueryExpr::IDENTIFIER:
                 return;
-            case ultparser::DMLQueryExprValue::INTEGER: {
+            case ultparser::DMLQueryExpr::INTEGER: {
                 StateData data;
                 data.Set(right.integer());
                 item.data_list.emplace_back(std::move(data));
             }
                 break;
-            case ultparser::DMLQueryExprValue::DOUBLE: {
+            case ultparser::DMLQueryExpr::DOUBLE: {
                 StateData data;
                 data.Set(right.double_());
                 item.data_list.emplace_back(std::move(data));
             }
                 break;
-            case ultparser::DMLQueryExprValue::STRING: {
+            case ultparser::DMLQueryExpr::STRING: {
                 StateData data;
                 data.Set(right.string().c_str(), right.string().size());
                 item.data_list.emplace_back(std::move(data));
             }
                 break;
-            case ultparser::DMLQueryExprValue::BOOL: {
+            case ultparser::DMLQueryExpr::BOOL: {
                 StateData data;
                 data.Set(right.bool_() ? (int64_t) 1 : 0);
                 item.data_list.emplace_back(std::move(data));
             }
                 break;
-            case ultparser::DMLQueryExprValue::NULL_: {
+            case ultparser::DMLQueryExpr::NULL_: {
                 _logger->error("putting NULL value in StateData is not supported yet");
                 throw std::runtime_error("putting NULL value in StateData is not supported yet");
             }
                 break;
-            case ultparser::DMLQueryExprValue::LIST: {
-                for (const auto &child: right.list()) {
+            case ultparser::DMLQueryExpr::LIST: {
+                for (const auto &child: right.value_list()) {
                     processRValue(item, child);
                 }
             }
