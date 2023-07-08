@@ -80,8 +80,6 @@ namespace ultraverse::state::v2 {
     }
     
     void StateCluster::insert(StateCluster::ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid) {
-        std::scoped_lock lock(_clusterInsertionLock);
-        
         auto &cluster = type == READ ?
             _clusters[columnName].read :
             _clusters[columnName].write;
@@ -95,6 +93,7 @@ namespace ultraverse::state::v2 {
             dstRange.OR_FAST(range);
             
             if (dstRange == range || it->first == dstRange) {
+                std::scoped_lock lock(_clusterInsertionLock);
                 it->second.emplace(gid);
             } else {
                 // replace key using std::extract (see https://en.cppreference.com/w/cpp/container/map/extract)
@@ -103,12 +102,16 @@ namespace ultraverse::state::v2 {
                 _logger->trace("merging range: {} and {}", node.key().MakeWhereQuery(columnName),
                                range.MakeWhereQuery(columnName));
                 
-                node.key() = dstRange;
-                node.mapped().emplace(gid);
-                
-                cluster.insert(std::move(node));
+                {
+                    std::scoped_lock lock(_clusterInsertionLock);
+                    node.key() = dstRange;
+                    node.mapped().emplace(gid);
+                    
+                    cluster.insert(std::move(node));
+                }
             }
         } else {
+            std::scoped_lock lock(_clusterInsertionLock);
             cluster[range].emplace(gid);
         }
     }
@@ -268,18 +271,17 @@ namespace ultraverse::state::v2 {
         const auto &write = cache.write;
         
         const std::function<bool(ClusterType, const std::pair<std::string, StateRange> &)> containsGid = [this, gid](ClusterType type, const auto &pair) {
-            std::scoped_lock _lock(_clusterInsertionLock);
-            
             const auto &columnName = pair.first;
             const auto &range = pair.second;
             
             const auto &cluster = _clusters.at(columnName);
             
             if (cluster.read.find(range) != cluster.read.end()){
+                std::scoped_lock _lock(_clusterInsertionLock);
                 const auto &gids = _clusters.at(columnName).read.at(range);
                 if (gids.find(gid) != gids.end()) {
                     // FIXME: 속도 졸라느려지므로 아래 로그 제거해야 함
-                    _logger->debug("shouldReplay({}): matched with {} ({} - READ)", gid, range.MakeWhereQuery(columnName), type == READ ? "READ" : "WRITE");
+                    // _logger->debug("shouldReplay({}): matched with {} ({} - READ)", gid, range.MakeWhereQuery(columnName), type == READ ? "READ" : "WRITE");
                     return true;
                 }
             }
