@@ -212,7 +212,7 @@ sub bootstrap {
         exit 1;
     };
 
-    sleep 15;
+    sleep 30;
 
     eval {
         say colored("preparing ", "bold white"), 
@@ -222,9 +222,13 @@ sub bootstrap {
             croak("failed to run benchbase");
         }
 
+        sleep 2;
+
         if (mysqldump('benchbase', sprintf("%s/dbdump.sql", $project_path)) != 0) {
             croak("failed to execute mysqldump");
         }
+
+        sleep 4;
 
         if (docker_compose($project_path, 'down') != 0) {
             croak("failed to stop MariaDB");
@@ -242,7 +246,7 @@ sub bootstrap {
             croak("failed to start MariaDB");
         }
 
-        sleep 15;
+        sleep 30;
 
         say colored("starting ", "bold white"), 
             colored("benchbase", "bold blue"); 
