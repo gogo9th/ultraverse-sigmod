@@ -78,7 +78,15 @@ public:
   
   template <typename Archive>
   void load(Archive &archive);
-
+  
+  template <typename T>
+  T getAs() {
+      T val;
+      Get(val);
+      
+      return val;
+  }
+  
 private:
   void Clear();
   void Copy(const StateData &c);
@@ -100,8 +108,6 @@ private:
   
   std::size_t _hash;
 };
-
-
 
 /**
  * @copilot this class represents a range of SQL where clause.

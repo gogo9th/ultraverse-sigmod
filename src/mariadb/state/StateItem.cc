@@ -1367,37 +1367,39 @@ StateRange StateItem::MakeRange2() const {
     } else {
         StateRange range;
         
-        switch (function_type) {
-            case FUNCTION_BETWEEN:
-                range.SetBetween(data_list[0], data_list[1]);
-                break;
-            
-            case FUNCTION_EQ:
-                range.SetValue(data_list[0], true);
-                break;
-            
-            case FUNCTION_NE:
-                range.SetValue(data_list[0], false);
-                break;
-            
-            case FUNCTION_LT:
-                range.SetEnd(data_list[0], false);
-                break;
-            
-            case FUNCTION_LE:
-                range.SetEnd(data_list[0], true);
-                break;
-            
-            case FUNCTION_GT:
-                range.SetBegin(data_list[0], false);
-                break;
-            
-            case FUNCTION_GE:
-                range.SetBegin(data_list[0], true);
-                break;
-            
-            default:
-                break;
+        if (!data_list.empty()) {
+            switch (function_type) {
+                case FUNCTION_BETWEEN:
+                    range.SetBetween(data_list[0], data_list[1]);
+                    break;
+                
+                case FUNCTION_EQ:
+                    range.SetValue(data_list[0], true);
+                    break;
+                
+                case FUNCTION_NE:
+                    range.SetValue(data_list[0], false);
+                    break;
+                
+                case FUNCTION_LT:
+                    range.SetEnd(data_list[0], false);
+                    break;
+                
+                case FUNCTION_LE:
+                    range.SetEnd(data_list[0], true);
+                    break;
+                
+                case FUNCTION_GT:
+                    range.SetBegin(data_list[0], false);
+                    break;
+                
+                case FUNCTION_GE:
+                    range.SetBegin(data_list[0], true);
+                    break;
+                
+                default:
+                    break;
+            }
         }
         
         _isRangeCacheBuilt = true;
