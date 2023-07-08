@@ -8,22 +8,48 @@
 #include <ultparser_query.pb.h>
 
 #include "ProcMatcher.hpp"
+#include "Query.hpp"
+#include "ProcCall.hpp"
+
+#include "mariadb/DBEvent.hpp"
+
 #include "utils/StringUtil.hpp"
 
 
 namespace ultraverse::state::v2 {
     
-    std::vector<std::shared_ptr<ultparser::Query>> ProcMatcher::parse(const std::string &procedureDefinition) {
-        auto logger = createLogger("ProcMatcher");
+    std::string ProcMatcher::sanitizeSelectInto(const std::string &procedureDefinition) {
+        auto *result = ult_sanitize_select_into((char *) procedureDefinition.c_str());
+        std::string resultStr(result);
+        free(result);
         
+        return resultStr;
+    }
+    
+    std::string ProcMatcher::normalizeProcedureCode(const std::string &procedureDefinition) {
+        auto *result = ult_normalize_procedure_code((char *) procedureDefinition.c_str());
+        std::string resultStr(result);
+        free(result);
+        
+        return resultStr;
+    }
+    
+    void ProcMatcher::load(const std::string &procedureDefinition, ProcMatcher &instance) {
+        static const auto logger = createLogger("ProcMatcher");
         int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
         
+        // normalize 후 sanitize 해야 함
+        // 왜냐하면 SELECT colX
+        //        INTO varX 가
+        // SELECT colX INTO varX 로 바뀌기 때문
+        std::string normalizedDefinition = sanitizeSelectInto(normalizeProcedureCode(procedureDefinition));
+        logger->debug(normalizedDefinition);
         ultparser::ParseResult parseResult;
         
         char *parseResultCStr = nullptr;
         
         int64_t parseResultCStrSize = ult_sql_parse(
-            (char *) procedureDefinition.c_str(),
+            (char *) normalizedDefinition.c_str(),
             threadId,
             &parseResultCStr
         );
@@ -52,23 +78,47 @@ namespace ultraverse::state::v2 {
         }
         
         {
-            std::vector<std::shared_ptr<ultparser::Query>> statements;
+            auto &statements = instance._codes;
             const auto &_procedureInfo = parseResult.statements()[0];
             assert(_procedureInfo.type() == ultparser::Query::PROCEDURE);
             
             const auto &procedureInfo = _procedureInfo.procedure();
             
-            for (const auto &statement: procedureInfo.statements()) {
-                statements.push_back(std::make_shared<ultparser::Query>(statement));
+            for (const auto &parameter: procedureInfo.parameters()) {
+                instance._parameters.push_back(parameter.name());
             }
             
-            return std::move(statements);
+            for (const auto &statement: procedureInfo.statements()) {
+                if (statement.type() == ultparser::Query_QueryType_IF) {
+                    auto &ifBlock = statement.if_block();
+                    
+                    for (const auto &child: ifBlock.then_block()) {
+                        statements.push_back(std::make_shared<ultparser::Query>(child));
+                    }
+                    
+                    for (const auto &child: ifBlock.else_block()) {
+                        statements.push_back(std::make_shared<ultparser::Query>(child));
+                    }
+                    
+                    continue;
+                } else if (statement.type() == ultparser::Query_QueryType_WHILE) {
+                    auto &whileBlock = statement.while_block();
+                    
+                    for (const auto &child: whileBlock.block()) {
+                        statements.push_back(std::make_shared<ultparser::Query>(child));
+                    }
+                    
+                    continue;
+                }
+                
+                statements.push_back(std::make_shared<ultparser::Query>(statement));
+            }
         }
+        
+        return;
         
         FAILURE:
         logger->error("Failed to parse procedure definition");
-        
-        return {};
     }
     
     std::unordered_set<std::string> ProcMatcher::extractTableColumns(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr) {
@@ -104,12 +154,52 @@ namespace ultraverse::state::v2 {
             }
         }
         
-        return columns;
+        return std::move(columns);
+    }
+    
+    std::vector<std::unordered_map<std::string, std::string>>
+    ProcMatcher::extractVariableAssignments(const std::string &procedureDefinition) {
+        char *resultCStr = nullptr;
+        int size = ult_extract_select_info((char *) procedureDefinition.c_str(), &resultCStr);
+        
+        if (size <= 0 || resultCStr == nullptr) {
+            goto FAILURE;
+        }
+        
+        {
+            std::vector<std::unordered_map<std::string, std::string>> assignments_list;
+            ultparser::SelectIntoExtractionResult results;
+            if (!results.ParseFromArray(resultCStr, size)) {
+                free(resultCStr);
+                goto FAILURE;
+            }
+            
+            free(resultCStr);
+            
+            for (const auto &result: results.results()) {
+                std::unordered_map<std::string, std::string> assignments;
+                
+                for (const auto &assignment: result.assignments()) {
+                    assignments[assignment.first] = assignment.second;
+                }
+                
+                assignments_list.push_back(std::move(assignments));
+            }
+            
+            return std::move(assignments_list);
+        }
+        
+        FAILURE:
+        return {};
     }
     
     ProcMatcher::ProcMatcher(const std::string &procedureDefinition):
-        _codes(std::move(parse(procedureDefinition)))
+        _logger(createLogger("ProcMatcher")),
+        _definition(procedureDefinition),
+        _codes(),
+        _variableAssignments(extractVariableAssignments(procedureDefinition))
     {
+        load(procedureDefinition, *this);
         extractRWSets();
     }
     
@@ -174,6 +264,7 @@ namespace ultraverse::state::v2 {
         
         for (int i = fromIndex; i < _codes.size(); i++) {
             // DML일때만 매칭을 시도한다.
+            // TODO: sanitizeSelectInto() 콜해야한다
             if (_codes[i]->type() == ultparser::Query::DML) {
                 if (ult_query_match((char *) statement.c_str(), (char *) _codes[i]->dml().statement().c_str(), threadId)) {
                     return i;
@@ -182,6 +273,70 @@ namespace ultraverse::state::v2 {
         }
 
         return -1;
+    }
+    
+    std::shared_ptr<Query> ProcMatcher::asQuery(int index, const ProcCall &procCall) const {
+        const auto &code = codes().at(index);
+        auto query = std::make_shared<Query>();
+        auto procParameters = procCall.buildItemSet(*this);
+        
+        
+        std::string statement = "SELECT 1";
+        
+        switch (code->type()) {
+            case ultparser::Query_QueryType_DDL:
+                statement = code->ddl().statement();
+                break;
+            case ultparser::Query_QueryType_DML:
+                statement = code->dml().statement();
+                break;
+            case ultparser::Query_QueryType_IF:
+                _logger->error("IF statement is not supported");
+                break;
+            default:
+                _logger->error("unsupprted statement type: {}", code->type());
+                break;
+        }
+        
+        auto event = std::make_shared<mariadb::QueryEvent>(
+            "fillme",
+            statement,
+            0
+        );
+        
+        std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->itemSet()));
+        
+        event->parse();
+        
+        query->setStatement(statement);
+        query->setFlags(Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
+        
+        query->readSet().insert(
+            event->readSet().begin(), event->readSet().end()
+        );
+        query->writeSet().insert(
+            event->writeSet().begin(), event->writeSet().end()
+        );
+
+        query->itemSet().insert(
+            query->itemSet().end(),
+            event->itemSet().begin(), event->itemSet().end()
+        );
+
+        query->whereSet().insert(
+            query->whereSet().end(),
+            event->whereSet().begin(), event->whereSet().end()
+        );
+        
+        return query;
+    }
+    
+    const std::vector<std::string> &ProcMatcher::parameters() const {
+        return _parameters;
+    }
+    
+    const std::vector<std::shared_ptr<ultparser::Query>> ProcMatcher::codes() const {
+        return _codes;
     }
     
     const std::unordered_set<std::string> &ProcMatcher::readSet() const {
