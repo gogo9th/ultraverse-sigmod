@@ -11,6 +11,8 @@ import (
 	types2 "github.com/pingcap/tidb/types"
 	_ "github.com/pingcap/tidb/types/parser_driver"
 	pb "parserlib/pb"
+	"reflect"
+	"regexp"
 	"strings"
 )
 
@@ -53,7 +55,7 @@ func protobuf_to_cstr(message proto.Message) (*C.char, int64) {
 func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 	// processes the where clause of a select statement
 
-	if expr == nil {
+	if *expr == nil {
 		return nil
 	}
 
@@ -174,6 +176,30 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 		return &expr_out
 	} else if parenExpr, ok := (*expr).(*ast.ParenthesesExpr); ok {
 		return process_expr_node(&parenExpr.Expr)
+	} else if unaryExpr, ok := (*expr).(*ast.UnaryOperationExpr); ok {
+		exprNode := process_expr_node(&unaryExpr.V)
+
+		if exprNode.Operator == pb.DMLQueryExpr_VALUE {
+			switch unaryExpr.Op {
+			case opcode.Plus:
+				break
+			case opcode.Minus:
+				if exprNode.ValueType == pb.DMLQueryExpr_INTEGER {
+					exprNode.Integer = -exprNode.Integer
+				} else if exprNode.ValueType == pb.DMLQueryExpr_DOUBLE {
+					exprNode.Double = -exprNode.Double
+				}
+				break
+			default:
+				fmt.Printf("FIXME: Unsupported unary operator: %s\n", unaryExpr.Op.String())
+				break
+			}
+		} else {
+			fmt.Printf("FIXME: Unsupported unary operator: %s\n", unaryExpr.Op.String())
+		}
+
+		return exprNode
+
 	} else {
 		fmt.Printf("FIXME: Unsupported expression type: %T\n", *expr)
 
@@ -186,18 +212,69 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 	return nil
 }
 
+func select_get_tables(tableRefs *ast.Join) (*ast.TableName, []*ast.TableName) {
+	var primary_table *ast.TableName
+	var joined_tables []*ast.TableName
+
+	if tableRefs.Left != nil {
+		switch tableRefs.Left.(type) {
+		case *ast.Join:
+			primary_table, joined_tables = select_get_tables(tableRefs.Left.(*ast.Join))
+			break
+		case *ast.TableSource:
+			primary_table = tableRefs.Left.(*ast.TableSource).Source.(*ast.TableName)
+			break
+		}
+	}
+
+	if tableRefs.Right != nil {
+		switch tableRefs.Right.(type) {
+		case *ast.Join:
+			_, joined_tables = select_get_tables(tableRefs.Right.(*ast.Join))
+			break
+		case *ast.TableSource:
+			joined_tables = append(joined_tables, tableRefs.Right.(*ast.TableSource).Source.(*ast.TableName))
+			break
+		}
+	}
+
+	return primary_table, joined_tables
+}
+
 func process_select_stmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 	query.Type = pb.DMLQuery_SELECT
-	// FIXME
-	query.Table = &pb.AliasedIdentifier{
-		Alias: (*stmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
-		Real: &pb.DMLQueryExpr{
-			Operator:   pb.DMLQueryExpr_VALUE,
-			ValueType:  pb.DMLQueryExpr_IDENTIFIER,
-			Identifier: (*stmt).From.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName).Name.O,
-		},
+
+	if stmt.From != nil {
+		tableRefs := stmt.From.TableRefs
+		primary_table, joined_tables := select_get_tables(tableRefs)
+
+		query.Table = &pb.AliasedIdentifier{
+			Alias: primary_table.Name.O,
+			Real: &pb.DMLQueryExpr{
+				Operator:   pb.DMLQueryExpr_VALUE,
+				ValueType:  pb.DMLQueryExpr_IDENTIFIER,
+				Identifier: primary_table.Name.O,
+			},
+		}
+
+		query.Join = make([]*pb.AliasedIdentifier, len(joined_tables))
+
+		for i, joined_table := range joined_tables {
+			query.Join[i] = &pb.AliasedIdentifier{
+				Alias: joined_table.Name.O,
+				Real: &pb.DMLQueryExpr{
+					Operator:   pb.DMLQueryExpr_VALUE,
+					ValueType:  pb.DMLQueryExpr_IDENTIFIER,
+					Identifier: joined_table.Name.O,
+				},
+			}
+		}
 	}
-	query.Where = process_expr_node(&stmt.Where)
+
+	if stmt.Where != nil {
+		query.Where = process_expr_node(&stmt.Where)
+	}
+
 	query.Select = make([]*pb.AliasedIdentifier, len(stmt.Fields.Fields))
 
 	for i, field := range stmt.Fields.Fields {
@@ -286,8 +363,11 @@ func process_delete_stmt(query *pb.DMLQuery, stmt *ast.DeleteStmt) {
 func is_dml_node(node *ast.StmtNode) bool {
 	switch (*node).(type) {
 	case *ast.SelectStmt:
+		return true
 	case *ast.InsertStmt:
+		return true
 	case *ast.UpdateStmt:
+		return true
 	case *ast.DeleteStmt:
 		return true
 	default:
@@ -309,14 +389,23 @@ func process_dml_node(query *pb.DMLQuery, node *ast.StmtNode) {
 	} else if deleteStmt, ok := (*node).(*ast.DeleteStmt); ok {
 		process_delete_stmt(query, deleteStmt)
 	} else {
-		fmt.Printf("FIXME: Unsupported statement type: %T\n", node)
+		fmt.Printf("process_dml_node: Unsupported statement type: %v\n", node)
 	}
 }
 
 func is_proc_node(node *ast.StmtNode) bool {
 	switch (*node).(type) {
 	case *ast.ProcedureIfInfo:
+		return true
+	case *ast.ProcedureIfBlock:
+		return true
 	case *ast.ProcedureLabelLoop:
+		return true
+	case *ast.ProcedureLabelBlock:
+		return true
+	case *ast.ProcedureElseIfBlock:
+		return true
+	case *ast.ProcedureElseBlock:
 		return true
 	default:
 		return false
@@ -325,12 +414,12 @@ func is_proc_node(node *ast.StmtNode) bool {
 	return false
 }
 
-func process_proc_if(node *ast.ProcedureIfInfo) *pb.ProcedureIfBlock {
+func process_proc_if(node *ast.ProcedureIfBlock) *pb.ProcedureIfBlock {
 	block := &pb.ProcedureIfBlock{
-		Condition: process_expr_node(&node.IfBody.IfExpr),
+		Condition: process_expr_node(&node.IfExpr),
 	}
 
-	for _, stmt := range node.IfBody.ProcedureIfStmts {
+	for _, stmt := range node.ProcedureIfStmts {
 		x := process_stmt_node(&stmt)
 
 		if x != nil {
@@ -338,7 +427,7 @@ func process_proc_if(node *ast.ProcedureIfInfo) *pb.ProcedureIfBlock {
 		}
 	}
 
-	y := process_stmt_node(&node.IfBody.ProcedureElseStmt)
+	y := process_stmt_node(&node.ProcedureElseStmt)
 	if y != nil {
 		block.ElseBlock = append(block.ElseBlock, y)
 	}
@@ -368,9 +457,23 @@ func process_proc_loop(node *ast.ProcedureLabelLoop) *pb.ProcedureWhileBlock {
 	return nil
 }
 
+func process_proc_label_block(node *ast.ProcedureLabelBlock) *pb.ProcedureIfBlock {
+	block := &pb.ProcedureIfBlock{}
+
+	for _, stmt := range node.Block.ProcedureProcStmts {
+		x := process_stmt_node(&stmt)
+
+		if x != nil {
+			block.ThenBlock = append(block.ThenBlock, x)
+		}
+	}
+
+	return block
+}
+
 func process_proc_node(node *ast.StmtNode) *pb.Query {
 	if ifStmt, ok := (*node).(*ast.ProcedureIfInfo); ok {
-		ifBlock := process_proc_if(ifStmt)
+		ifBlock := process_proc_if(ifStmt.IfBody)
 
 		return &pb.Query{
 			Type:    pb.Query_IF,
@@ -382,6 +485,35 @@ func process_proc_node(node *ast.StmtNode) *pb.Query {
 		return &pb.Query{
 			Type:       pb.Query_WHILE,
 			WhileBlock: whileBlock,
+		}
+	} else if labelBlockStmt, ok := (*node).(*ast.ProcedureLabelBlock); ok {
+		ifBlock := process_proc_label_block(labelBlockStmt)
+
+		return &pb.Query{
+			Type:    pb.Query_IF,
+			IfBlock: ifBlock,
+		}
+	} else if elseIfBlockStmt, ok := (*node).(*ast.ProcedureElseIfBlock); ok {
+		ifBlock := process_proc_if(elseIfBlockStmt.ProcedureIfStmt)
+
+		return &pb.Query{
+			Type:    pb.Query_IF,
+			IfBlock: ifBlock,
+		}
+	} else if elseBlockStmt, ok := (*node).(*ast.ProcedureElseBlock); ok {
+		block := &pb.ProcedureIfBlock{}
+
+		for _, stmt := range elseBlockStmt.ProcedureIfStmts {
+			x := process_stmt_node(&stmt)
+
+			if x != nil {
+				block.ThenBlock = append(block.ThenBlock, x)
+			}
+		}
+
+		return &pb.Query{
+			Type:    pb.Query_IF,
+			IfBlock: block,
 		}
 	} else {
 		fmt.Printf("FIXME: Unsupported procedure type: %T\n", node)
@@ -439,7 +571,7 @@ func process_proc_info(procedure *pb.Procedure, node *ast.ProcedureInfo) {
 }
 
 func process_stmt_node(stmt *ast.StmtNode) *pb.Query {
-	if stmt == nil {
+	if *stmt == nil {
 		return nil
 	}
 
@@ -462,7 +594,7 @@ func process_stmt_node(stmt *ast.StmtNode) *pb.Query {
 	} else if is_proc_node(stmt) {
 		return process_proc_node(stmt)
 	} else {
-		fmt.Printf("FIXME: Unsupported statement type: %T\n", stmt)
+		fmt.Printf("FIXME: Unsupported statement type: %v\n", reflect.TypeOf(*stmt))
 	}
 
 	return nil
@@ -554,6 +686,135 @@ func ult_query_match(a *C.char, b *C.char, threadId int64) bool {
 	}
 
 	return repr_node(&ast_a[0]) == sql_b
+}
+
+//export ult_normalize_procedure_code
+func ult_normalize_procedure_code(procedure_code_cstr *C.char) *C.char {
+	// @copilot: please translate the following (TypeScript + Perl)-like pseudocode to Go
+	/*
+					return procedure_code.replace(/\n/g, ' ')
+		                                 .replace(/;/g, ';\n')
+			                             .replace(/END/g, "\nEND");
+	*/
+
+	procedure_code := C.GoString(procedure_code_cstr)
+
+	replace_newline := regexp.MustCompile(`\n`)
+	replace_semicolon := regexp.MustCompile(`;`)
+	replace_end := regexp.MustCompile(`END`)
+
+	normalized_procedure_code := replace_end.ReplaceAllString(replace_semicolon.ReplaceAllString(replace_newline.ReplaceAllString(procedure_code, " "), ";\n"), "\nEND")
+
+	return C.CString(normalized_procedure_code)
+}
+
+//export ult_sanitize_select_into
+func ult_sanitize_select_into(query_cstr *C.char) *C.char {
+	query := C.GoString(query_cstr)
+
+	regex := regexp.MustCompile(`SELECT\s+(.+?)\s+INTO\s+(.+?)(\s+FROM|\s*;)`)
+	// @copilot please translate the following (TypeScript + Perl)-like pseudocode to Go
+	// return query.replace(regex, 'SELECT $1 $3');
+
+	sanitized_query := regex.ReplaceAllString(query, "SELECT $1 $3")
+	// Q: ?? really? is $1 works?
+	// A: yes, it works. $1 is a special variable in Go regexp package. It's a string that contains the text of the leftmost submatch.
+
+	return C.CString(sanitized_query)
+}
+
+func extract_select_into(procedure_code string) []map[string]string {
+	// @copilot please translate the following (TypeScript + Perl)-like pseudocode to Go
+	/*
+		    const normalizeColumn = (column: string): string => column.replace(/`/g, '').trim();
+			const assigns: Record<string, string> = {};
+			const regex: RegExp = m/SELECT\s+(?<columns>.+?)\s+INTO\s+(?<vars>.+?)(\s+FROM|\s*;)/i;
+			while (query =~ regex) {
+				const columns = $+{columns};
+				const vars = $+{vars};
+
+				if (columns.length != vars.length) {
+			        if (vars.length !== 1) {
+		                console.error("Invalid number of variables");
+		                return {};
+		            }
+
+		            const varFirst = vars[0];
+		            columns.map { normalizeColumn(it) }.forEach { assigns[it] = varFirst };
+				} else {
+		            columns.map { normalizeColumn(it) }.forEachIndexed { i, it -> assigns[it] = vars[i] };
+		        }
+			}
+
+			return assigns;
+	*/
+
+	normalizeColumn := func(column string) string {
+		return regexp.MustCompile("`").ReplaceAllString(column, "")
+	}
+
+	assign_list := make([]map[string]string, 0)
+
+	regex := regexp.MustCompile(`SELECT\s+(.+?)\s+INTO\s+(.+?)(\s+FROM|\s*;)`)
+
+	// split by semicolon
+	queries := strings.Split(procedure_code, ";")
+
+	for _, query := range queries {
+
+		if regexp.MustCompile(`^\s*$`).MatchString(query) {
+			continue
+		}
+
+		assigns := make(map[string]string)
+
+		if matches := regex.FindStringSubmatch(query); len(matches) > 0 {
+			columns := strings.Split(matches[1], ",")
+			vars := strings.Split(matches[2], ",")
+
+			if len(columns) != len(vars) {
+				if len(vars) != 1 {
+					fmt.Printf("Invalid number of variables")
+
+					assign_list = append(assign_list, assigns)
+					continue
+				}
+
+				varFirst := vars[0]
+				for _, column := range columns {
+					assigns[normalizeColumn(column)] = varFirst
+				}
+			} else {
+				for i, column := range columns {
+					assigns[normalizeColumn(column)] = vars[i]
+				}
+			}
+		}
+
+		assign_list = append(assign_list, assigns)
+	}
+
+	return assign_list
+}
+
+//export ult_extract_select_info
+func ult_extract_select_info(procedure_code_cstr *C.char, output **C.char) int64 {
+	procedure_code := C.GoString(procedure_code_cstr)
+	assign_list := extract_select_into(procedure_code)
+
+	var size int64 = 0
+
+	result := &pb.SelectIntoExtractionResult{}
+
+	for _, assign_map := range assign_list {
+		result.Results = append(result.Results, &pb.SelectIntoAssignmentMap{
+			Assignments: assign_map,
+		})
+	}
+
+	*output, size = protobuf_to_cstr(result)
+
+	return size
 }
 
 func main() {

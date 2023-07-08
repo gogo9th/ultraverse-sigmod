@@ -213,4 +213,12 @@ message ParseResult {
   repeated Query statements = 4;
 }
 
+message SelectIntoAssignmentMap {
+  map<string, string> assignments = 1;
+}
+
+message SelectIntoExtractionResult {
+  repeated SelectIntoAssignmentMap results = 1;
+}
+
 option go_package = ".";
