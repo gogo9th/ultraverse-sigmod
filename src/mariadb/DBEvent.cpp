@@ -413,8 +413,6 @@ namespace ultraverse::mariadb {
             }
         }
         
-        std::cout << sstream.str() << std::endl;
-        
         return std::make_pair(sstream.str(), nullFieldsSize + rowSize);
     }
     
