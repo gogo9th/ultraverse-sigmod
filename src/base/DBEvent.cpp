@@ -117,7 +117,7 @@ namespace ultraverse::base {
                     _readSet.insert(colName);
                 }
             } else {
-                _logger->trace("not selecting column: {}", expr.DebugString());
+                // _logger->trace("not selecting column: {}", expr.DebugString());
             }
         }
         
@@ -194,11 +194,11 @@ namespace ultraverse::base {
                 }
             } else {
                 assert(parent.condition_type == EN_CONDITION_NONE);
-                std::cout << expr.left().DebugString() << " " << expr.operator_() << " " << expr.right().DebugString() << std::endl;
+                // std::cout << expr.left().DebugString() << " " << expr.operator_() << " " << expr.right().DebugString() << std::endl;
                 
                 if (expr.left().value_type() != ultparser::DMLQueryExpr::IDENTIFIER) {
                     // FIXME: CONCAT(users.id, users.name) = 'foo' is not supported yet.
-                    _logger->warn("left side of where expression is not an identifier: {}", expr.left().DebugString());
+                    _logger->warn("left side of where expression is not an identifier");
                     return;
                 }
                 
@@ -279,16 +279,28 @@ namespace ultraverse::base {
     
     void QueryEventBase::processRValue(StateItem &item, const ultparser::DMLQueryExpr &right) {
         if (right.operator_() != ultparser::DMLQueryExpr::VALUE || right.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
-            _logger->trace("right side of where expression is not a value: {}", right.DebugString());
+            // _logger->trace("right side of where expression is not a value: {}", right.DebugString());
+            if (right.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+                auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&right](const StateItem &_item) {
+                    return _item.name == right.identifier();
+                });
+                
+                if (it != _itemSet.end()) {
+                    item.data_list.insert(item.data_list.end(), it->data_list.begin(), it->data_list.end());
+                    return;
+                }
+            }
             
-            auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&item](const StateItem &_item) {
-                return _item.name == item.name;
-            });
-            
-            if (it != _itemSet.end()) {
-                item.data_list.insert(item.data_list.end(), it->data_list.begin(), it->data_list.end());
-            } else {
-                _logger->warn("cannot map value for {}", item.name);
+            {
+                auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&item](const StateItem &_item) {
+                    return _item.name == item.name;
+                });
+                
+                if (it != _itemSet.end()) {
+                    item.data_list.insert(item.data_list.end(), it->data_list.begin(), it->data_list.end());
+                } else {
+                    _logger->warn("cannot map value for {}", item.name);
+                }
             }
             
             return;
@@ -333,7 +345,7 @@ namespace ultraverse::base {
             }
                 break;
             default:
-                _logger->error("unsupported right side of where expression: {}", right.DebugString());
+                // :_logger->error("unsupported right side of where expression: {}", right.DebugString());
                 throw std::runtime_error("unsupported right side of where expression");
         }
     }
