@@ -127,13 +127,14 @@ namespace ultraverse::state::v2 {
             tasks.emplace(promise);
         }
         
-        while (tasks.empty()) {
+        while (!tasks.empty()) {
             tasks.front()->get_future().wait();
             tasks.pop();
         }
         
         taskExecutor.shutdown();
         
+        _logger->info("prepare(): {} transactions will be replayed", replayGids.size());
         // rowCluster.describe();
         
         dropIntermediateDB();
