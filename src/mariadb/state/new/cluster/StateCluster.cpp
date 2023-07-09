@@ -17,7 +17,7 @@ namespace ultraverse::state::v2 {
         
         auto it = std::find_if(cluster.begin(), cluster.end(), [type, &resolver, &columnName, &begin, &end](const auto &pair) {
             const StateRange &range = pair.first;
-            return std::find_if(begin, end, [type, &resolver, &columnName, &range](const StateItem &item) {
+            return std::any_of(begin, end, [type, &resolver, &columnName, &range](const StateItem &item) {
                 // FIXME: 이거 개느릴거같은데;;
                 
                 // Q: 이거 std::move 해야 하지 않나?
@@ -26,21 +26,25 @@ namespace ultraverse::state::v2 {
                 // A: std::move 는 rvalue 로 바꿔주는거야. 그래서 이동 생성자를 호출하거든.
                 
                 // WRITE가 FK에 대해 직접 write하는 경우는 없으므로 chain resolve는 READ에 대해서만 수행한다.
-                const auto &realColumn = (type == READ) ?
-                    resolver.resolveChain(item.name) :
-                    resolver.resolveColumnAlias(item.name);
+
                 const auto &real = (type == READ) ?
                     resolver.resolveRowChain(item) :
                     resolver.resolveRowAlias(item);
                 
                 if (real != nullptr) {
                     return real->name == columnName && StateRange::isIntersects(real->MakeRange2(), range);
-                } else if (!realColumn.empty()) {
-                    return realColumn == columnName && StateRange::isIntersects(item.MakeRange2(), range);
                 } else {
-                    return item.name == columnName && StateRange::isIntersects(item.MakeRange2(), range);
+                    const auto &realColumn = (type == READ) ?
+                                             resolver.resolveChain(item.name) :
+                                             resolver.resolveColumnAlias(item.name);
+                    
+                    if (!realColumn.empty()) {
+                        return realColumn == columnName && StateRange::isIntersects(item.MakeRange2(), range);
+                    } else {
+                        return item.name == columnName && StateRange::isIntersects(item.MakeRange2(), range);
+                    }
                 }
-            }) != end;
+            });
         });
         
         if (it == cluster.end()) {
@@ -67,7 +71,7 @@ namespace ultraverse::state::v2 {
     }
     
     bool StateCluster::isKeyColumnItem(const RelationshipResolver &resolver, const StateItem &item) const {
-        return std::find_if(
+        return std::any_of(
             _keyColumns.begin(), _keyColumns.end(),
             [&resolver, &item](const auto &keyColumn) {
                 // 과연 이게 맞는가? alias + foreign key를 고려해야 하지 않을까?
@@ -76,7 +80,7 @@ namespace ultraverse::state::v2 {
                 return (item.name == keyColumn) ||
                        (!realColumn.empty() && realColumn == keyColumn);
             }
-        ) != _keyColumns.end();
+        );
     }
     
     void StateCluster::insert(StateCluster::ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid) {
@@ -112,12 +116,15 @@ namespace ultraverse::state::v2 {
             }
         } else {
             std::scoped_lock lock(_clusterInsertionLock);
-            cluster[range].emplace(gid);
+            auto &_cluster = cluster[range];
+            
+            _cluster.reserve(16384);
+            _cluster.emplace(gid);
         }
     }
     
     void StateCluster::insert(StateCluster::ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver) {
-        const auto isKeyColumnItem = [&resolver, this](const StateItem &item) {
+        static const auto isKeyColumnItem = [&resolver, this](const StateItem &item) {
             return this->isKeyColumnItem(resolver, item);
         };
         
@@ -133,19 +140,22 @@ namespace ultraverse::state::v2 {
             auto &item = *it;
             auto &columnName = item.name;
             
-            const auto &realColumn = resolver.resolveChain(item.name);
             const auto &real = resolver.resolveRowChain(item);
             
             if (real != nullptr) {
                 // fk / alias를 해결한 경우에는 type 상관없이 강제로 READ 관계로 넣는다
                 insert(READ, real->name, real->MakeRange2(), gid);
-            } else if (!realColumn.empty()) {
-                // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
-                // 이 경우에도 FK를 해결한 경우이므로 type 상꽌없이 강제로 READ 관계로 넣는다
-                insert(READ, realColumn, item.MakeRange2(), gid);
             } else {
-                // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
-                insert(type, columnName, item.MakeRange2(), gid);
+                const auto &realColumn = resolver.resolveChain(item.name);
+                
+                if (!realColumn.empty()) {
+                    // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
+                    // 이 경우에도 FK를 해결한 경우이므로 type 상꽌없이 강제로 READ 관계로 넣는다
+                    insert(READ, realColumn, item.MakeRange2(), gid);
+                } else {
+                    // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
+                    insert(type, columnName, item.MakeRange2(), gid);
+                }
             }
            
             ++it;
@@ -168,11 +178,11 @@ namespace ultraverse::state::v2 {
         const auto &cluster = _clusters.at(columnName);
         
         if (type == READ) {
-            return StateCluster::Cluster::match(READ, columnName, cluster.read, transaction->whereSet_begin(), transaction->whereSet_end(), resolver);
+            return std::move(StateCluster::Cluster::match(READ, columnName, cluster.read, transaction->whereSet_begin(), transaction->whereSet_end(), resolver));
         }
         
         if (type == WRITE) {
-            return StateCluster::Cluster::match(WRITE, columnName, cluster.write, transaction->itemSet_begin(), transaction->itemSet_end(), resolver);
+            return std::move(StateCluster::Cluster::match(WRITE, columnName, cluster.write, transaction->itemSet_begin(), transaction->itemSet_end(), resolver));
         }
         
         return std::nullopt;
@@ -234,12 +244,15 @@ namespace ultraverse::state::v2 {
             auto &cache = pair.second;
             
             for (const auto &keyColumn: _keyColumns) {
-                auto readRange = match(READ, keyColumn, cache.transaction, resolver);
-                auto writeRange = match(READ, keyColumn, cache.transaction, resolver);
+                // auto readRange = match(READ, keyColumn, cache.transaction, resolver);
+                auto writeRange = match(WRITE, keyColumn, cache.transaction, resolver);
                 
+                /*
                 if (readRange.has_value()) {
                     cache.read[keyColumn] = readRange.value();
                 }
+                 */
+                
                 if (writeRange.has_value()) {
                     cache.write[keyColumn] = writeRange.value();
                 }
@@ -256,12 +269,15 @@ namespace ultraverse::state::v2 {
         return std::any_of(
             _rollbackTargets.begin(), _rollbackTargets.end(),
             [this, gid](const auto &pair) {
+                return shouldReplay(gid, pair.second);
+                /*
                 if (shouldReplay(gid, pair.second)) {
                     _logger->debug("shouldReplay({}): related with rollback target {}", gid, pair.first);
                     return true;
                 }
                 
                 return false;
+                 */
             }
         );
     }
@@ -269,6 +285,7 @@ namespace ultraverse::state::v2 {
     bool StateCluster::shouldReplay(gid_t gid, const StateCluster::TargetTransactionCache &cache) {
         const auto &read = cache.read;
         const auto &write = cache.write;
+        
         
         const std::function<bool(ClusterType, const std::pair<std::string, StateRange> &)> containsGid = [this, gid](ClusterType type, const auto &pair) {
             const auto &columnName = pair.first;
@@ -279,11 +296,15 @@ namespace ultraverse::state::v2 {
             if (cluster.read.find(range) != cluster.read.end()){
                 std::scoped_lock _lock(_clusterInsertionLock);
                 const auto &gids = _clusters.at(columnName).read.at(range);
+                
+                return gids.find(gid) != gids.end();
+                /*
                 if (gids.find(gid) != gids.end()) {
                     // FIXME: 속도 졸라느려지므로 아래 로그 제거해야 함
                     // _logger->debug("shouldReplay({}): matched with {} ({} - READ)", gid, range.MakeWhereQuery(columnName), type == READ ? "READ" : "WRITE");
                     return true;
                 }
+                 */
             }
             
             /*
