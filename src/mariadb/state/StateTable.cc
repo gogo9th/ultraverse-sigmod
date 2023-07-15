@@ -87,6 +87,7 @@ namespace ultraverse::state {
         _logger->info("updating data definitions...");
     
         // TODO: parallel process
+        /*
         auto handle = _dbHandlePool.take();
         mariadb::BinaryLog binaryLog(handle.get());
         
@@ -109,11 +110,6 @@ namespace ultraverse::state {
                 continue;
             }
             
-            /*
-             * CREATE 'INDEX'
-             * DROP 'PROCEDURE'
-             * ALTER 'TABLE' ...
-             */
             auto command = queryEvent->tokens()[0];
             auto what = queryEvent->tokens()[1];
             
@@ -165,6 +161,7 @@ namespace ultraverse::state {
         }
     
         binaryLog.close();
+        */
     }
     
     void StateTable::clearDefinitions() {

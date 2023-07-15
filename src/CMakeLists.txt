@@ -117,7 +117,6 @@ set(LIBULTRAVERSE_STATE_SRCS
     mariadb/state/new/StateClusterWriter.cpp mariadb/state/new/StateClusterWriter.hpp)
 
 set(LIBULTRAVERSE_MARIADB_SRCS
-    mariadb/BinaryLog.cpp
     mariadb/DBHandle.cpp
     mariadb/DBEvent.cpp
     
