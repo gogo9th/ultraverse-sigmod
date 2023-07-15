@@ -18,7 +18,6 @@
 #include "mariadb/state/StateHash.hpp"
 
 #include "mariadb/DBHandle.hpp"
-#include "mariadb/BinaryLog.hpp"
 
 #include "mariadb/binlog/MariaDBBinaryLogReader.hpp"
 #include "mariadb/binlog/MySQLBinaryLogReader.hpp"

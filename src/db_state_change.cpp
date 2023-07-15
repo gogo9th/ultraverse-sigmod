@@ -4,8 +4,6 @@
 #include "mariadb/state/StateThreadPool.h"
 #include "mariadb/state/StateTable.h"
 
-#include "mariadb/BinaryLog.hpp"
-
 #include "Application.hpp"
 #include "db_state_change.hpp"
 
