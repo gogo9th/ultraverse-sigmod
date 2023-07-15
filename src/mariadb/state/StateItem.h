@@ -177,7 +177,7 @@ public:
         const ST_RANGE *small, *big;
     
         //a.begin 이 더 작을경우
-        if (MIN(begin, other.begin) == 0)
+        if (Min(begin, other.begin) == 0)
         {
             small = this;
             big = &other;
@@ -274,8 +274,8 @@ private:
   static std::shared_ptr<std::vector<ST_RANGE>> OR_ARRANGE(const std::shared_ptr<std::vector<ST_RANGE>> a);
   static std::shared_ptr<std::vector<ST_RANGE>> OR_ARRANGE2(const std::shared_ptr<std::vector<ST_RANGE>> a);
   static std::shared_ptr<std::vector<ST_RANGE>> OR(const ST_RANGE &a, const ST_RANGE &b);
-  static int MIN(const StateData &a, const StateData &b);
-  static int MAX(const StateData &a, const StateData &b);
+  static int Min(const StateData &a, const StateData &b);
+  static int Max(const StateData &a, const StateData &b);
 
   std::shared_ptr<std::vector<ST_RANGE>> range;
   bool _wildcard;

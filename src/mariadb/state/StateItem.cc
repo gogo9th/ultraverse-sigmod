@@ -977,7 +977,7 @@ std::shared_ptr<std::vector<StateRange::ST_RANGE>> StateRange::AND(const ST_RANG
   const ST_RANGE *small, *big;
 
   //a.begin 이 더 작을경우
-  if (MIN(a.begin, b.begin) == 0)
+  if (Min(a.begin, b.begin) == 0)
   {
     small = &a;
     big = &b;
@@ -1101,7 +1101,7 @@ std::shared_ptr<std::vector<StateRange::ST_RANGE>> StateRange::OR(const ST_RANGE
 
 // a 가 작으면 : 0
 // b 가 작으면 : 1
-int StateRange::MIN(const StateData &a, const StateData &b)
+int StateRange::Min(const StateData &a, const StateData &b)
 {
   if (a.IsNone())
     return 0;
@@ -1117,7 +1117,7 @@ int StateRange::MIN(const StateData &a, const StateData &b)
 
 // a 가 크면 : 0
 // b 가 크면 : 1
-int StateRange::MAX(const StateData &a, const StateData &b)
+int StateRange::Max(const StateData &a, const StateData &b)
 {
   if (a.IsNone())
     return 0;
