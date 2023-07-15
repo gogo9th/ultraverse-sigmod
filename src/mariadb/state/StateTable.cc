@@ -19,7 +19,6 @@
 
 #include "SQLParser.h"
 #include "bison_parser.h"
-#include "mariadb/BinaryLog.hpp"
 
 
 #include <cmath>
