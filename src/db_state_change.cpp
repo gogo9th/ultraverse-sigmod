@@ -64,6 +64,13 @@ namespace ultraverse {
         return ActionType::FULL_REPLAY;
     }
     
+    ReplayAction::ReplayAction() {
+    }
+    
+    ActionType::Value ReplayAction::type() {
+        return ActionType::REPLAY;
+    }
+    
     DBStateChangeApp::DBStateChangeApp():
         _logger(createLogger("statechange"))
     {
@@ -77,7 +84,7 @@ namespace ultraverse {
     
     int DBStateChangeApp::main() {
         if (isArgSet('h')) {
-            std::cout <<
+            std::cerr <<
             "statechange - rollback database state\n"
             "\n"
             "Usage:\n"
@@ -160,6 +167,10 @@ namespace ultraverse {
             return std::dynamic_pointer_cast<FullReplayAction>(action) != nullptr;
         }) != actions.end();
         
+        bool replay = std::find_if(actions.begin(), actions.end(), [](auto &action) {
+            return std::dynamic_pointer_cast<ReplayAction>(action) != nullptr;
+        }) != actions.end();
+        
         if (makeClusterMap && actions.size() > 1) {
             throw std::runtime_error("make_clustermap cannot be executed with other actions.");
         }
@@ -173,7 +184,7 @@ namespace ultraverse {
         try {
             preparePlan(actions, changePlan);
         } catch (std::exception &e) {
-            std::cout << e.what() << std::endl;
+            std::cerr << e.what() << std::endl;
             return 1;
         }
         
@@ -182,19 +193,29 @@ namespace ultraverse {
         changePlan.setDBHost(getEnv("DB_HOST"));
         changePlan.setDBUsername(getEnv("DB_USER"));
         changePlan.setDBPassword(getEnv("DB_PASS"));
-        
     
         StateChanger stateChanger(dbHandlePool, changePlan);
         
         if (makeClusterMap) {
+            stateChanger.makeCluster();
         } else if (fullReplay) {
-            stateChanger.fullReplay();
-        } else {
-            describeActions(actions);
-            
+            /*
             if (!confirm("Proceed?")) {
                 return 2;
             }
+             */
+            
+            stateChanger.fullReplay();
+        } else if (replay) {
+            stateChanger.replay();
+        } else {
+            describeActions(actions);
+            
+            /*
+            if (!confirm("Proceed?")) {
+                return 2;
+            }
+             */
             
             stateChanger.prepare();
             // stateChanger.start();
@@ -330,7 +351,7 @@ namespace ultraverse {
     }
     
     bool DBStateChangeApp::confirm(std::string message) {
-        std::cout << message << " (Y/n) > ";
+        std::cerr << message << " (Y/n) > ";
         std::string input;
         std::cin >> input;
         
@@ -360,7 +381,7 @@ namespace ultraverse {
             auto strArgs = pair.size() > 1 ? pair[1] : "";
             
             if (action == "make_cluster") {
-                // actions.emplace_back(std::make_shared<MakeClusterAction>());
+                actions.emplace_back(std::make_shared<MakeClusterAction>());
             } else if (action == "rollback") {
                 gid_t gid = std::stoll(strArgs);
                 actions.emplace_back(std::make_shared<RollbackAction>(gid));
@@ -373,7 +394,9 @@ namespace ultraverse {
                 gid_t gid = std::stoll(args[0]);
                 actions.emplace_back(std::make_shared<PrependAction>(gid, args[1]));
             } else if (action == "full-replay") {
-                // actions.emplace_back(std::make_shared<FullReplayAction>());
+                actions.emplace_back(std::make_shared<FullReplayAction>());
+            } else if (action == "replay") {
+                actions.emplace_back(std::make_shared<ReplayAction>());
             } else {
                 throw std::runtime_error("invalid action");
             }

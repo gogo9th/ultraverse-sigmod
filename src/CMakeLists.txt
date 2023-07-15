@@ -15,7 +15,7 @@ pkg_check_modules(PROTOBUF REQUIRED protobuf)
 
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-# add_compile_options(-msse4.2 -O2)
+add_compile_options(-msse4.2 -O2)
 # add_link_options(-fsanitize=leak)
 
 set(ULTRAVERSE_DEPENDENCIES
@@ -111,7 +111,10 @@ set(LIBULTRAVERSE_STATE_SRCS
     mariadb/state/new/ProcCall.cpp
     mariadb/state/new/ProcLogReader.cpp
     mariadb/state/new/ProcMatcher.cpp
-    mariadb/state/new/cluster/StateRelationshipResolver.cpp mariadb/state/new/cluster/StateRelationshipResolver.hpp)
+    mariadb/state/new/cluster/StateRelationshipResolver.cpp mariadb/state/new/cluster/StateRelationshipResolver.hpp
+    mariadb/state/new/graph/RowGraph.cpp
+    mariadb/state/new/graph/RowGraph.hpp
+    mariadb/state/new/StateClusterWriter.cpp mariadb/state/new/StateClusterWriter.hpp)
 
 set(LIBULTRAVERSE_MARIADB_SRCS
     mariadb/BinaryLog.cpp
@@ -171,6 +174,7 @@ set(DB_STATE_CHANGE_SRCS
     mariadb/state/new/StateChanger.cpp
     mariadb/state/new/StateChanger.hpp
     mariadb/state/new/StateChanger.prepare.cpp
+    mariadb/state/new/StateChanger.replay.cpp
     mariadb/state/new/StateChangeContext.hpp
     db_state_change.cpp
 )

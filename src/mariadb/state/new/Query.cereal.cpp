@@ -35,6 +35,7 @@ namespace ultraverse::state::v2 {
             _itemSet,
             _updateSet,
             _whereSet,
+            _varMap,
             
             _affectedRows,
             _rowSet,

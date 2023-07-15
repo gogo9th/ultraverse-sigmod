@@ -88,6 +88,7 @@ namespace ultraverse::state::v2 {
             _clusters[columnName].read :
             _clusters[columnName].write;
         
+        std::scoped_lock lock(_clusterInsertionLock);
         auto it = std::find_if(cluster.begin(), cluster.end(), [&range](const auto &pair) {
             return pair.first == range || StateRange::isIntersects(pair.first, range);
         });
@@ -96,18 +97,47 @@ namespace ultraverse::state::v2 {
             auto dstRange = it->first;
             dstRange.OR_FAST(range);
             
+            /*
+            _logger->trace("range: {}", range.MakeWhereQuery(columnName));
+            _logger->trace("dstRange: {}", dstRange.MakeWhereQuery(columnName));
+             */
+            
             if (dstRange == range || it->first == dstRange) {
-                std::scoped_lock lock(_clusterInsertionLock);
+                /*
+                auto it2 = std::find_if(cluster.begin(), cluster.end(), [&range](const auto &pair) {
+                    return pair.first == range || StateRange::isIntersects(pair.first, range);
+                });
+                
+                 */
+                
                 it->second.emplace(gid);
             } else {
                 // replace key using std::extract (see https://en.cppreference.com/w/cpp/container/map/extract)
-                auto node = cluster.extract(it->first);
+                auto range1 = it->first;
                 
-                _logger->trace("merging range: {} and {}", node.key().MakeWhereQuery(columnName),
-                               range.MakeWhereQuery(columnName));
+                _logger->trace("merging range: {} and {}", range1.MakeWhereQuery(columnName), range.MakeWhereQuery(columnName));
+                
+                auto it2 = cluster.begin();
+                while (true) {
+                    it2 = std::find_if(it2, cluster.end(), [&range1, &range](const auto &pair) {
+                        return pair.first != range1 && StateRange::isIntersects(pair.first, range);
+                    });
+                    
+                    if (it2 == cluster.end()) {
+                        break;
+                    }
+                    
+                    _logger->trace("merging range: {} and {}", range1.MakeWhereQuery(columnName), it2->first.MakeWhereQuery(columnName));
+                    
+                    cluster[range1].insert(it2->second.begin(), it2->second.end());
+                    dstRange.OR_FAST(it2->first);
+                    
+                    it2 = cluster.erase(it2);
+                }
+                
+                auto node = cluster.extract(range1);
                 
                 {
-                    std::scoped_lock lock(_clusterInsertionLock);
                     node.key() = dstRange;
                     node.mapped().emplace(gid);
                     
@@ -115,7 +145,6 @@ namespace ultraverse::state::v2 {
                 }
             }
         } else {
-            std::scoped_lock lock(_clusterInsertionLock);
             auto &_cluster = cluster[range];
             
             _cluster.reserve(16384);
@@ -123,10 +152,13 @@ namespace ultraverse::state::v2 {
         }
     }
     
-    void StateCluster::insert(StateCluster::ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver) {
+    std::pair<std::vector<StateItem>, std::vector<StateItem>> StateCluster::merge(CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver) {
         static const auto isKeyColumnItem = [&resolver, this](const StateItem &item) {
             return this->isKeyColumnItem(resolver, item);
         };
+        
+        std::map<std::string, StateItem> merged;
+        std::map<std::string, StateItem> merged_read;
         
         auto it = std::move(begin);
         
@@ -138,6 +170,88 @@ namespace ultraverse::state::v2 {
             }
             
             auto &item = *it;
+            auto &columnName = item.name;
+            
+            const auto &real = resolver.resolveRowChain(item);
+            
+            if (real != nullptr) {
+                auto &_item = merged_read[real->name];
+                
+                if (_item.name.empty()) {
+                    _item.name = real->name;
+                    _item.function_type = FUNCTION_IN_INTERNAL;
+                }
+                
+                _item.data_list.insert(
+                    _item.data_list.end(),
+                    item.data_list.begin(), item.data_list.end()
+                );
+            } else {
+                const auto &realColumn = resolver.resolveChain(item.name);
+                
+                if (!realColumn.empty()) {
+                    // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
+                    auto &_item = merged_read[realColumn];
+                    
+                    if (_item.name.empty()) {
+                        _item.name = realColumn;
+                        _item.function_type = FUNCTION_IN_INTERNAL;
+                    }
+                    
+                    _item.data_list.insert(
+                        _item.data_list.end(),
+                        item.data_list.begin(), item.data_list.end()
+                    );
+                } else {
+                    // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
+                    auto &_item = merged[item.name];
+                    
+                    if (_item.name.empty()) {
+                        _item.name = item.name;
+                        _item.function_type = FUNCTION_IN_INTERNAL;
+                    }
+                    
+                    _item.data_list.insert(
+                        _item.data_list.end(),
+                        item.data_list.begin(), item.data_list.end()
+                    );
+
+                }
+            }
+        
+            ++it;
+        }
+        
+        std::vector<StateItem> result;
+        result.reserve(merged.size());
+        
+        for (auto &pair: merged) {
+            result.emplace_back(std::move(pair.second));
+        }
+        
+        std::vector<StateItem> result_read;
+        result_read.reserve(merged_read.size());
+        
+        for (auto &pair: merged_read) {
+            result_read.emplace_back(std::move(pair.second));
+        }
+        
+        
+        return std::move(std::make_pair(std::move(result), std::move(result_read)));
+    }
+    
+    
+    void StateCluster::insert(StateCluster::ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver) {
+        static const auto isKeyColumnItem = [&resolver, this](const StateItem &item) {
+            return this->isKeyColumnItem(resolver, item);
+        };
+        
+        const auto &pair = merge(begin, end, resolver);
+        const auto &items = pair.first;
+        const auto &itemsRead = pair.second;
+        
+        for (const auto &item: items) {
+            /*
             auto &columnName = item.name;
             
             const auto &real = resolver.resolveRowChain(item);
@@ -157,8 +271,13 @@ namespace ultraverse::state::v2 {
                     insert(type, columnName, item.MakeRange2(), gid);
                 }
             }
-           
-            ++it;
+             */
+            
+            insert(type, item.name, item.MakeRange2(), gid);
+        }
+        
+        for (const auto &item: itemsRead) {
+            insert(READ, item.name, item.MakeRange2(), gid);
         }
     }
     
@@ -292,10 +411,13 @@ namespace ultraverse::state::v2 {
             const auto &range = pair.second;
             
             const auto &cluster = _clusters.at(columnName);
+            auto it = std::find_if(cluster.read.begin(), cluster.read.end(), [&range](const auto &pair) {
+                return pair.first == range || StateRange::isIntersects(pair.first, range);
+            });
             
-            if (cluster.read.find(range) != cluster.read.end()){
-                std::scoped_lock _lock(_clusterInsertionLock);
-                const auto &gids = _clusters.at(columnName).read.at(range);
+            if (it != cluster.read.end()){
+                // std::scoped_lock _lock(_clusterInsertionLock);
+                const auto &gids = it->second;
                 
                 return gids.find(gid) != gids.end();
                 /*

@@ -51,6 +51,9 @@ namespace ultraverse::state::v2 {
             ClusterMap read;
             ClusterMap write;
             
+            template <typename Archive>
+            void serialize(Archive &archive);
+            
             static std::optional<StateRange> match(ClusterType type,
                                                    const std::string &columnName,
                                                    const ClusterMap &cluster,
@@ -79,6 +82,9 @@ namespace ultraverse::state::v2 {
         
         bool shouldReplay(gid_t gid);
         
+        template <typename Archive>
+        void serialize(Archive &archive);
+        
     private:
         class TargetTransactionCache {
         public:
@@ -89,6 +95,8 @@ namespace ultraverse::state::v2 {
         };
         
     private:
+        std::pair<std::vector<StateItem>, std::vector<StateItem>> merge(CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver);
+        
         void invalidateTargetCache(std::unordered_map<gid_t, TargetTransactionCache> &targets, const RelationshipResolver &resolver);
         
         bool shouldReplay(gid_t gid, const TargetTransactionCache &cache);
@@ -105,6 +113,7 @@ namespace ultraverse::state::v2 {
         std::unordered_map<gid_t, TargetTransactionCache> _prependTargets;
     };
 }
-            
+
+#include "StateCluster.cereal.cpp"
 
 #endif //ULTRAVERSE_STATECLUSTER_HPP

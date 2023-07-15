@@ -24,9 +24,12 @@ namespace ultraverse::state::v2 {
             _dependencies,
             
             _queries,
+            _variableSet,
             
             _readSet,
-            _writeSet
+            _writeSet,
+            _readTableSet,
+            _writeTableSet
         );
     }
 }

@@ -278,31 +278,37 @@ namespace ultraverse::base {
     }
     
     void QueryEventBase::processRValue(StateItem &item, const ultparser::DMLQueryExpr &right) {
-        if (right.operator_() != ultparser::DMLQueryExpr::VALUE || right.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+        if (right.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
             // _logger->trace("right side of where expression is not a value: {}", right.DebugString());
-            if (right.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
-                auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&right](const StateItem &_item) {
-                    return _item.name == right.identifier();
+            const std::string &identifierName = right.identifier();
+            
+            {
+                auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&item, &identifierName](const StateItem &_item) {
+                    return _item.name == item.name || _item.name == identifierName;
                 });
                 
                 if (it != _itemSet.end()) {
                     item.data_list.insert(item.data_list.end(), it->data_list.begin(), it->data_list.end());
+                    
+                    StateItem tmp = *it; // copy
+                    tmp.name = identifierName;
+                    _varMap.emplace_back(std::move(tmp));
                     return;
                 }
             }
             
             {
-                auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&item](const StateItem &_item) {
-                    return _item.name == item.name;
+                auto it = std::find_if(_variableSet.begin(), _variableSet.end(), [&item, &identifierName](const StateItem &_item) {
+                    return _item.name == item.name || _item.name == identifierName;
                 });
                 
-                if (it != _itemSet.end()) {
+                if (it != _variableSet.end()) {
                     item.data_list.insert(item.data_list.end(), it->data_list.begin(), it->data_list.end());
-                } else {
-                    _logger->warn("cannot map value for {}", item.name);
+                    return;
                 }
             }
             
+            _logger->warn("cannot map value for {}", item.name);
             return;
         }
         
@@ -783,6 +789,14 @@ namespace ultraverse::base {
     
     std::vector<StateItem> &QueryEventBase::whereSet() {
         return _whereSet;
+    }
+    
+    std::vector<StateItem> &QueryEventBase::variableSet() {
+        return _variableSet;
+    }
+    
+    std::vector<StateItem> &QueryEventBase::varMap() {
+        return _varMap;
     }
     
     std::unordered_map<std::string, StateData> &QueryEventBase::sqlVarMap() {

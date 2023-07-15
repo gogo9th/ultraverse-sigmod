@@ -92,6 +92,8 @@ namespace ultraverse::state::v2 {
          */
         int matchForward(const std::string &statement, int fromIndex);
         
+        
+        std::vector<StateItem> variableSet(const ProcCall &procCall) const;
         std::shared_ptr<Query> asQuery(int index, const ProcCall &procCall) const;
         
         const std::vector<std::string> &parameters() const;

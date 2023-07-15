@@ -66,31 +66,31 @@ namespace ultraverse::state::v2 {
     
     std::string StateRelationshipResolver::resolveColumnAlias(const std::string &exprName) const {
         bool found = false;
-        std::string _exprName = exprName;
+        std::string _exprName = utility::toLower(exprName);
         
         while (true) {
             auto it = std::find_if(
                 _plan.columnAliases().begin(), _plan.columnAliases().end(),
-                [&_exprName](const auto &pair) { return std::move(utility::toLower(pair.first)) == std::move(utility::toLower(_exprName)); }
+                [&_exprName](const auto &pair) { return std::move(utility::toLower(pair.first)) == _exprName; }
             );
             
             if (it == _plan.columnAliases().end()) {
-                return found ? std::move(utility::toLower(_exprName)) : std::move(std::string());
+                return found ? std::move(_exprName) : std::move(std::string());
             }
             
             found = true;
-            _exprName = it->second;
+            _exprName = utility::toLower(it->second);
         }
     }
     
     std::string StateRelationshipResolver::resolveForeignKey(const std::string &exprName) const {
         bool found = false;
-        std::string _exprName = exprName;
+        std::string _exprName = utility::toLower(exprName);
         
         while (true) {
             auto vec = std::move(utility::splitTableName(_exprName));
-            auto tableName  = std::move(utility::toLower(vec.first));
-            auto columnName = std::move(utility::toLower(vec.second));
+            auto tableName  = std::move(vec.first);
+            auto columnName = std::move(vec.second);
             
             auto it = std::find_if(
                 _context.foreignKeys.cbegin(), _context.foreignKeys.cend(),
@@ -100,11 +100,11 @@ namespace ultraverse::state::v2 {
             );
             
             if (it == _context.foreignKeys.cend()) {
-                return found ? std::move(utility::toLower(_exprName)) : std::move(std::string());
+                return found ? std::move(_exprName) : std::move(std::string());
             }
             
             found = true;
-            _exprName = std::move(it->toTable->getCurrentName() + "." + it->toColumn);
+            _exprName = std::move(utility::toLower(it->toTable->getCurrentName() + "." + it->toColumn));
         }
     }
     
@@ -170,7 +170,7 @@ namespace ultraverse::state::v2 {
         _cacheLock.unlock();
         
         if (!found) {
-            auto retval = std::move(_resolver.resolveColumnAlias(columnExpr));
+            auto retval = std::move(_resolver.resolveChain(columnExpr));
             
             std::scoped_lock _lock(_cacheLock);
             _chainCache.emplace(columnExpr, retval);

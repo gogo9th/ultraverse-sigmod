@@ -104,7 +104,11 @@ namespace ultraverse::base {
     
         std::vector<StateItem> &itemSet();
         std::vector<StateItem> &whereSet();
+        std::vector<StateItem> &variableSet();
+        std::vector<StateItem> &varMap();
         
+        
+        /** @deprecated */
         std::unordered_map<std::string, StateData> &sqlVarMap();
         
     protected:
@@ -139,10 +143,12 @@ namespace ultraverse::base {
     
         /** @deprecated use _insertSet, _deleteSet instead. */
         std::vector<StateItem> _itemSet;
+        std::vector<StateItem> _variableSet;
         
         std::vector<StateItem> _insertSet;
         std::vector<StateItem> _deleteSet;
         std::vector<StateItem> _whereSet;
+        std::vector<StateItem> _varMap;
         
         std::unordered_map<std::string, StateData> _sqlVarMap;
         

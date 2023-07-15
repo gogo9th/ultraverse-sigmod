@@ -5,6 +5,8 @@
 #include <functional>
 #include <utility>
 
+#include <utils/StringUtil.hpp>
+
 #include "Query.hpp"
 
 namespace ultraverse::state::v2 {
@@ -118,6 +120,10 @@ namespace ultraverse::state::v2 {
         return _whereSet;
     }
     
+    std::vector<StateItem> &Query::varMap() {
+        return _varMap;
+    }
+    
     std::vector<std::string> &Query::rowSet() {
         return _rowSet;
     }
@@ -128,5 +134,25 @@ namespace ultraverse::state::v2 {
     
     std::unordered_map<std::string, StateData> &Query::sqlVarMap() {
         return _sqlVarMap;
+    }
+    
+    std::string Query::varMappedStatement(const std::vector<StateItem> &variableSet) const {
+        std::string statement = this->statement();
+        
+        for (const auto &var: variableSet) {
+            const auto &name = var.name;
+            const std::string &value = var.data_list.front().getAs<std::string>();
+            
+            statement = std::move(utility::replaceAll(statement, name, value));
+        }
+        
+        for (const auto &var: _varMap) {
+            const auto &name = var.name;
+            const std::string &value = var.data_list.front().getAs<std::string>();
+            
+            statement = std::move(utility::replaceAll(statement, name, value));
+        }
+        
+        return statement;
     }
 }

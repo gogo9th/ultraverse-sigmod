@@ -18,7 +18,8 @@ namespace ultraverse {
             MAKE_CLUSTER,
             ROLLBACK,
             PREPEND,
-            FULL_REPLAY
+            FULL_REPLAY,
+            REPLAY
         };
     }
     
@@ -60,6 +61,12 @@ namespace ultraverse {
     class FullReplayAction: public Action {
     public:
         FullReplayAction();
+        ActionType::Value type() override;
+    };
+    
+    class ReplayAction: public Action {
+    public:
+        ReplayAction();
         ActionType::Value type() override;
     };
     

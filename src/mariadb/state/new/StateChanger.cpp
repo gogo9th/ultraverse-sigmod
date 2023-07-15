@@ -33,7 +33,7 @@ namespace ultraverse::state::v2 {
         _dbHandlePool(dbHandlePool),
         _mode(OperationMode::NORMAL),
         _plan(plan),
-        _intermediateDBName(fmt::format("ult_intermediate_{}", (int) time(nullptr))), // FIXME
+        _intermediateDBName(fmt::format("ult_intermediate_{}_{}", (int) time(nullptr), getpid())), // FIXME
         _reader(plan.stateLogPath(), plan.stateLogName()),
         _columnGraph(std::make_unique<ColumnDependencyGraph>()),
         _tableGraph(std::make_unique<TableDependencyGraph>()),
@@ -681,15 +681,17 @@ namespace ultraverse::state::v2 {
     void StateChanger::fullReplay() {
         _mode = OperationMode::FULL_REPLAY;
         
-        TaskExecutor taskExecutor(_plan.threadNum());
-        std::queue<std::shared_ptr<std::promise<int>>> taskQueue;
-       
         createIntermediateDB();
         
         if (!_plan.dbDumpPath().empty()) {
             auto load_backup_start = std::chrono::steady_clock::now();
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
+            
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle.get(), 0);
+            updateForeignKeys(dbHandle.get(), 0);
             auto load_backup_end = std::chrono::steady_clock::now();
+            
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
         }
@@ -699,26 +701,8 @@ namespace ultraverse::state::v2 {
         
         _isRunning = true;
         
-        auto addTransaction = [this, &taskExecutor, &taskQueue] (std::shared_ptr<Transaction> transaction) {
-            auto node = _stateGraph->addTransaction(transaction);
-            if (node.second) {
-                if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {
-                    _ddlTxnId = transaction->gid();
-                }
-                
-                auto task = taskExecutor.post<int>([this, node = std::move(node)]() {
-                    this->processNode(node.first);
-                    return 0;
-                });
-                
-                taskQueue.push(std::move(task));
-            }
-        };
-        
-        auto phase2_main_start = std::chrono::steady_clock::now();
-        
-        _isClusterReady = true;
-        _clusterCondvar.notify_all();
+        auto phase_main_start = std::chrono::steady_clock::now();
+        auto dbHandle = _dbHandlePool.take();
         
         while (_reader.nextHeader()) {
             auto transactionHeader = _reader.txnHeader();
@@ -728,41 +712,73 @@ namespace ultraverse::state::v2 {
             auto transaction = _reader.txnBody();
             auto gid = transactionHeader->gid;
             auto flags = transactionHeader->flags;
-            _logger->trace("read gid {}; flags {}", gid, flags);
  
             if (!isTransactionRelatedToPlan(transaction)) {
                 _logger->trace("skipping transaction #{}", gid);
                 continue;
             }
+ 
+            _logger->info("replaying transaction #{}", gid);
             
-            if (flags & Transaction::FLAG_CONTAINS_DDL) {
-                processDDLTransaction(transaction);
+            dbHandle.get().executeQuery("USE " + _intermediateDBName);
+            dbHandle.get().executeQuery("BEGIN");
+            
+            bool isProcedureCall = transaction->flags() & Transaction::FLAG_IS_PROCEDURE_CALL;
+            
+            try {
+                for (const auto &query: transaction->queries()) {
+                    bool isProcedureCallQuery = query->flags() & Query::FLAG_IS_PROCCALL_QUERY;
+                    if (isProcedureCall && !isProcedureCallQuery) {
+                        goto NEXT_QUERY;
+                    }
+                    
+                    /*
+                    if (isProcedureCall && isProcedureCallQuery) {
+                        if (query->statement().find("Payment") != std::string::npos) {
+                            // FIXME: skip payment
+                            goto NEXT_QUERY;
+                        }
+                    }
+                    
+                    const auto &statement = isProcedureCall ?
+                        query->varMappedStatement(transaction->variableSet()) : // FIXME
+                        query->statement();
+                    
+                    logger->info("replaying query: {}", statement);
+                     */
+                    
+                    std::cout << query->statement() << std::endl;
+                    
+                    if (dbHandle.get().executeQuery(query->statement()) != 0) {
+                        _logger->error("query execution failed: {}", mysql_error(dbHandle.get()));
+                    }
+                    
+                    // 프로시저에서 반환한 result를 소모하지 않으면 commands out of sync 오류가 난다
+                    do {
+                        auto result = mysql_store_result(dbHandle.get());
+                        if (result != nullptr) {
+                            mysql_free_result(result);
+                        }
+                    } while (mysql_next_result(dbHandle.get()) == 0);
+                    
+                    NEXT_QUERY:
+                }
+            } catch (std::exception &e) {
+                _logger->error("exception occurred while replaying transaction #{}: {}", gid, e.what());
+                dbHandle.get().executeQuery("ROLLBACK");
+                continue;
             }
             
-            while (_ddlTxnProcessedId < _ddlTxnId) {
-                using namespace std::chrono_literals;
-                std::this_thread::sleep_for(10ms);
-            }
-            
-            addTransaction(transaction);
+            dbHandle.get().executeQuery("COMMIT");
         }
         
-        while (!taskQueue.empty()) {
-            auto task = std::move(taskQueue.front());
-            auto future = task->get_future();
-            future.wait();
-            taskQueue.pop();
-        }
         
         {
-            auto phase2_main_end = std::chrono::steady_clock::now();
-            std::chrono::duration<double> time = phase2_main_end - phase2_main_start;
+            auto phase_main_end = std::chrono::steady_clock::now();
+            std::chrono::duration<double> time = phase_main_end - phase_main_start;
             _phase2Time = time.count();
         }
-        
-        if (_hashWatcher != nullptr) {
-            _hashWatcher->stop();
-        }
+
         
         _logger->trace("== FULL REPLAY FINISHED ==");
         
@@ -776,7 +792,7 @@ namespace ultraverse::state::v2 {
         _logger->info("total {} queries replayed", _replayedQueries);
         _logger->info("main phase {}s", _phase2Time);
         
-        taskExecutor.shutdown();
+        dropIntermediateDB();
     }
     
     bool StateChanger::isQueryRelatedWithKeyColumns(Query &query) {
@@ -1453,7 +1469,7 @@ namespace ultraverse::state::v2 {
     void StateChanger::createIntermediateDB() {
         _logger->info("creating intermediate database: {}", _intermediateDBName);
         
-        auto query = QUERY_TAG_STATECHANGE + fmt::format("CREATE DATABASE IF NOT EXISTS {}", _intermediateDBName);
+        auto query = QUERY_TAG_STATECHANGE + fmt::format("CREATE DATABASE IF NOT EXISTS {} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", _intermediateDBName);
         auto dbHandleLease = _dbHandlePool.take();
         auto &dbHandle = dbHandleLease.get();
         if (dbHandle.executeQuery(query) != 0) {

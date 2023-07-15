@@ -297,6 +297,11 @@ func process_insert_stmt(query *pb.DMLQuery, stmt *ast.InsertStmt) {
 		},
 	}
 
+	if len(stmt.Lists) == 0 {
+		fmt.Printf("process_insert_stmt(): column definition is empty: %s\n", query.Statement)
+		return
+	}
+
 	query.UpdateOrWrite = make([]*pb.DMLQueryExpr, len(stmt.Lists[0]))
 
 	for i, expr := range stmt.Lists[0] {

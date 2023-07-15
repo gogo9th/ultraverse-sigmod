@@ -84,11 +84,14 @@ namespace ultraverse::state::v2 {
          */
         std::vector<StateItem> &updateSet();
         std::vector<StateItem> &whereSet();
+        std::vector<StateItem> &varMap();
         
         std::vector<std::string> &rowSet();
         std::vector<std::string> &changeSet();
         
         std::unordered_map<std::string, StateData> &sqlVarMap();
+        
+        std::string varMappedStatement(const std::vector<StateItem> &variableSet) const;
         
         
         template <typename Archive>
@@ -118,6 +121,8 @@ namespace ultraverse::state::v2 {
         std::vector<StateItem> _itemSet;
         std::vector<StateItem> _updateSet;
         std::vector<StateItem> _whereSet;
+        std::vector<StateItem> _varMap;
+        
         std::unordered_map<std::string, StateData> _sqlVarMap;
         
         uint32_t _affectedRows;

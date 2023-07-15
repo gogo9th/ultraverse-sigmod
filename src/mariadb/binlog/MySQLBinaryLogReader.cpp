@@ -426,6 +426,9 @@ namespace ultraverse::mariadb {
                     
                     columnNames.emplace_back((char *) columnNameCStr.get(), columnNameLength);
                 }
+                
+                // HOTFIX: 이 뒤로 전부 무시함
+                break;
             } else {
                 std::unique_ptr<uint8_t> _unused(new uint8_t[size]);
                 _stream.read((char *) _unused.get(), size);

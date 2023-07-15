@@ -42,7 +42,7 @@ public:
         Application(),
         
         _logger(createLogger("statelogd")),
-        _taskExecutor(8)
+        _taskExecutor(12)
     {
     }
     
@@ -164,7 +164,6 @@ public:
                 continue;
             }
             
-            _txnMutex.lock();
             switch (event->eventType()) {
                 case event_type::QUERY:
                     processQueryEvent(std::dynamic_pointer_cast<mariadb::QueryEvent>(event));
@@ -178,9 +177,12 @@ public:
                     processTableMapEvent(std::dynamic_pointer_cast<mariadb::TableMapEvent>(event));
                     break;
                 case event_type::ROW_EVENT: {
-                    auto promise = _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, event = std::move(event), pendingRowQueryEvent]() {
+                    auto rowEvent = std::dynamic_pointer_cast<mariadb::RowEvent>(event);
+                    auto tableMapEvent = _tableMap[rowEvent->tableId()];
+                    
+                    auto promise = _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, rowEvent = std::move(rowEvent), tableMapEvent = std::move(tableMapEvent), pendingRowQueryEvent]() {
                         auto pendingQuery = std::make_shared<state::v2::Query>();
-                        processRowEvent(std::dynamic_pointer_cast<mariadb::RowEvent>(event), pendingQuery);
+                        processRowEvent(rowEvent, pendingQuery, tableMapEvent);
                         processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
                         
                         return pendingQuery;
@@ -198,7 +200,6 @@ public:
                 default:
                     break;
             }
-            _txnMutex.unlock();
             
             if (terminateStatus) {
                 break;
@@ -219,6 +220,8 @@ public:
         while (!_pendingQueries.empty()) {
             auto pendingQuery = std::move(_pendingQueries.front());
             _pendingQueries.pop();
+            
+            // auto pendingQuery = promise->get_future().get();
             
             *_pendingTxn << pendingQuery;
         }
@@ -243,10 +246,11 @@ public:
             return;
         }
         
-        
         while (!_pendingQueries.empty()) {
             auto pendingQuery = std::move(_pendingQueries.front());
             _pendingQueries.pop();
+            
+            // auto pendingQuery = promise->get_future().get();
             
             assert(pendingQuery != nullptr);
             
@@ -268,6 +272,7 @@ public:
                     
                     _query->setDatabase(pendingQuery->database());
                     _query->setTimestamp(pendingQuery->timestamp());
+                    _query->setFlags(state::v2::Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
                     
                     *_pendingTxn << _query;
                 }
@@ -294,6 +299,8 @@ public:
                 _pendingTxn->flags() | state::v2::Transaction::FLAG_IS_PROCEDURE_CALL
             );
         }
+        
+        _pendingTxn->variableSet() = procMatcher->variableSet(*procCall);
         
         _pendingTxn->setGid(_gid++);
         *_stateLogWriter << *_pendingTxn;
@@ -377,7 +384,7 @@ public:
     }
     
     void processTableMapEvent(std::shared_ptr<mariadb::TableMapEvent> event) {
-        std::scoped_lock<std::mutex> _scopedLock(_tableMapMutex);
+        // std::scoped_lock<std::mutex> _scopedLock(_tableMapMutex);
         _logger->debug("[ROW] read table map event: table id {} will be mapped with {}.{}", event->tableId(), event->database(), event->table());
         
         auto it = std::find_if(_tableMap.begin(), _tableMap.end(), [&event](auto &prevEvent) {
@@ -394,24 +401,30 @@ public:
         _tableMap[event->tableId()] = event;
     }
     
-    void processRowEvent(std::shared_ptr<mariadb::RowEvent> event, std::shared_ptr<state::v2::Query> pendingQuery) {
+    void processRowEvent(std::shared_ptr<mariadb::RowEvent> event, std::shared_ptr<state::v2::Query> pendingQuery, std::shared_ptr<mariadb::TableMapEvent> tableMapEvent) {
         _logger->trace("[ROW] processing row event");
         
+        /*
         _tableMapMutex.lock();
         auto table = _tableMap[event->tableId()];
-        auto &hash = _stateHashMap[table->table()];
+        // auto &hash = _stateHashMap[table->table()];
+         */
 
+        /*
         if (!hash.isInitialized()) {
             hash.init();
         }
+         */
 
-        event->mapToTable(*table);
+        event->mapToTable(*tableMapEvent);
     
+        /*
         for (auto &it: _tableMap) {
             if (it.second->database() == table->database()) {
                 pendingQuery->setBeforeHash(it.second->table(), _stateHashMap[it.second->table()]);
             }
         }
+         */
 
         switch (event->type()) {
             case mariadb::RowEvent::INSERT:
@@ -430,35 +443,37 @@ public:
                 case mariadb::RowEvent::INSERT:
                     pendingQuery->rowSet().push_back(event->rowSet(i));
 
-                    hash += event->rowSet(i);
+                    // hash += event->rowSet(i);
                     break;
                 case mariadb::RowEvent::DELETE:
                     pendingQuery->rowSet().push_back(event->rowSet(i));
 
-                    hash -= event->rowSet(i);
+                    // hash -= event->rowSet(i);
                     break;
             
                 case mariadb::RowEvent::UPDATE:
                     pendingQuery->rowSet().push_back(event->rowSet(i));
                     pendingQuery->changeSet().push_back(event->changeSet(i));
 
-                    hash -= event->rowSet(i);
-                    hash += event->changeSet(i);
+                    // hash -= event->rowSet(i);
+                    // hash += event->changeSet(i);
                     break;
             }
         }
         
+        /*
         for (auto &it: _tableMap) {
             if (it.second->database() == table->database()) {
                 pendingQuery->setAfterHash(it.second->table(), _stateHashMap[it.second->table()]);
             }
         }
-        _tableMapMutex.unlock();
+         */
+        // _tableMapMutex.unlock();
 
         pendingQuery->setTimestamp(event->timestamp());
         pendingQuery->setAffectedRows(event->affectedRows());
 
-        pendingQuery->setDatabase(table->database());
+        pendingQuery->setDatabase(tableMapEvent->database());
 
         pendingQuery->itemSet().insert(
             pendingQuery->itemSet().begin(),
@@ -469,6 +484,7 @@ public:
             pendingQuery->updateSet().begin(),
             event->updateSet().begin(), event->updateSet().end()
         );
+
         
         if (!(event->flags() & 1)) {
             pendingQuery->setFlags(pendingQuery->flags() | state::v2::Query::FLAG_IS_CONTINUOUS);
@@ -528,6 +544,11 @@ public:
             dummyEvent.whereSet().begin(), dummyEvent.whereSet().end()
         );
         
+        pendingQuery->varMap().insert(
+            pendingQuery->varMap().end(),
+            dummyEvent.varMap().begin(), dummyEvent.varMap().end()
+        );
+        
         pendingQuery->sqlVarMap() = dummyEvent.sqlVarMap();
     }
 
@@ -556,6 +577,8 @@ public:
     std::shared_ptr<ProcCall> prepareProcedureCall(const std::string &jsonStr) {
         using namespace nlohmann;
         
+        _logger->debug(jsonStr);
+        
         auto jsonObj = std::move(json::parse(jsonStr));
         
         uint64_t callId = jsonObj.at(0).get<uint64_t>();
@@ -569,7 +592,7 @@ public:
             
             switch (elem.type()) {
                 case json::value_t::string:
-                    args.push_back(elem.get<std::string>());
+                    args.push_back(fmt::format("\"{}\"", elem.get<std::string>()));
                     args2.emplace_back(elem.get<std::string>());
                     break;
                 case json::value_t::number_integer:
@@ -584,7 +607,13 @@ public:
                     args.push_back(std::to_string(elem.get<double>()));
                     args2.emplace_back(elem.get<double>());
                     break;
+                case json::value_t::null:
+                    args.emplace_back("NULL");
+                    args2.emplace_back();
+                    break;
                 default:
+                    _logger->error("unsupported type: {}", elem.type_name());
+                    assert(false);
                     break;
             }
         }
@@ -601,6 +630,8 @@ public:
         }
         
         sstream << ")";
+        
+        // _logger->info("procedure call: {} [{}]", sstream.str(), jsonStr);
         
         auto procCall = std::make_shared<ProcCall>();
         procCall->setCallId(callId);

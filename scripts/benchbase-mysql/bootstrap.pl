@@ -152,6 +152,8 @@ sub mysqldump {
         my $stdout, '<&STDIN',
         'mysqldump', 
         '-R', # include procedures
+        '--flush-logs',
+        '--lock-all-tables',
         '-h', '127.0.0.1',
         '-u', 'root',
         '--password=password',

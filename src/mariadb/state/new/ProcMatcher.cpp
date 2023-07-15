@@ -275,11 +275,19 @@ namespace ultraverse::state::v2 {
         return -1;
     }
     
+    std::vector<StateItem> ProcMatcher::variableSet(const ProcCall &procCall) const {
+        std::vector<StateItem> _variableSet;
+        
+        auto procParameters = procCall.buildItemSet(*this);
+        std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(_variableSet));
+        
+        return std::move(_variableSet);
+    }
+    
     std::shared_ptr<Query> ProcMatcher::asQuery(int index, const ProcCall &procCall) const {
         const auto &code = codes().at(index);
         auto query = std::make_shared<Query>();
         auto procParameters = procCall.buildItemSet(*this);
-        
         
         std::string statement = "SELECT 1";
         
@@ -304,8 +312,7 @@ namespace ultraverse::state::v2 {
             0
         );
         
-        std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->itemSet()));
-        
+        std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->variableSet()));
         event->parse();
         
         query->setStatement(statement);
@@ -326,6 +333,11 @@ namespace ultraverse::state::v2 {
         query->whereSet().insert(
             query->whereSet().end(),
             event->whereSet().begin(), event->whereSet().end()
+        );
+        
+        query->varMap().insert(
+            query->varMap().end(),
+            event->varMap().begin(), event->varMap().end()
         );
         
         return query;

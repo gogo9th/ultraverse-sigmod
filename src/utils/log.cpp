@@ -9,19 +9,22 @@
 using LoggerPtr = std::shared_ptr<spdlog::logger>;
 
 inline auto initLoggerSink() {
-    auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_st>();
+    auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_st>();
     sink->set_level(spdlog::level::trace);
     
     return sink;
 }
 
-std::shared_ptr<spdlog::sinks::stdout_color_sink_st> loggerSink = initLoggerSink();
+std::shared_ptr<spdlog::sinks::stderr_color_sink_st> loggerSink = initLoggerSink();
 std::map<std::string, LoggerPtr> loggerMap;
 
 LoggerPtr createLogger(const std::string &name) {
     if (loggerMap.find(name) == loggerMap.end()) {
         auto logger = std::make_shared<spdlog::logger>(name, loggerSink);
-        logger->set_level(loggerSink->level());
+        
+        if (name != "MySQLBinaryLogReader") {
+            logger->set_level(loggerSink->level());
+        }
         loggerMap.emplace(name, std::move(logger));
     }
     
@@ -58,10 +61,10 @@ void debug(const char *format, ...)
 {
     va_list args;
     va_start(args, format);
-    fprintf(stdout, "DEBUG: ");
-    vfprintf(stdout, format, args);
-    fprintf(stdout, "\n");
-    fflush(stdout);
+    fprintf(stderr, "DEBUG: ");
+    vfprintf(stderr, format, args);
+    fprintf(stderr, "\n");
+    fflush(stderr);
     va_end(args);
 }
 

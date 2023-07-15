@@ -54,7 +54,9 @@ namespace ultraverse {
             int port,
             const std::string &user,
             const std::string &password
-        ) {
+        ):
+            _poolSize(poolSize)
+        {
             for (int i = 0; i < poolSize; i++) {
                  auto dbHandle = std::make_shared<T>();
                  dbHandle->connect(host, port, user, password);
@@ -79,7 +81,13 @@ namespace ultraverse {
                 this->_condvar.notify_one();
             });
         }
+        
+        int poolSize() const {
+            return _poolSize;
+        }
+        
     private:
+        int _poolSize;
         std::mutex _mutex;
         std::condition_variable _condvar;
         std::queue<std::shared_ptr<T>> _handles;

@@ -28,6 +28,7 @@ enum EN_FUNCTION_TYPE
   FUNCTION_GT,
   FUNCTION_GE,
   FUNCTION_BETWEEN,
+  FUNCTION_IN_INTERNAL
 };
 
 class StateData
@@ -80,7 +81,7 @@ public:
   void load(Archive &archive);
   
   template <typename T>
-  T getAs() {
+  T getAs() const {
       T val;
       Get(val);
       
@@ -238,6 +239,8 @@ public:
   void SetEnd(const StateData &_end, bool _add_equal);
   void SetBetween(const StateData &_begin, const StateData &_end);
   void SetValue(const StateData &_value, bool _add_equal);
+  void SetValues(const StateData &_values);
+  
   const std::vector<ST_RANGE> *GetRange() const;
   static std::shared_ptr<std::vector<StateRange>> OR_ARRANGE(const std::vector<StateRange> &a);
   
@@ -298,7 +301,7 @@ public:
    * @deprecated use ::MakeRange2().
    */
   std::shared_ptr<StateRange> MakeRange();
-  StateRange MakeRange2() const;
+  const StateRange &MakeRange2() const;
   
   /**
    * @deprecated use ::MakeRange2().

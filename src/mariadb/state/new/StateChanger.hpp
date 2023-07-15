@@ -23,6 +23,7 @@
 #include "mariadb/state/StateGraphBoost.h"
 #include "mariadb/DBHandle.hpp"
 #include "utils/log.hpp"
+#include "mariadb/state/new/graph/RowGraph.hpp"
 
 
 namespace ultraverse::state::v2 {
@@ -42,7 +43,12 @@ namespace ultraverse::state::v2 {
         
         std::string findCandidateColumn();
         
+        void makeCluster();
+        
         void prepare();
+        void replay();
+        
+        /** @deprecated */
         void prepareCluster();
         
         
@@ -56,6 +62,8 @@ namespace ultraverse::state::v2 {
         constexpr static int CLUSTER_EXPAND_FLAG_INCLUDE_FK  = 0b10;
         constexpr static int CLUSTER_EXPAND_FLAG_WILDCARD    = 0b100;
         constexpr static int CLUSTER_EXPAND_FLAG_DONT_EXPAND = 0b1000;
+        
+        void replayThreadMain(int workerId, RowGraph &rowGraph);
         
         void expandClusterMap(RowCluster &rowCluster, Transaction &transaction, int flags);
         
@@ -127,46 +135,63 @@ namespace ultraverse::state::v2 {
         
         StateLogReader _reader;
         
+        /** REMOVE ME */
         std::unique_ptr<StateGraphBoost> _stateGraph;
+        /** REMOVE ME */
         std::shared_ptr<Transaction> _rollbackTarget;
         // FIXME: keyRanges는 map<keyColumn, StateRange>로 바뀌어야 하는게 맞음
+        /** REMOVE ME */
         std::map<std::string, std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>>> _keyRanges;
+        /** REMOVE ME */
         std::shared_ptr<std::vector<size_t>> _columnSetHashes;
         
         std::shared_ptr<StateChangeContext> _context;
         
-        bool _isRunning;
+        std::atomic_bool _isRunning;
         std::vector<std::thread> _executorThreads;
-    
-    
+        
+        
+        /** REMOVE ME */
         std::unordered_map<std::string, state::StateHash> _stateHashMap;
         
+        /** REMOVE ME */
         std::mutex _clusterMutex;
+        /** REMOVE ME */
         std::condition_variable _clusterCondvar;
+        /** REMOVE ME */
         bool _isClusterReady;
-
+        
         std::mutex _autoIncrementMutex;
         bool _autoIncrementSet;
         
+        /** REMOVE ME */
         RowCluster _rowCluster;
         // FIXME: 네이밍
+        /** REMOVE ME */
         RowCluster _rowCluster2;
         
+        /** REMOVE ME */
         std::mutex _clusterMutex2;
+        /** REMOVE ME */
         std::mutex _clusterMutex3;
         
         std::unique_ptr<ColumnDependencyGraph> _columnGraph;
+        /** REMOVE ME */
         std::unique_ptr<TableDependencyGraph> _tableGraph;
         std::unique_ptr<HashWatcher> _hashWatcher;
         std::unique_ptr<ProcLogReader> _procLogReader;
-    
+        
         std::mutex _changedTablesMutex;
         std::unordered_set<std::string> _changedTables;
         
+        /** REMOVE ME */
         gid_t _ddlTxnId;
+        /** REMOVE ME */
         gid_t _ddlTxnProcessedId;
         
+        /** REMOVE ME */
         std::atomic_uint64_t _replayedQueries;
+        std::atomic_uint64_t _replayedTxns;
         
         double _phase1Time;
         double _phase2Time;

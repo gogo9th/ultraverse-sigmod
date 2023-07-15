@@ -702,8 +702,9 @@ std::string StateRange::MakeWhereQuery() {
 std::string StateRange::MakeWhereQuery(std::string columnName) const
 {
   std::string full_name = columnName;
-  auto pos = full_name.find_last_of('.');
-  std::string key_name = full_name.substr(pos + 1);
+  // auto pos = full_name.find_last_of('.');
+  // std::string key_name = full_name.substr(pos + 1);
+  const std::string &key_name = full_name;
 
   std::string val1;
   std::string val2;
@@ -925,13 +926,13 @@ void StateRange::OR_FAST(const StateRange &b, bool ignoreIntersect) {
     }
     
     auto &range1 = *range;
-    auto range2 = *b.range;
+    const auto &range2 = *b.range;
     
     range1.reserve(range1.size() + range2.size());
     
     // merge two ST_RANGEs until it is not possible to merge
-    while (range2.size() > 0) {
-        auto &j = range2.front();
+    for (int x = 0; x < range2.size(); x++) {
+        const auto &j = range2[x];
         
         bool is_merged = false;
         for (auto &i: range1) {
@@ -943,10 +944,10 @@ void StateRange::OR_FAST(const StateRange &b, bool ignoreIntersect) {
         }
         
         if (!is_merged) {
-            range1.emplace_back(std::move(j));
+            range1.emplace_back(j);
         }
         
-        range2.erase(range2.begin());
+        // range2.erase(range2.begin());
     }
     
     calculateHash();
@@ -1329,7 +1330,7 @@ std::shared_ptr<StateRange> StateItem::MakeRange(const std::string &column_name,
  *
  *
  */
-StateRange StateItem::MakeRange2() const {
+const StateRange &StateItem::MakeRange2() const {
     if (_isRangeCacheBuilt) {
         return _rangeCache;
     }
@@ -1396,7 +1397,12 @@ StateRange StateItem::MakeRange2() const {
                 case FUNCTION_GE:
                     range.SetBegin(data_list[0], true);
                     break;
-                
+                case FUNCTION_IN_INTERNAL:
+                    for (auto &data : data_list) {
+                        range.SetValue(data, true);
+                    }
+                    break;
+                    
                 default:
                     break;
             }
