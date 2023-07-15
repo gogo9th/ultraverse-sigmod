@@ -20,7 +20,7 @@ namespace ultraverse::mariadb {
         mysql_options(_handle.get(), MYSQL_OPT_CONNECT_ATTR_RESET, 0);
         mysql_options4(_handle.get(), MYSQL_OPT_CONNECT_ATTR_ADD, "program_name", "ultraverse");
     
-        my_bool reconnect = 1;
+        char reconnect = 1;
         mysql_options(_handle.get(), MYSQL_OPT_RECONNECT, &reconnect);
     }
     
