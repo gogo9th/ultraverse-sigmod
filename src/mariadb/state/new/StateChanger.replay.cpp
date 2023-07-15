@@ -239,6 +239,7 @@ namespace ultraverse::state::v2 {
                             } while (mysql_next_result(dbHandle.get()) == 0);
                             
                             NEXT_QUERY:
+                            continue;
                         }
                         dbHandle.get().executeQuery("COMMIT");
                     } catch (std::exception &e) {

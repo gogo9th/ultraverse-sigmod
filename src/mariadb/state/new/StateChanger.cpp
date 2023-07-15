@@ -762,6 +762,7 @@ namespace ultraverse::state::v2 {
                     } while (mysql_next_result(dbHandle.get()) == 0);
                     
                     NEXT_QUERY:
+                    continue;
                 }
             } catch (std::exception &e) {
                 _logger->error("exception occurred while replaying transaction #{}: {}", gid, e.what());
