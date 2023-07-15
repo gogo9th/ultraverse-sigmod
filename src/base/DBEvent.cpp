@@ -12,7 +12,6 @@
 
 #include "SQLParser.h"
 #include "bison_parser.h"
-#include "mariadb/BinaryLog.hpp"
 #include "util/sqlhelper.h"
 
 #include "utils/StringUtil.hpp"
