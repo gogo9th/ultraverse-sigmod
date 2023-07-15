@@ -35,3 +35,28 @@ void ProcCall::setProcName(const std::string &procName) {
 std::vector<std::string> &ProcCall::statements() {
   return _statements;
 }
+
+std::vector<StateData> &ProcCall::parameters() {
+    return _parameters;
+}
+
+void ProcCall::setParameters(const std::vector<StateData> &parameters) {
+    _parameters = parameters;
+}
+
+std::vector<StateItem> ProcCall::buildItemSet(const ultraverse::state::v2::ProcMatcher &procMatcher) const {
+    std::vector<StateItem> itemSet;
+    
+    if (procMatcher.parameters().size() != _parameters.size()) {
+        return itemSet;
+    }
+    
+    for (int i = 0; i < _parameters.size(); i++) {
+        const auto &name = procMatcher.parameters()[i];
+        const auto &value = _parameters[i];
+        
+        itemSet.emplace_back(StateItem::EQ(name, value));
+    }
+   
+    return itemSet;
+}

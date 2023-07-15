@@ -1,6 +1,7 @@
 include(CTest)
 set(CMAKE_CXX_STANDARD 17)
 
+add_compile_options(-msse4.2 -O2)
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 
 include_directories(../dependencies/sql-parser/src)
