@@ -6,7 +6,6 @@
 #define ULTRAVERSE_MARIADB_DBEVENT_HPP
 
 #include <mysql/mysql.h>
-#include <mysql/mariadb_rpl.h>
 
 #include <cereal/access.hpp>
 
@@ -17,7 +16,6 @@ namespace ultraverse::mariadb {
     
     class TransactionIDEvent: public base::TransactionIDEventBase {
     public:
-        TransactionIDEvent(const MARIADB_RPL_EVENT *rplEvent);
         TransactionIDEvent(uint64_t xid, uint64_t timestamp);
     
         uint64_t timestamp() override;
@@ -30,7 +28,6 @@ namespace ultraverse::mariadb {
     
     class QueryEvent: public base::QueryEventBase {
     public:
-        QueryEvent(const MARIADB_RPL_EVENT *rplEvent);
         QueryEvent(
             const std::string &schema,
             const std::string &statement,
