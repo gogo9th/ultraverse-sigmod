@@ -277,25 +277,24 @@ namespace ultraverse::state::v2 {
         // prevent reference to self
         relations.insert(nodeId);
         
+        std::mutex _mapMutex;
+        
         std::vector<std::pair<std::reference_wrapper<RWStateHolder>, int>> defers;
-
+        
         {
             // WRITE - READ / READ - READ
             auto it = transaction->whereSet_begin();
             const auto itEnd = transaction->whereSet_end();
             
-            while (it != itEnd) {
-                const auto &item = *it;
+            std::for_each(std::execution::par, it, itEnd, [this, &relations, &defers, &_mapMutex, nodeId] (const auto &item) {
                 std::string name = std::move(_resolver.resolveChain(item.name));
                 
                 if (name.empty()) {
                     name = item.name;
                 }
                 
-                
                 if (_keyColumns.find(name) == _keyColumns.end()) {
-                    ++it;
-                    continue;
+                    return;
                 }
                 
                 const auto &range = item.MakeRange2();
@@ -321,29 +320,28 @@ namespace ultraverse::state::v2 {
                     
                     if (holder.write != nullptr && relations.find(holder.write) == relations.end()) {
                         // WRITE - READ
+                        std::scoped_lock<std::mutex> _mapLock(_mapMutex);
                         boost::add_edge(holder.write, nodeId, _graph);
                         relations.insert(holder.write);
                     }
                     
-                    defers.emplace_back(std::ref(holder), 0);
+                    {
+                        std::scoped_lock<std::mutex> _mapLock(_mapMutex);
+                        defers.emplace_back(std::ref(holder), 0);
+                    }
                 } else {
+                    std::scoped_lock<std::mutex> _mapLock(_mapMutex);
                     map.emplace(range, RWStateHolder { nodeId, nullptr });
                 }
-                
-                ++it;
-            }
+            });
         }
-        
-        
         
         {
             // WRITE - WRITE, READ - WRITE
             auto it = transaction->itemSet_begin();
             const auto itEnd = transaction->itemSet_end();
             
-            while (it != itEnd) {
-                const auto &item = *it;
-                
+            std::for_each(std::execution::par, it, itEnd, [this, &relations, &defers, &_mapMutex, &transaction, nodeId] (const auto &item) {
                 std::string name = std::move(_resolver.resolveChain(item.name));
                 
                 if (name.empty()) {
@@ -358,15 +356,13 @@ namespace ultraverse::state::v2 {
                 );
                 
                 if (!isInWriteSet) {
-                    ++it;
-                    continue;
+                    return;
                 }
-                 */
                 
                 if (_keyColumns.find(name) == _keyColumns.end()) {
-                    ++it;
-                    continue;
+                    return;
                 }
+                 */
                 
                 const auto &range = item.MakeRange2();
                 auto &map = _nodeMap[item.name];
@@ -380,23 +376,27 @@ namespace ultraverse::state::v2 {
                     
                     if (holder.read != nullptr && relations.find(holder.read) == relations.end()) {
                         // READ - WRITE
+                        std::scoped_lock<std::mutex> _mapLock(_mapMutex);
                         boost::add_edge(holder.read, nodeId, _graph);
                         relations.insert(holder.read);
                     }
                     
                     if (holder.write != nullptr && relations.find(holder.write) == relations.end()) {
                         // WRITE - WRITE
+                        std::scoped_lock<std::mutex> _mapLock(_mapMutex);
                         boost::add_edge(holder.write, nodeId, _graph);
                         relations.insert(holder.write);
                     }
                     
-                    defers.emplace_back(std::ref(holder), 1);
+                    {
+                        std::scoped_lock<std::mutex> _mapLock(_mapMutex);
+                        defers.emplace_back(std::ref(holder), 1);
+                    }
                 } else {
+                    std::scoped_lock<std::mutex> _mapLock(_mapMutex);
                     map.emplace(range, RWStateHolder { nullptr, nodeId });
                 }
-                
-                ++it;
-            }
+            });
             
             for (auto &pair : defers) {
                 auto &holder = pair.first.get();
