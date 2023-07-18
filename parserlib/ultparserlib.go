@@ -304,6 +304,11 @@ func process_insert_stmt(query *pb.DMLQuery, stmt *ast.InsertStmt) {
 
 	query.UpdateOrWrite = make([]*pb.DMLQueryExpr, len(stmt.Lists[0]))
 
+	if len(stmt.Columns) != len(stmt.Lists[0]) {
+		fmt.Printf("process_insert_stmt(): column definition and value count mismatch: %s\n", query.Statement)
+		return
+	}
+
 	for i, expr := range stmt.Lists[0] {
 		columnDef := stmt.Columns[i]
 

@@ -56,6 +56,8 @@ namespace ultraverse::state::v2 {
         std::string fileName = _logPath + "/" + _logName + ".ultcluster";
         std::ifstream stream(fileName, std::ios::binary);
         
+        stream.seekg(0);
+        
         cereal::BinaryInputArchive archive(stream);
         archive(cluster);
         

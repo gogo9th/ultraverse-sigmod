@@ -57,8 +57,7 @@ namespace ultraverse::state::v2 {
             static std::optional<StateRange> match(ClusterType type,
                                                    const std::string &columnName,
                                                    const ClusterMap &cluster,
-                                                   CombinedIterator<StateItem> begin,
-                                                   CombinedIterator<StateItem> end,
+                                                   const std::vector<StateItem> &items,
                                                    const RelationshipResolver &resolver);
         };
     public:
@@ -95,7 +94,10 @@ namespace ultraverse::state::v2 {
         };
         
     private:
-        std::pair<std::vector<StateItem>, std::vector<StateItem>> merge(CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver);
+        std::pair<std::vector<StateItem>, std::vector<StateItem>> merge(
+            ClusterType type,
+            CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver
+        ) const;
         
         void invalidateTargetCache(std::unordered_map<gid_t, TargetTransactionCache> &targets, const RelationshipResolver &resolver);
         

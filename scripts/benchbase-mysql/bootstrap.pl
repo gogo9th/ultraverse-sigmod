@@ -224,7 +224,7 @@ sub bootstrap {
             croak("failed to run benchbase");
         }
 
-        sleep 2;
+        sleep 10;
 
         if (mysqldump('benchbase', sprintf("%s/dbdump.sql", $project_path)) != 0) {
             croak("failed to execute mysqldump");

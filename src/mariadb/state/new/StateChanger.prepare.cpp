@@ -151,6 +151,9 @@ namespace ultraverse::state::v2 {
         std::mutex graphLock;
         std::mutex stdoutLock;
         
+        size_t replayGidCount = 0;
+        size_t totalCount = 0;
+        
         createIntermediateDB();
         
         
@@ -185,46 +188,43 @@ namespace ultraverse::state::v2 {
             auto header = _reader.txnHeader();
             gid_t gid = header->gid;
             
+            totalCount++;
+            
             // _logger->info("read gid {}", gid);
             
             if (_plan.isRollbackGid(gid) || _plan.hasUserQuery(gid)) {
                 _reader.nextTransaction();
                 auto transaction = _reader.txnBody();
                 
-                auto promise = taskExecutor.post<int>(
-                    [this, &graphLock, &stdoutLock, &rowCluster, &cachedResolver, &replayGids, transaction]() {
-                        if (!transaction->isRelatedToDatabase(_plan.dbName())) {
-                            _logger->trace("skipping transaction #{} because it is not related to database {}",
-                                           transaction->gid(), _plan.dbName());
-                            return 0;
-                        }
-                        
-                        if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {
-                            _logger->warn(
-                                "DDL statement found in transaction #{}, but this version of ultraverse does not support DDL statement yet",
-                                transaction->gid());
-                            _logger->warn("transaction #{} will be skipped", transaction->gid());
-                            return 0;
-                        }
-                        
-                        if (_plan.isRollbackGid(transaction->gid())) {
-                            rowCluster.addRollbackTarget(transaction, cachedResolver);
-                        }
-                        
-                        if (_plan.hasUserQuery(transaction->gid())) {
-                            auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transaction->gid()]));
-                            
-                            rowCluster.addPrependTarget(transaction->gid(), userQuery, cachedResolver);
-                        }
-                        
-                        return 0;
-                });
+                if (!transaction->isRelatedToDatabase(_plan.dbName())) {
+                    _logger->trace("skipping transaction #{} because it is not related to database {}",
+                                   transaction->gid(), _plan.dbName());
+                    continue;
+                }
                 
-                tasks.emplace(std::move(promise));
+                if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {
+                    _logger->warn(
+                        "DDL statement found in transaction #{}, but this version of ultraverse does not support DDL statement yet",
+                        transaction->gid());
+                    _logger->warn("transaction #{} will be skipped", transaction->gid());
+                    continue;
+                }
+                
+                if (_plan.isRollbackGid(transaction->gid())) {
+                    rowCluster.addRollbackTarget(transaction, cachedResolver);
+                }
+                
+                if (_plan.hasUserQuery(transaction->gid())) {
+                    auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transaction->gid()]));
+                    
+                    rowCluster.addPrependTarget(transaction->gid(), userQuery, cachedResolver);
+                }
+                
                 continue;
             } else if (rowCluster.shouldReplay(gid)) {
                 // _logger->info("shouldReplay({}) returned true", gid);
                 // replayGids.emplace(transaction->gid());
+                replayGidCount++;
                 {
                     // std::scoped_lock<std::mutex> _lock(stdoutLock);
                     std::cout << gid<< std::endl;
@@ -243,7 +243,7 @@ namespace ultraverse::state::v2 {
         
         taskExecutor.shutdown();
         
-        _logger->info("prepare(): {} transactions will be replayed", replayGids.size());
+        _logger->info("prepare(): {} / {} transactions will be replayed ({}%)", replayGidCount, totalCount, ((double) replayGidCount / totalCount) * 100);
         // rowCluster.describe();
         
         {

@@ -81,6 +81,8 @@ namespace ultraverse::state::v2 {
                         const auto header = _reader.txnHeader();
                         const auto transaction = _reader.txnBody();
                         
+                        relationshipResolver.addTransaction(*transaction);
+                        
                         auto nodeId = rowGraph.addNode(transaction);
                         
                         // replayedGids.emplace(gid);
@@ -112,7 +114,6 @@ namespace ultraverse::state::v2 {
             workerThreads.emplace_back(&StateChanger::replayThreadMain, this, i, std::ref(rowGraph));
         }
         
-        /*
         if (!_plan.dbDumpPath().empty()) {
             auto load_backup_start = std::chrono::steady_clock::now();
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
@@ -125,7 +126,6 @@ namespace ultraverse::state::v2 {
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
         }
-         */
         
         auto phase_main_start = std::chrono::steady_clock::now();
         _logger->info("replay(): waiting for replay targets via STDIN...");
@@ -160,10 +160,6 @@ namespace ultraverse::state::v2 {
             }
         }
         
-        if (gcThread.joinable()) {
-            gcThread.join();
-        }
-        
         {
             auto phase_main_end = std::chrono::steady_clock::now();
             std::chrono::duration<double> time = phase_main_end - phase_main_start;
@@ -171,6 +167,10 @@ namespace ultraverse::state::v2 {
         }
         
         _logger->info("replay(): main phase {}s", _phase2Time);
+        
+        if (gcThread.joinable()) {
+            gcThread.join();
+        }
         
         dropIntermediateDB();
     }
@@ -183,7 +183,7 @@ namespace ultraverse::state::v2 {
             auto nodeId = rowGraph.entrypoint(workerId);
             
             if (nodeId == nullptr) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 60));
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 continue;
             }
             
@@ -217,7 +217,8 @@ namespace ultraverse::state::v2 {
                     
                     // logger->info("replaying transaction #{}", transaction->gid());
                     
-                    dbHandle.get().executeQuery("BEGIN");
+                    dbHandle.get().executeQuery("SET autocommit=0");
+                    dbHandle.get().executeQuery("START TRANSACTION");
                     
                     try {
                         for (const auto &query: transaction->queries()) {
@@ -227,7 +228,7 @@ namespace ultraverse::state::v2 {
                             }
                             
                             if (dbHandle.get().executeQuery(query->statement()) != 0) {
-                                logger->error("query execution failed: {}", mysql_error(dbHandle.get()));
+                                logger->error("query execution failed: {} / {}", mysql_error(dbHandle.get()), query->statement());
                             }
                             
                             // 프로시저에서 반환한 result를 소모하지 않으면 commands out of sync 오류가 난다
@@ -273,7 +274,7 @@ namespace ultraverse::state::v2 {
                 
                 
                 node->finalized = true;
-                node->transaction = nullptr;
+                node->transaction.reset();
             }
             
             NEXT_LOOP:

@@ -4,6 +4,7 @@
 
 #include "StateCluster.hpp"
 
+#include <execution>
 #include <utility>
 
 namespace ultraverse::state::v2 {
@@ -11,13 +12,12 @@ namespace ultraverse::state::v2 {
     std::optional<StateRange> StateCluster::Cluster::match(StateCluster::ClusterType type,
                                                            const std::string &columnName,
                                                            const ClusterMap &cluster,
-                                                           CombinedIterator<StateItem> begin,
-                                                           CombinedIterator<StateItem> end,
+                                                           const std::vector<StateItem> &items,
                                                            const RelationshipResolver &resolver) {
         
-        auto it = std::find_if(cluster.begin(), cluster.end(), [type, &resolver, &columnName, &begin, &end](const auto &pair) {
+        auto it = std::find_if(cluster.begin(), cluster.end(), [type, &resolver, &columnName, &items](const auto &pair) {
             const StateRange &range = pair.first;
-            return std::any_of(begin, end, [type, &resolver, &columnName, &range](const StateItem &item) {
+            return std::any_of(std::execution::par, items.begin(), items.end(), [type, &resolver, &columnName, &range](const StateItem &item) {
                 // FIXME: 이거 개느릴거같은데;;
                 
                 // Q: 이거 std::move 해야 하지 않나?
@@ -57,7 +57,8 @@ namespace ultraverse::state::v2 {
     
     StateCluster::StateCluster(const std::set<std::string> &keyColumns):
         _logger(createLogger("StateCluster")),
-        _keyColumns(keyColumns)
+        _keyColumns(keyColumns),
+        _clusters()
     {
     
     }
@@ -72,7 +73,7 @@ namespace ultraverse::state::v2 {
     
     bool StateCluster::isKeyColumnItem(const RelationshipResolver &resolver, const StateItem &item) const {
         return std::any_of(
-            _keyColumns.begin(), _keyColumns.end(),
+        _keyColumns.begin(), _keyColumns.end(),
             [&resolver, &item](const auto &keyColumn) {
                 // 과연 이게 맞는가? alias + foreign key를 고려해야 하지 않을까?
                 auto realColumn = resolver.resolveChain(item.name);
@@ -89,7 +90,7 @@ namespace ultraverse::state::v2 {
             _clusters[columnName].write;
         
         std::scoped_lock lock(_clusterInsertionLock);
-        auto it = std::find_if(cluster.begin(), cluster.end(), [&range](const auto &pair) {
+        auto it = std::find_if(std::execution::par_unseq, cluster.begin(), cluster.end(), [&range](const auto &pair) {
             return pair.first == range || StateRange::isIntersects(pair.first, range);
         });
         
@@ -97,29 +98,17 @@ namespace ultraverse::state::v2 {
             auto dstRange = it->first;
             dstRange.OR_FAST(range);
             
-            /*
-            _logger->trace("range: {}", range.MakeWhereQuery(columnName));
-            _logger->trace("dstRange: {}", dstRange.MakeWhereQuery(columnName));
-             */
-            
             if (dstRange == range || it->first == dstRange) {
-                /*
-                auto it2 = std::find_if(cluster.begin(), cluster.end(), [&range](const auto &pair) {
-                    return pair.first == range || StateRange::isIntersects(pair.first, range);
-                });
-                
-                 */
-                
                 it->second.emplace(gid);
             } else {
                 // replace key using std::extract (see https://en.cppreference.com/w/cpp/container/map/extract)
                 auto range1 = it->first;
                 
-                _logger->trace("merging range: {} and {}", range1.MakeWhereQuery(columnName), range.MakeWhereQuery(columnName));
+                // _logger->trace("merging range: {} and {}", range1.MakeWhereQuery(columnName), range.MakeWhereQuery(columnName));
                 
                 auto it2 = cluster.begin();
                 while (true) {
-                    it2 = std::find_if(it2, cluster.end(), [&range1, &range](const auto &pair) {
+                    it2 = std::find_if(std::execution::par_unseq, it2, cluster.end(), [&range1, &range](const auto &pair) {
                         return pair.first != range1 && StateRange::isIntersects(pair.first, range);
                     });
                     
@@ -127,11 +116,12 @@ namespace ultraverse::state::v2 {
                         break;
                     }
                     
-                    _logger->trace("merging range: {} and {}", range1.MakeWhereQuery(columnName), it2->first.MakeWhereQuery(columnName));
+                    // _logger->trace("merging range: {} and {}", range1.MakeWhereQuery(columnName), it2->first.MakeWhereQuery(columnName));
                     
                     cluster[range1].insert(it2->second.begin(), it2->second.end());
                     dstRange.OR_FAST(it2->first);
                     
+                    it2->second.clear();
                     it2 = cluster.erase(it2);
                 }
                 
@@ -147,12 +137,12 @@ namespace ultraverse::state::v2 {
         } else {
             auto &_cluster = cluster[range];
             
-            _cluster.reserve(16384);
+            // _cluster.reserve(16384);
             _cluster.emplace(gid);
         }
     }
     
-    std::pair<std::vector<StateItem>, std::vector<StateItem>> StateCluster::merge(CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver) {
+    std::pair<std::vector<StateItem>, std::vector<StateItem>> StateCluster::merge(ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver) const {
         static const auto isKeyColumnItem = [&resolver, this](const StateItem &item) {
             return this->isKeyColumnItem(resolver, item);
         };
@@ -204,7 +194,7 @@ namespace ultraverse::state::v2 {
                     );
                 } else {
                     // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
-                    auto &_item = merged[item.name];
+                    auto &_item = type == READ ? merged_read[item.name] : merged[item.name];
                     
                     if (_item.name.empty()) {
                         _item.name = item.name;
@@ -246,7 +236,7 @@ namespace ultraverse::state::v2 {
             return this->isKeyColumnItem(resolver, item);
         };
         
-        const auto &pair = merge(begin, end, resolver);
+        const auto &pair = merge(type, begin, end, resolver);
         const auto &items = pair.first;
         const auto &itemsRead = pair.second;
         
@@ -296,12 +286,21 @@ namespace ultraverse::state::v2 {
         
         const auto &cluster = _clusters.at(columnName);
         
+        
         if (type == READ) {
-            return std::move(StateCluster::Cluster::match(READ, columnName, cluster.read, transaction->whereSet_begin(), transaction->whereSet_end(), resolver));
+            const auto &pair = merge(type, transaction->whereSet_begin(), transaction->whereSet_end(), resolver);
+            const auto &items = pair.first;
+            const auto &itemsRead = pair.second;
+            
+            return std::move(StateCluster::Cluster::match(READ, columnName, cluster.read, itemsRead, resolver));
         }
         
         if (type == WRITE) {
-            return std::move(StateCluster::Cluster::match(WRITE, columnName, cluster.write, transaction->itemSet_begin(), transaction->itemSet_end(), resolver));
+            const auto &pair = merge(type, transaction->itemSet_begin(), transaction->itemSet_end(), resolver);
+            const auto &items = pair.first;
+            const auto &itemsRead = pair.second;
+            
+            return std::move(StateCluster::Cluster::match(WRITE, columnName, cluster.write, items, resolver));
         }
         
         return std::nullopt;
@@ -411,7 +410,7 @@ namespace ultraverse::state::v2 {
             const auto &range = pair.second;
             
             const auto &cluster = _clusters.at(columnName);
-            auto it = std::find_if(cluster.read.begin(), cluster.read.end(), [&range](const auto &pair) {
+            auto it = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(), [this, &range](const auto &pair) {
                 return pair.first == range || StateRange::isIntersects(pair.first, range);
             });
             

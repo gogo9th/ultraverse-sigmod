@@ -128,11 +128,29 @@ namespace ultraverse::state::v2 {
         return std::make_shared<StateItem>(it->second.real);
     }
     
-    void StateRelationshipResolver::addRowAlias(StateItem &alias, StateItem &real) {
+    void StateRelationshipResolver::addRowAlias(const StateItem &alias, const StateItem &real) {
         const auto &name = alias.name;
         const auto &range = alias.MakeRange2();
         
         _rowAliasTable[name].insert(std::make_pair(range, RowAlias { alias, real }));
+    }
+    
+    void StateRelationshipResolver::addTransaction(Transaction &transaction) {
+        for (const auto &pair: _plan.columnAliases()) {
+            const auto &alias = pair.first;
+            const auto &real = pair.second;
+            
+            auto itBegin = transaction.itemSet_begin();
+            auto itEnd = transaction.itemSet_end();
+            
+            auto aliasIt = std::find_if(itBegin, itEnd, [alias](const auto &item) { return item.name == alias; });
+            auto itemIt = std::find_if(itBegin, itEnd, [real](const auto &item) { return item.name == real; });
+            
+            if (aliasIt != itEnd && itemIt != itEnd) {
+                // std::cerr << "adding alias: " << (*aliasIt).MakeRange2().MakeWhereQuery((*aliasIt).name) << " => " << (*itemIt).MakeRange2().MakeWhereQuery((*itemIt).name) << std::endl;
+                addRowAlias(*aliasIt, *itemIt);
+            }
+        }
     }
     
     CachedRelationshipResolver::CachedRelationshipResolver(const RelationshipResolver &resolver, int maxRowElements):
@@ -186,14 +204,14 @@ namespace ultraverse::state::v2 {
         auto &cacheMap = _rowAliasCache[item.name];
         
         {
-            _cacheLock.lock();
+            std::scoped_lock _lock(_cacheLock);
             auto it = cacheMap.find(hash);
-            _cacheLock.unlock();
             
             if (it == cacheMap.end()) {
                 goto NOT_FOUND;
             }
             
+            it->second.first++;
             return it->second.second;
         }
         
@@ -218,14 +236,14 @@ namespace ultraverse::state::v2 {
         auto &cacheMap = _rowAliasCache[item.name];
         
         {
-            _cacheLock.lock();
+            std::scoped_lock _lock(_cacheLock);
             auto it = cacheMap.find(hash);
-            _cacheLock.unlock();
             
             if (it == cacheMap.end()) {
                 goto NOT_FOUND;
             }
             
+            it->second.first++;
             return it->second.second;
         }
         
@@ -258,25 +276,29 @@ namespace ultraverse::state::v2 {
     
     void CachedRelationshipResolver::gc(CachedRelationshipResolver::RowCacheMap &rowCacheMap) {
         /*
-        std::vector<const StateRange *> keys;
+        std::cerr << "performing gc" << std::endl;
+        rowCacheMap.clear();
+        
+        std::vector<size_t> keys;
         keys.reserve(rowCacheMap.size());
+        
         
         std::transform(
             rowCacheMap.begin(), rowCacheMap.end(), std::back_inserter(keys),
-            [](auto &pair) -> const StateRange * { return &pair.first; }
+            [](auto &pair) -> size_t { return pair.first; }
         );
         
         std::sort(
             keys.begin(), keys.end(),
             [&rowCacheMap](const auto &lhs, const auto &rhs) {
-                return rowCacheMap.at(*lhs).first < rowCacheMap.at(*rhs).first;
+                return rowCacheMap.at(lhs).first < rowCacheMap.at(rhs).first;
             }
         );
         
         // 하위 5% 제거
         int keysToRemove = (int) ((double) keys.size() * 0.05);
         for (int i = 0; i <= keysToRemove; i++) {
-            rowCacheMap.erase(*keys[i]);
+            rowCacheMap.erase(keys[i]);
         }
         
         // 모든 카운터를 0으로 리셋 (다음 GC를 위해)

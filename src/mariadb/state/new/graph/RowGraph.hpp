@@ -26,9 +26,12 @@ namespace ultraverse::state::v2 {
         uint64_t id;
         std::shared_ptr<Transaction> transaction;
         
+        std::mutex mutex;
+        
         std::atomic_bool ready = false;
         std::atomic_int processedBy = -1;
         std::atomic_bool finalized = false;
+        std::atomic_bool willBeRemoved = false;
     };
     
     using RowGraphInternal =
@@ -85,6 +88,9 @@ namespace ultraverse::state::v2 {
         
         
         std::mutex _mutex;
+        std::mutex _nodeMapMutex;
+        std::atomic_bool _isGCRunning = false;
+        std::atomic_uint64_t _workerCount = 0;
     };
 }
 

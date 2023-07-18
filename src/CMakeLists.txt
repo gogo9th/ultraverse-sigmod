@@ -31,6 +31,8 @@ set(ULTRAVERSE_DEPENDENCIES
     sqlparser
     OpenSSL::SSL
     
+    tbb
+    
     ${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp/libultparser/libultparser.so
 )
 

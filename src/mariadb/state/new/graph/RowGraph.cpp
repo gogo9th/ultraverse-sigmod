@@ -34,9 +34,9 @@ namespace ultraverse::state::v2 {
         
         _mutex.lock();
         auto id = boost::add_vertex(node, _graph);
+        _mutex.unlock();
         
         buildEdge(id);
-        _mutex.unlock();
         
         return id;
     }
@@ -141,46 +141,72 @@ namespace ultraverse::state::v2 {
     }
     
     RowGraphId RowGraph::entrypoint(int workerId) {
-        std::scoped_lock<std::mutex> _lock(_mutex);
+        while (_isGCRunning) {
+            // 신나는 스핀 락~
+            // 너도 스핀 락 할래?
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000/60));
+        }
+        
+        _workerCount++;
         
         auto itBeg = boost::vertices(_graph).first;
         const auto itEnd = boost::vertices(_graph).second;
         
-        auto it = std::find_if(std::execution::par_unseq, itBeg, itEnd, [this](auto id) {
+        auto it = std::find_if(std::execution::unseq, itBeg, itEnd, [this, workerId](auto id) {
             auto &node = _graph[id];
-            if (!node->finalized && node->processedBy == -1) {
+            int expected = -1;
+            
+            
+            if (node->ready && !node->finalized && node->processedBy == -1) {
                 auto pair = boost::in_edges(id, _graph);
                 auto it2Beg = pair.first;
                 const auto it2End = pair.second;
                 
-                return std::all_of(it2Beg, it2End, [this](const auto &edge) {
+                bool result = std::all_of(it2Beg, it2End, [this](const auto &edge) {
                     auto source = boost::source(edge, _graph);
                     auto &_node = _graph[source];
                     
                     return (bool) _node->finalized;
                 });
+                
+                return result && node->processedBy.compare_exchange_strong(expected, workerId);
             }
-
+            
             return false;
         });
         
         if (it != itEnd) {
             auto id = *it;
-            _graph[id]->processedBy = workerId;
+            
+            _workerCount--;
             return id;
         } else {
+            _workerCount--;
             return nullptr;
         }
     }
     
     std::shared_ptr<RowGraphNode> RowGraph::nodeFor(RowGraphId nodeId) {
         // std::scoped_lock<std::mutex> _lock(_mutex);
+        /*
+        while (_isGCRunning) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000/60));
+        }
+         */
         
         return _graph[nodeId];
     }
     
     void RowGraph::gc() {
         // _logger->info("performing gc..");
+        while (_workerCount > 0) {
+            // 신나는 스핀 락~
+            // 너도 스핀 락 할래?
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000/60));
+        }
+        
+        _isGCRunning = true;
+        
         _logger->info("gc(): removing finalized / orphaned nodes");
         
         std::mutex _removeRowMutex;
@@ -262,7 +288,10 @@ namespace ultraverse::state::v2 {
                     }
                 }
             }
+            
         }
+        
+        _isGCRunning = false;
         
         if (!toRemove.empty()) {
             _logger->info("gc(): {} nodes removed", toRemove.size());
@@ -271,7 +300,7 @@ namespace ultraverse::state::v2 {
     
     void RowGraph::buildEdge(RowGraphId nodeId) {
         auto &node = _graph[nodeId];
-        const auto &transaction = node->transaction;
+        const auto transaction = node->transaction;
         
         std::unordered_set<RowGraphId> relations;
         // prevent reference to self
@@ -281,7 +310,8 @@ namespace ultraverse::state::v2 {
         
         std::vector<std::pair<std::reference_wrapper<RWStateHolder>, int>> defers;
         
-        {
+        
+        std::future<void> readSetTask = std::async(std::launch::async, [this, &transaction, &relations, &defers, &_mapMutex, nodeId] () {
             // WRITE - READ / READ - READ
             auto it = transaction->whereSet_begin();
             const auto itEnd = transaction->whereSet_end();
@@ -298,7 +328,7 @@ namespace ultraverse::state::v2 {
                 }
                 
                 const auto &range = item.MakeRange2();
-                auto &map = _nodeMap[item.name];
+                auto &map = _nodeMap[name];
                 
                 auto it2 = std::find_if(map.begin(), map.end(), [&range](const auto &pair) {
                     return StateRange::isIntersects(range, pair.first);
@@ -334,9 +364,9 @@ namespace ultraverse::state::v2 {
                     map.emplace(range, RWStateHolder { nodeId, nullptr });
                 }
             });
-        }
+        });
         
-        {
+        std::future<void> writeSetTask = std::async(std::launch::async, [this, &transaction, &relations, &defers, &_mapMutex, nodeId] () {
             // WRITE - WRITE, READ - WRITE
             auto it = transaction->itemSet_begin();
             const auto itEnd = transaction->itemSet_end();
@@ -358,14 +388,14 @@ namespace ultraverse::state::v2 {
                 if (!isInWriteSet) {
                     return;
                 }
+                */
                 
                 if (_keyColumns.find(name) == _keyColumns.end()) {
                     return;
                 }
-                 */
                 
                 const auto &range = item.MakeRange2();
-                auto &map = _nodeMap[item.name];
+                auto &map = _nodeMap[name];
                 
                 auto it2 = std::find_if(map.begin(), map.end(), [&range](const auto &pair) {
                     return StateRange::isIntersects(range, pair.first);
@@ -374,41 +404,67 @@ namespace ultraverse::state::v2 {
                 if (it2 != map.end()) {
                     auto &holder = it2->second;
                     
-                    if (holder.read != nullptr && relations.find(holder.read) == relations.end()) {
-                        // READ - WRITE
-                        std::scoped_lock<std::mutex> _mapLock(_mapMutex);
-                        boost::add_edge(holder.read, nodeId, _graph);
-                        relations.insert(holder.read);
-                    }
-                    
-                    if (holder.write != nullptr && relations.find(holder.write) == relations.end()) {
-                        // WRITE - WRITE
-                        std::scoped_lock<std::mutex> _mapLock(_mapMutex);
-                        boost::add_edge(holder.write, nodeId, _graph);
-                        relations.insert(holder.write);
-                    }
-                    
-                    {
-                        std::scoped_lock<std::mutex> _mapLock(_mapMutex);
-                        defers.emplace_back(std::ref(holder), 1);
+                    if (name != item.name) {
+                        if (holder.write != nullptr && relations.find(holder.write) == relations.end()) {
+                            // WRITE - READ
+                            std::scoped_lock<std::mutex> _mapLock(_mapMutex);
+                            boost::add_edge(holder.write, nodeId, _graph);
+                            relations.insert(holder.write);
+                        }
+                        
+                        {
+                            std::scoped_lock<std::mutex> _mapLock(_mapMutex);
+                            defers.emplace_back(std::ref(holder), 0);
+                        }
+                    } else {
+                        if (holder.read != nullptr && relations.find(holder.read) == relations.end()) {
+                            // READ - WRITE
+                            std::scoped_lock<std::mutex> _mapLock(_mapMutex);
+                            boost::add_edge(holder.read, nodeId, _graph);
+                            relations.insert(holder.read);
+                        }
+                        
+                        if (holder.write != nullptr && relations.find(holder.write) == relations.end()) {
+                            // WRITE - WRITE
+                            std::scoped_lock<std::mutex> _mapLock(_mapMutex);
+                            boost::add_edge(holder.write, nodeId, _graph);
+                            relations.insert(holder.write);
+                        }
+                        
+                        {
+                            std::scoped_lock<std::mutex> _mapLock(_mapMutex);
+                            defers.emplace_back(std::ref(holder), 1);
+                        }
                     }
                 } else {
-                    std::scoped_lock<std::mutex> _mapLock(_mapMutex);
-                    map.emplace(range, RWStateHolder { nullptr, nodeId });
+                    if (name != item.name) {
+                        std::scoped_lock<std::mutex> _mapLock(_mapMutex);
+                        map.emplace(range, RWStateHolder{nodeId, nullptr});
+                    } else {
+                        std::scoped_lock<std::mutex> _mapLock(_mapMutex);
+                        map.emplace(range, RWStateHolder{nullptr, nodeId});
+                    }
                 }
             });
+        });
+        
+        readSetTask.wait();
+        writeSetTask.wait();
+        
+        
+        for (auto &pair : defers) {
+            auto &holder = pair.first.get();
+            auto mode = pair.second;
             
-            for (auto &pair : defers) {
-                auto &holder = pair.first.get();
-                auto mode = pair.second;
-                
-                if (mode == 0) {
-                    holder.read = nodeId;
-                } else if (mode == 1) {
-                    holder.write = nodeId;
-                }
+            if (mode == 0) {
+                holder.read = nodeId;
+            } else if (mode == 1) {
+                holder.write = nodeId;
             }
         }
+        
+        node->ready = true;
+        
     }
     
     /**

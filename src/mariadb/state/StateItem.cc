@@ -1,6 +1,9 @@
 #include "StateItem.h"
 
 #include <sstream>
+#include <execution>
+
+#include <boost/tuple/tuple.hpp>
 
 StateData::StateData()
 {
@@ -340,6 +343,14 @@ bool StateData::operator==(const StateData &c) const
   if (type != c.Type())
     return false;
 
+#ifdef __amd64__
+  static_assert(sizeof(UNION_RAW_DATA) == 8, "the size of UNION_RAW_DATA must be 8");
+  
+  if (type == en_column_data_string)
+      return str_len == c.str_len && memcmp(d.str, c.d.str, str_len) == 0;
+
+  return d.ival == c.d.ival;
+#else
   switch (type)
   {
   case en_column_data_int:
@@ -352,7 +363,7 @@ bool StateData::operator==(const StateData &c) const
     return d.fval == c.d.fval;
 
   case en_column_data_string:
-    return str_len == c.str_len && strcmp(d.str, c.d.str) == 0;
+    return str_len == c.str_len && memcmp(d.str, c.d.str, str_len) == 0;
 
   case en_column_data_null:
     return true;
@@ -360,12 +371,21 @@ bool StateData::operator==(const StateData &c) const
   default:
     return false;
   }
+#endif
 }
 bool StateData::operator!=(const StateData &c) const
 {
   if (type != c.Type())
     return true;
 
+#ifdef __amd64__
+  static_assert(sizeof(UNION_RAW_DATA) == 8, "the size of UNION_RAW_DATA must be 8");
+  
+  if (type == en_column_data_string)
+      return str_len != c.str_len || strcmp(d.str, c.d.str) != 0;
+  
+  return d.ival == c.d.ival;
+#else
   switch (type)
   {
   case en_column_data_int:
@@ -386,6 +406,7 @@ bool StateData::operator!=(const StateData &c) const
   default:
     return true;
   }
+#endif
 }
 bool StateData::operator>(const StateData &c) const
 {
@@ -627,18 +648,22 @@ StateRange::EN_VALID StateRange::IsValid(const StateRange &a, const StateRange &
  */
 bool StateRange::IsIntersection(const ST_RANGE &a, const ST_RANGE &b)
 {
-    const ST_RANGE &small = a.begin < b.begin ? a : b;
-    const ST_RANGE &big = a.begin < b.begin ? b : a;
+    std::reference_wrapper<const ST_RANGE> small = a;
+    std::reference_wrapper<const ST_RANGE> big = b;
     
-    bool isNone = small.end.IsNone() || big.begin.IsNone();
-    bool isIntersect =
-        (small.end >= big.begin) ||
-        (small.end == big.begin && (small.end.IsEqual() || big.begin.IsEqual()));
-        
-        // (small.begin < big.end) ||
-        // (small.begin == big.end && (small.begin.IsEqual() || big.end.IsEqual()));
     
-    return isNone || isIntersect;
+    if (a.begin > b.begin) {
+        boost::tie(small, big) = boost::make_tuple(b, a);
+    }
+    
+    if (small.get().end.IsNone() || big.get().begin.IsNone()) {
+        return true;
+    }
+    
+    return
+        (small.get().end > big.get().begin) ||
+        (small.get().end == big.get().begin && (small.get().end.IsEqual() || big.get().begin.IsEqual()));
+
 }
 
 /**
@@ -672,7 +697,7 @@ bool StateRange::operator==(const StateRange &c) const
 }
 
 bool StateRange::operator!=(const StateRange &other) const {
-    return !(*this == other);
+    return std::hash<StateRange>()(*this) != std::hash<StateRange>()(other);
 }
 
 bool StateRange::operator<(const StateRange &other) const {
@@ -834,22 +859,21 @@ bool StateRange::isIntersects(const StateRange &a, const StateRange &b) {
         return false;
     }
     
-    if (a.wildcard() || b.wildcard()) {
+    if ((a == b) || (a.wildcard() || b.wildcard())) {
         return true;
     }
     
-    auto &range1 = *a.range;
-    auto &range2 = *b.range;
     
-    for (auto &i: range1) {
-        for (auto &j: range2) {
-            if (IsIntersection(i, j)) {
-                return true;
-            }
-        }
-    }
+    const auto &range1 = *a.range;
+    const auto &range2 = *b.range;
     
-    return false;
+    auto intersectionExists = [&](const auto& i) {
+        return std::any_of(range2.begin(), range2.end(), [&](const auto& j) {
+            return IsIntersection(i, j);
+        });
+    };
+    
+    return std::any_of(range1.begin(), range1.end(), intersectionExists);
 }
 
 /**

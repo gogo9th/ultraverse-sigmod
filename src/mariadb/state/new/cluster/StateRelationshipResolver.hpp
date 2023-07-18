@@ -111,7 +111,8 @@ namespace ultraverse::state::v2 {
         
         virtual std::shared_ptr<StateItem> resolveRowAlias(const StateItem &alias) const override;
         
-        void addRowAlias(StateItem &alias, StateItem &real);
+        void addRowAlias(const StateItem &alias, const StateItem &real);
+        void addTransaction(Transaction &transaction);
         
     private:
         const StateChangePlan &_plan;
