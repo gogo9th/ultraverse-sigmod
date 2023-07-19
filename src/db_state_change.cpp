@@ -1,9 +1,6 @@
 #include <iostream>
 #include <sstream>
 
-#include "mariadb/state/StateThreadPool.h"
-#include "mariadb/state/StateTable.h"
-
 #include "Application.hpp"
 #include "db_state_change.hpp"
 
@@ -72,8 +69,6 @@ namespace ultraverse {
     DBStateChangeApp::DBStateChangeApp():
         _logger(createLogger("statechange"))
     {
-        // FIXME: 이제 안 쓰이므로 제거해도 됩니다.
-        StateThreadPool::Instance().Resize(1);
     }
     
     std::string DBStateChangeApp::optString() {
