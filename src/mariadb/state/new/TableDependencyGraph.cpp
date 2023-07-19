@@ -2,8 +2,9 @@
 // Created by cheesekun on 11/30/22.
 //
 
+#include "utils/StringUtil.hpp"
 #include "TableDependencyGraph.hpp"
-#include "mariadb/state/StateUserQuery.h"
+
 
 namespace ultraverse::state::v2 {
     TableDependencyGraph::TableDependencyGraph():
@@ -44,15 +45,15 @@ namespace ultraverse::state::v2 {
         std::set<std::string> writeTableSet;
         
         for (const auto &fullColumn: readSet) {
-            auto vec = StateUserQuery::SplitDBNameAndTableName(fullColumn);
-            const auto &table = vec[0];
+            auto vec = utility::splitTableName(fullColumn);
+            const auto &table = vec.first;
             
             readTableSet.insert(table);
         }
         
         for (const auto &fullColumn: writeSet) {
-            auto vec = StateUserQuery::SplitDBNameAndTableName(fullColumn);
-            const auto &table = vec[0];
+            auto vec = utility::splitTableName(fullColumn);
+            const auto &table = vec.first;
             
             writeTableSet.insert(table);
         }

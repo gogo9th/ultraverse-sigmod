@@ -4,8 +4,8 @@
 
 #include "ColumnDependencyGraph.hpp"
 
-#include "../StateUserQuery.h"
 #include "cluster/RowCluster.hpp"
+#include "utils/StringUtil.hpp"
 
 
 namespace ultraverse::state::v2 {
@@ -54,18 +54,18 @@ namespace ultraverse::state::v2 {
             }
             
             for (const auto &column: node->columnSet) {
-                auto vec1 = StateUserQuery::SplitDBNameAndTableName(
+                auto vec1 = utility::splitTableName(
                     RowCluster::resolveForeignKey(column, foreignKeys)
                 );
-                auto &table1 = vec1[0];
-                auto &column1 = vec1[1];
+                auto &table1 = vec1.first;
+                auto &column1 = vec1.second;
                 
                 auto it = std::find_if(columnSet.begin(), columnSet.end(), [&foreignKeys, &table1, &column1](const auto &targetColumn) {
-                    auto vec2 = StateUserQuery::SplitDBNameAndTableName(
+                    auto vec2 = utility::splitTableName(
                         RowCluster::resolveForeignKey(targetColumn, foreignKeys)
                     );
-                    auto &table2 = vec2[0];
-                    auto &column2 = vec2[1];
+                    auto &table2 = vec2.first;
+                    auto &column2 = vec2.second;
                     
                     if (column1 == "*" || column2 == "*") {
                         auto it = std::find_if(foreignKeys.begin(), foreignKeys.end(), [&table1, &table2, &column1, column2](const ForeignKey &fk) {

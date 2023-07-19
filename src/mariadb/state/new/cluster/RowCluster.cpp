@@ -4,7 +4,6 @@
 #include <fmt/format.h>
 
 #include "RowCluster.hpp"
-#include "mariadb/state/StateUserQuery.h"
 #include "utils/StringUtil.hpp"
 
 #include "base/TaskExecutor.hpp"

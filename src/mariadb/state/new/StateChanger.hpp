@@ -20,7 +20,6 @@
 #include "cluster/RowCluster.hpp"
 
 #include "base/DBHandlePool.hpp"
-#include "mariadb/state/StateGraphBoost.h"
 #include "mariadb/DBHandle.hpp"
 #include "utils/log.hpp"
 #include "mariadb/state/new/graph/RowGraph.hpp"
