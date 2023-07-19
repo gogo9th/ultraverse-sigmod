@@ -41,19 +41,11 @@ namespace ultraverse::state::v2 {
         
         StateChanger(DBHandlePool<mariadb::DBHandle> &dbHandlePool, const StateChangePlan &plan);
         
-        std::string findCandidateColumn();
-        
         void makeCluster();
         
         void prepare();
         void replay();
         
-        /** @deprecated */
-        void prepareCluster();
-        
-        
-        void prepare_old();
-        void start();
         void fullReplay();
         
     private:
@@ -65,34 +57,6 @@ namespace ultraverse::state::v2 {
         
         void replayThreadMain(int workerId, RowGraph &rowGraph);
         
-        void expandClusterMap(RowCluster &rowCluster, Transaction &transaction, int flags);
-        
-        void processDDLTransaction(std::shared_ptr<Transaction> transaction);
-        void processNode(uint64_t nodeIdx);
-        
-        void __node__processTransaction(
-            uint64_t rootNodeId,
-            uint64_t nodeId,
-            std::shared_ptr<Transaction> transaction,
-            mariadb::DBHandle &dbHandle
-        );
-        
-        inline void __node__replayQuery(
-            uint64_t rootNodeId,
-            uint64_t nodeId,
-            std::shared_ptr<Query> query,
-            mariadb::DBHandle &dbHandle
-        );
-        
-        /**
-         * @deprecated use Transaction::isRelatedToDatabase() instead.
-         */
-        bool isTransactionRelatedToPlan(std::shared_ptr<Transaction> transaction) const;
-        bool isTransactionRelatedToCluster(std::shared_ptr<Transaction> transaction) const;
-        
-        std::vector<CandidateColumn>
-        buildCandidateColumnList(std::shared_ptr<Transaction> transaction) const;
-    
         std::shared_ptr<Transaction> loadUserQuery(const std::string &path);
         std::shared_ptr<Transaction> parseUserQuery(const std::vector<std::string> &queries);
         
@@ -119,8 +83,6 @@ namespace ultraverse::state::v2 {
          */
         void updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp);
         
-        bool isQueryRelatedWithKeyColumns(Query &query);
-        
         int64_t getAutoIncrement(mariadb::DBHandle &dbHandle, std::string table);
         void setAutoIncrement(mariadb::DBHandle &dbHandle, std::string table, int64_t value);
         
@@ -135,16 +97,6 @@ namespace ultraverse::state::v2 {
         
         StateLogReader _reader;
         
-        /** REMOVE ME */
-        std::unique_ptr<StateGraphBoost> _stateGraph;
-        /** REMOVE ME */
-        std::shared_ptr<Transaction> _rollbackTarget;
-        // FIXME: keyRanges는 map<keyColumn, StateRange>로 바뀌어야 하는게 맞음
-        /** REMOVE ME */
-        std::map<std::string, std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>>> _keyRanges;
-        /** REMOVE ME */
-        std::shared_ptr<std::vector<size_t>> _columnSetHashes;
-        
         std::shared_ptr<StateChangeContext> _context;
         
         std::atomic_bool _isRunning;
@@ -154,40 +106,14 @@ namespace ultraverse::state::v2 {
         /** REMOVE ME */
         std::unordered_map<std::string, state::StateHash> _stateHashMap;
         
-        /** REMOVE ME */
-        std::mutex _clusterMutex;
-        /** REMOVE ME */
-        std::condition_variable _clusterCondvar;
-        /** REMOVE ME */
-        bool _isClusterReady;
-        
-        std::mutex _autoIncrementMutex;
-        bool _autoIncrementSet;
-        
-        /** REMOVE ME */
-        RowCluster _rowCluster;
-        // FIXME: 네이밍
-        /** REMOVE ME */
-        RowCluster _rowCluster2;
-        
-        /** REMOVE ME */
-        std::mutex _clusterMutex2;
-        /** REMOVE ME */
-        std::mutex _clusterMutex3;
-        
         std::unique_ptr<ColumnDependencyGraph> _columnGraph;
-        /** REMOVE ME */
         std::unique_ptr<TableDependencyGraph> _tableGraph;
+        
         std::unique_ptr<HashWatcher> _hashWatcher;
         std::unique_ptr<ProcLogReader> _procLogReader;
         
         std::mutex _changedTablesMutex;
         std::unordered_set<std::string> _changedTables;
-        
-        /** REMOVE ME */
-        gid_t _ddlTxnId;
-        /** REMOVE ME */
-        gid_t _ddlTxnProcessedId;
         
         /** REMOVE ME */
         std::atomic_uint64_t _replayedQueries;
