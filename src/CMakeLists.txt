@@ -12,6 +12,7 @@ pkg_check_modules(FMT REQUIRED fmt)
 pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
+pkg_check_modules(MOZJS102 REQUIRED mozjs-102)
 
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
@@ -54,25 +55,10 @@ set(LIBULTRAVERSE_BASE_SRCS
     mariadb/state/new/CombinedIterator.cpp mariadb/state/new/CombinedIterator.hpp)
 
 set(LIBULTRAVERSE_STATE_SRCS
-    mariadb/state/StateThreadPool.cpp
-    mariadb/state/StateThreadPool.h
-    
-    mariadb/state/StateTable.cc
-    mariadb/state/StateTable.h
-    
-    mariadb/state/StateQuery.hpp
-    
-    mariadb/state/StateUserQuery.cc
-    mariadb/state/StateUserQuery.h
     
     mariadb/state/StateItem.cc
     mariadb/state/StateItem.h
     
-    mariadb/state/StateForeign.cc
-    mariadb/state/StateForeign.h
-    
-    mariadb/state/StateTaskContext.cpp
-    mariadb/state/StateTaskContext.hpp
     mariadb/state/StateHash.cpp
     mariadb/state/StateHash.hpp
     
@@ -80,8 +66,6 @@ set(LIBULTRAVERSE_STATE_SRCS
     mariadb/state/new/Query.hpp
     mariadb/state/new/Transaction.cpp
     mariadb/state/new/Transaction.hpp
-    
-    mariadb/state/StateGraphBoost.cc
     
     mariadb/state/new/StateLogWriter.cpp
     mariadb/state/new/StateLogWriter.hpp
