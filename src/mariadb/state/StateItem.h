@@ -284,7 +284,9 @@ private:
 };
 
 /**
- * @copilot this class represents expression of SQL where clause.
+ * this class represents expression of SQL where clause.
+ * and, this class also represents a single key-value (range) pair (eg. user.id = 1 OR 2)
+ *
  *
  * @note 이 코드의 일부는 GitHub copilot로부터 어시스트 받아 작성하였습니다.
  */

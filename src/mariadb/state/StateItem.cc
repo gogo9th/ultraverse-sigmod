@@ -648,21 +648,21 @@ StateRange::EN_VALID StateRange::IsValid(const StateRange &a, const StateRange &
  */
 bool StateRange::IsIntersection(const ST_RANGE &a, const ST_RANGE &b)
 {
-    std::reference_wrapper<const ST_RANGE> small = a;
-    std::reference_wrapper<const ST_RANGE> big = b;
-    
+    const ST_RANGE *small = &a;
+    const ST_RANGE *big = &b;
     
     if (a.begin > b.begin) {
-        boost::tie(small, big) = boost::make_tuple(b, a);
+        small = &b;
+        big = &a;
     }
     
-    if (small.get().end.IsNone() || big.get().begin.IsNone()) {
+    if (small->end.IsNone() || big->begin.IsNone()) {
         return true;
     }
     
     return
-        (small.get().end > big.get().begin) ||
-        (small.get().end == big.get().begin && (small.get().end.IsEqual() || big.get().begin.IsEqual()));
+        (small->end > big->begin) ||
+        (small->end == big->begin && (small->end.IsEqual() || big->begin.IsEqual()));
 
 }
 
