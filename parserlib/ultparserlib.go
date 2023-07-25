@@ -2,6 +2,7 @@ package main
 
 import "C"
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/tidb/parser"
@@ -16,8 +17,16 @@ import (
 	"strings"
 )
 
+/**
+ * 글로벌 파서 인스턴스
+ * tidb의 파서는 thread-safe 하지 않기 때문에 각 스레드마다 파서 인스턴스를 생성해서 사용하고 있습니다.
+ * 스레드 ID를 키로 사용합니다.
+ */
 var parser_instances map[int64]*parser.Parser
 
+/**
+ * 스레드 ID에 맞는 파서 인스턴스를 반환합니다.
+ */
 func get_parser_instance_for(threadId int64) *parser.Parser {
 	// returns a parser instance for the given threadId
 
@@ -28,6 +37,9 @@ func get_parser_instance_for(threadId int64) *parser.Parser {
 	return parser_instances[threadId]
 }
 
+/**
+ * tidb.parser 모듈을 사용하여 SQL을 파싱합니다.
+ */
 func parse_sql(sql string, threadId int64) ([]ast.StmtNode, []error, error) {
 	p := get_parser_instance_for(threadId)
 	stmtNodes, warns, err := p.Parse(sql, "", "")
@@ -39,6 +51,11 @@ func parse_sql(sql string, threadId int64) ([]ast.StmtNode, []error, error) {
 	return stmtNodes, warns, nil
 }
 
+/**
+ * Protobuf 메시지를 C언어에서 사용하는 문자열로 변환합니다.
+ * 파싱 결과를 C++ 프로그램에 전달하기 위해 사용합니다.
+ * @return (C언어 문자열, 문자열 길이)의 pair
+ */
 func protobuf_to_cstr(message proto.Message) (*C.char, int64) {
 	// returns a C string representation of the given protobuf message
 
@@ -52,6 +69,9 @@ func protobuf_to_cstr(message proto.Message) (*C.char, int64) {
 	return C.CString(string(data)), int64(len(data))
 }
 
+/**
+ * Expression 노드를 DMLQueryExpr protobuf 메시지로 변환합니다.
+ */
 func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 	// processes the where clause of a select statement
 
@@ -212,6 +232,10 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 	return nil
 }
 
+/**
+ * SELECT 문에서 사용된 테이블 목록을 반환합니다.
+ * FIXME: JOIN 문을 엉망 진창으로 처리하고 있습니다.
+ */
 func select_get_tables(tableRefs *ast.Join) (*ast.TableName, []*ast.TableName) {
 	var primary_table *ast.TableName
 	var joined_tables []*ast.TableName
@@ -241,6 +265,9 @@ func select_get_tables(tableRefs *ast.Join) (*ast.TableName, []*ast.TableName) {
 	return primary_table, joined_tables
 }
 
+/**
+ * SELECT 문을 처리하여 DMLQuery protobuf 메시지를 채워 넣습니다.
+ */
 func process_select_stmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 	query.Type = pb.DMLQuery_SELECT
 
@@ -285,6 +312,9 @@ func process_select_stmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 	}
 }
 
+/**
+ * INSERT 문을 처리하여 DMLQuery protobuf 메시지를 채워 넣습니다.
+ */
 func process_insert_stmt(query *pb.DMLQuery, stmt *ast.InsertStmt) {
 	query.Type = pb.DMLQuery_INSERT
 	// FIXME
@@ -297,6 +327,13 @@ func process_insert_stmt(query *pb.DMLQuery, stmt *ast.InsertStmt) {
 		},
 	}
 
+	/*
+		 	ultparserlib은 현재 컬럼 힌트가 들어간 INSERT 문에 한해서만 파싱이 가능합니다.
+				INSERT INTO table_name (column1, column2, column3, ...) VALUES (value1, value2, value3, ...); => OK
+				INSERT INTO table_name VALUES (value1, value2, value3, ...); => NOT OK
+
+			INSERT 문의 컬럼 힌트가 없는 경우에는 C++ 프로그램 측에서 ult_map_insert()를 사용해서 컬럼 힌트를 추가한 뒤에 파싱을 진행해야 합니다.
+	*/
 	if len(stmt.Lists) == 0 {
 		fmt.Printf("process_insert_stmt(): column definition is empty: %s\n", query.Statement)
 		return
@@ -327,6 +364,9 @@ func process_insert_stmt(query *pb.DMLQuery, stmt *ast.InsertStmt) {
 	}
 }
 
+/**
+ * UPDATE 문을 처리하여 DMLQuery protobuf 메시지를 채워 넣습니다.
+ */
 func process_update_stmt(query *pb.DMLQuery, stmt *ast.UpdateStmt) {
 	query.Type = pb.DMLQuery_UPDATE
 	// FIXME
@@ -355,6 +395,9 @@ func process_update_stmt(query *pb.DMLQuery, stmt *ast.UpdateStmt) {
 	}
 }
 
+/**
+ * DELETE 문을 처리하여 DMLQuery protobuf 메시지를 채워 넣습니다.
+ */
 func process_delete_stmt(query *pb.DMLQuery, stmt *ast.DeleteStmt) {
 	query.Type = pb.DMLQuery_DELETE
 	// FIXME
@@ -370,6 +413,9 @@ func process_delete_stmt(query *pb.DMLQuery, stmt *ast.DeleteStmt) {
 	query.Where = process_expr_node(&stmt.Where)
 }
 
+/**
+ * 주어진 ast.StmtNode가 DML 문인지 확인합니다.
+ */
 func is_dml_node(node *ast.StmtNode) bool {
 	switch (*node).(type) {
 	case *ast.SelectStmt:
@@ -387,6 +433,9 @@ func is_dml_node(node *ast.StmtNode) bool {
 	return false
 }
 
+/**
+ * 주어진 ast.StmtNode가 DML 문이라면 DMLQuery protobuf 메시지를 채워 넣습니다.
+ */
 func process_dml_node(query *pb.DMLQuery, node *ast.StmtNode) {
 	query.Statement = repr_node(node)
 
@@ -403,6 +452,9 @@ func process_dml_node(query *pb.DMLQuery, node *ast.StmtNode) {
 	}
 }
 
+/**
+* 주어진 노드가 프로시저 관련 노드인지 확인합니다.
+ */
 func is_proc_node(node *ast.StmtNode) bool {
 	switch (*node).(type) {
 	case *ast.ProcedureIfInfo:
@@ -424,6 +476,9 @@ func is_proc_node(node *ast.StmtNode) bool {
 	return false
 }
 
+/**
+ * 프로시저의 IF 문을 처리하여 ProcedureIfBlock protobuf 메시지를 반환합니다.
+ */
 func process_proc_if(node *ast.ProcedureIfBlock) *pb.ProcedureIfBlock {
 	block := &pb.ProcedureIfBlock{
 		Condition: process_expr_node(&node.IfExpr),
@@ -445,6 +500,9 @@ func process_proc_if(node *ast.ProcedureIfBlock) *pb.ProcedureIfBlock {
 	return block
 }
 
+/**
+ * 프로시저의 루프 문을 처리하여 ProcedureWhileBlock protobuf 메시지를 반환합니다.
+ */
 func process_proc_loop(node *ast.ProcedureLabelLoop) *pb.ProcedureWhileBlock {
 	if loop, ok := node.Block.(*ast.ProcedureWhileStmt); ok {
 		block := &pb.ProcedureWhileBlock{
@@ -467,6 +525,10 @@ func process_proc_loop(node *ast.ProcedureLabelLoop) *pb.ProcedureWhileBlock {
 	return nil
 }
 
+/**
+ * 프로시저의 레이블 블록 처리하여 ProcedureIfBlock protobuf 메시지를 반환합니다.
+ * @see https://chat.openai.com/share/9ac5a8f4-7055-440e-9812-02926df5ecfe
+ */
 func process_proc_label_block(node *ast.ProcedureLabelBlock) *pb.ProcedureIfBlock {
 	block := &pb.ProcedureIfBlock{}
 
@@ -481,6 +543,9 @@ func process_proc_label_block(node *ast.ProcedureLabelBlock) *pb.ProcedureIfBloc
 	return block
 }
 
+/**
+ * 프로시저 관련 노드를 처리하여 Query protobuf 메시지를 채워 넣습니다.
+ */
 func process_proc_node(node *ast.StmtNode) *pb.Query {
 	if ifStmt, ok := (*node).(*ast.ProcedureIfInfo); ok {
 		ifBlock := process_proc_if(ifStmt.IfBody)
@@ -532,6 +597,9 @@ func process_proc_node(node *ast.StmtNode) *pb.Query {
 	return nil
 }
 
+/**
+ * 주어진 노드가 프로시저를 *정의*하는 노드인지 확인합니다.
+ */
 func is_proc_info(node *ast.StmtNode) bool {
 	switch (*node).(type) {
 	case *ast.ProcedureInfo:
@@ -543,6 +611,9 @@ func is_proc_info(node *ast.StmtNode) bool {
 	return false
 }
 
+/**
+ * 프로시저 정의 노드를 처리하여 Procedure protobuf 메시지를 채워 넣습니다.
+ */
 func process_proc_info(procedure *pb.Procedure, node *ast.ProcedureInfo) {
 	procedure.Name = node.ProcedureName.Name.O
 	procedure.Parameters = make([]*pb.ProcedureVariable, len(node.ProcedureParam))
@@ -580,6 +651,9 @@ func process_proc_info(procedure *pb.Procedure, node *ast.ProcedureInfo) {
 	}
 }
 
+/**
+ * statement 노드를 처리하여 Query protobuf 메시지를 채워 넣습니다.
+ */
 func process_stmt_node(stmt *ast.StmtNode) *pb.Query {
 	if *stmt == nil {
 		return nil
@@ -610,6 +684,9 @@ func process_stmt_node(stmt *ast.StmtNode) *pb.Query {
 	return nil
 }
 
+/**
+ * 주어진 노드를 SQL string으로 재구성합니다
+ */
 func repr_node(node *ast.StmtNode) string {
 	var sbuilder strings.Builder
 
@@ -622,6 +699,10 @@ func repr_node(node *ast.StmtNode) string {
 	return sbuilder.String()
 }
 
+/**
+ * 파서를 초기화합니다. (C에서 호출 가능하도록 export 되어 있습니다)
+ * C++ 프로그램에서 사용 전 반드시 호출하여 주십시오.
+ */
 //export ult_sql_parser_init
 func ult_sql_parser_init() {
 	if parser_instances == nil {
@@ -629,11 +710,23 @@ func ult_sql_parser_init() {
 	}
 }
 
+/**
+ * 파서 관련 자원을 해제합니다. (C에서 호출 가능하도록 export 되어 있습니다)
+ * C++ 프로그램에서 파서 관련 기능 사용 완료 후 반드시 호출하여 주십시오.
+ */
 //export ult_sql_parser_deinit
 func ult_sql_parser_deinit() {
 	parser_instances = nil
 }
 
+/**
+ * C 프로그램에서 SQL을 파싱합니다.
+ * 파싱 결과는 protobuf 메시지로 반환됩니다.
+ * @param sql_cstr 파싱할 SQL 문자열
+ * @param threadId 스레드 ID
+ * @param output 파싱 결과가 저장될 포인터
+ * @returns 메시지 크기
+ */
 //export ult_sql_parse
 func ult_sql_parse(sql_cstr *C.char, threadId int64, output **C.char) int64 {
 	var result = pb.ParseResult{
@@ -679,11 +772,21 @@ func ult_sql_parse(sql_cstr *C.char, threadId int64, output **C.char) int64 {
 	return size
 }
 
+/**
+ * 컬럼 힌트가 없는 INSERT 구문에 힌트를 삽입합니다.
+ * TODO: 구현되어 있지 않습니다.
+ */
 //export ult_map_insert
 func ult_map_insert(stmt *C.char) *C.char {
 	return nil
 }
 
+/**
+ * 주어진 쿼리 A와 B가 같은 쿼리인지 비교합니다.
+ * 이 function은 아래 두 쿼리를 같은 쿼리로 판정합니다.
+ *   SELECT * FROM T1 WHERE A = 1
+ *   SELECT    * FROM t1 WHERE       a=1
+ */
 //export ult_query_match
 func ult_query_match(a *C.char, b *C.char, threadId int64) bool {
 	sql_a := C.GoString(a)
@@ -718,6 +821,12 @@ func ult_normalize_procedure_code(procedure_code_cstr *C.char) *C.char {
 	return C.CString(normalized_procedure_code)
 }
 
+/**
+ * SQL 파서로 사용하는 tidb.parser는 프로시저에서 사용하는 변수 할당 구문 (SELECT col INTO var)을 지원하지 않습니다.
+ * 이를 억지로 지원하기 위해, SELECT INTO에서 INTO 부분을 제거합니다.
+ *   -- 사용자 1의 게임 점수를 읽어서 game_score 변수에 저장한다. 아래 구문은 MySQL에서 지원하고 있지만, 파서에서는 에러가 발생한다.
+ *   SELECT game_records.score INTO game_score FROM game_records WHERE game_records.user_id = 1;
+ */
 //export ult_sanitize_select_into
 func ult_sanitize_select_into(query_cstr *C.char) *C.char {
 	query := C.GoString(query_cstr)
@@ -733,6 +842,10 @@ func ult_sanitize_select_into(query_cstr *C.char) *C.char {
 	return C.CString(sanitized_query)
 }
 
+/**
+ * SQL 파서로 사용하는 tidb.parser는 프로시저에서 사용하는 변수 할당 구문 (SELECT col INTO var)을 지원하지 않습니다.
+ * 관련 부분을 지원하기 위해 SELECT INTO에서 변수 할당 부분을 추출합니다.
+ */
 func extract_select_into(procedure_code string) []map[string]string {
 	// @copilot please translate the following (TypeScript + Perl)-like pseudocode to Go
 	/*
@@ -807,6 +920,9 @@ func extract_select_into(procedure_code string) []map[string]string {
 	return assign_list
 }
 
+/**
+ * 위 extract_select_into를 C 프로그램에서 사용할 수 있도록 래핑합니다.
+ */
 //export ult_extract_select_info
 func ult_extract_select_info(procedure_code_cstr *C.char, output **C.char) int64 {
 	procedure_code := C.GoString(procedure_code_cstr)
@@ -825,6 +941,29 @@ func ult_extract_select_info(procedure_code_cstr *C.char, output **C.char) int64
 	*output, size = protobuf_to_cstr(result)
 
 	return size
+}
+
+/**
+ * tidb에서 파싱한 AST를 JSON으로 변환합니다.
+ */
+//export ult_parse_jsonify
+func ult_parse_jsonify(sql_cstr *C.char, output **C.char, threadId int64) int64 {
+	sql := C.GoString(sql_cstr)
+
+	ast_nodes, _, err := parse_sql(sql, threadId)
+
+	if err != nil {
+		*output = nil
+		return 0
+	}
+
+	ast_node := ast_nodes[0]
+
+	b, _ := json.Marshal(ast_node)
+
+	*output = C.CString(string(b))
+
+	return int64(len(b))
 }
 
 func main() {
