@@ -24,7 +24,7 @@ add_custom_command(
     OUTPUT ${ULTPARSERLIB_PROTOBUF_CPP_AUTOGEN_SRCS}
     DEPENDS ${ULTPARSERLIB_PROTOBUF_SRCS}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMAND mkdir -p cpp_autogen && protoc --cpp_out=cpp_autogen ${ULTPARSERLIB_PROTOBUF_SRCS}
+    COMMAND mkdir -p cpp_autogen && protoc --experimental_allow_proto3_optional --cpp_out=cpp_autogen ${ULTPARSERLIB_PROTOBUF_SRCS}
     COMMENT "Generating protobuf cpp autogen files"
 )
 
@@ -32,7 +32,7 @@ add_custom_command(
     OUTPUT ${ULTPARSERLIB_PROTOBUF_GO_AUTOGEN_SRCS}
     DEPENDS ${ULTPARSERLIB_PROTOBUF_SRCS}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMAND mkdir -p pb && protoc --go_out=pb ${ULTPARSERLIB_PROTOBUF_SRCS}
+    COMMAND mkdir -p pb && protoc --experimental_allow_proto3_optional --go_out=pb ${ULTPARSERLIB_PROTOBUF_SRCS}
     COMMENT "Generating protobuf go autogen files"
 )
 
