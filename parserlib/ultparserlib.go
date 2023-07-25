@@ -562,6 +562,8 @@ func process_proc_node(node *ast.StmtNode) *pb.Query {
 			WhileBlock: whileBlock,
 		}
 	} else if labelBlockStmt, ok := (*node).(*ast.ProcedureLabelBlock); ok {
+		// FIXME: 모든 블럭을 새로운 pb.Query_IF로 처리하고 있습니다.
+		//        protobuf 메시지 정의에서 블럭 타입을 추가하거나, 프로시저 내 모든 쿼리를 flat하게 저장하도록 수정해야 합니다. (빠른 처리를 위해 개인적으로 후자를 권합니다)
 		ifBlock := process_proc_label_block(labelBlockStmt)
 
 		return &pb.Query{
@@ -569,6 +571,8 @@ func process_proc_node(node *ast.StmtNode) *pb.Query {
 			IfBlock: ifBlock,
 		}
 	} else if elseIfBlockStmt, ok := (*node).(*ast.ProcedureElseIfBlock); ok {
+		// FIXME: 모든 블럭을 새로운 pb.Query_IF로 처리하고 있습니다.
+		//        protobuf 메시지 정의에서 블럭 타입을 추가하거나, 프로시저 내 모든 쿼리를 flat하게 저장하도록 수정해야 합니다. (빠른 처리를 위해 개인적으로 후자를 권합니다)
 		ifBlock := process_proc_if(elseIfBlockStmt.ProcedureIfStmt)
 
 		return &pb.Query{
@@ -576,6 +580,8 @@ func process_proc_node(node *ast.StmtNode) *pb.Query {
 			IfBlock: ifBlock,
 		}
 	} else if elseBlockStmt, ok := (*node).(*ast.ProcedureElseBlock); ok {
+		// FIXME: 모든 블럭을 새로운 pb.Query_IF로 처리하고 있습니다.
+		//        protobuf 메시지 정의에서 블럭 타입을 추가하거나, 프로시저 내 모든 쿼리를 flat하게 저장하도록 수정해야 합니다. (빠른 처리를 위해 개인적으로 후자를 권합니다)
 		block := &pb.ProcedureIfBlock{}
 
 		for _, stmt := range elseBlockStmt.ProcedureIfStmts {
