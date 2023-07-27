@@ -7,7 +7,7 @@ find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
 
 # pkg_check_modules(JEMALLOC REQUIRED jemalloc)
-pkg_check_modules(MARIADB REQUIRED mariadb)
+pkg_check_modules(MARIADB REQUIRED mysqlclient)
 pkg_check_modules(FMT REQUIRED fmt)
 pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
