@@ -7,12 +7,18 @@ find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
 
 # pkg_check_modules(JEMALLOC REQUIRED jemalloc)
-pkg_check_modules(MARIADB REQUIRED mysqlclient)
 pkg_check_modules(FMT REQUIRED fmt)
 pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
 pkg_check_modules(MOZJS102 REQUIRED mozjs-102)
+
+pkg_check_modules(MARIADB mysqlclient)
+
+if (NOT MARIADB_FOUND)
+    message(WARNING "libmysqlclient not found, using libmariadb instead")
+    pkg_check_modules(MARIADB REQUIRED mariadb)
+endif()
 
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
