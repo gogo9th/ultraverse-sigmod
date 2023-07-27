@@ -181,8 +181,30 @@ namespace ultraverse::state::v2 {
         
         auto phase_main_start = std::chrono::steady_clock::now();
         
-        std::queue<std::shared_ptr<std::promise<int>>> tasks;
+        std::atomic_bool isRunning = true;
+        
+        std::mutex tasksMutex;
+        std::queue<std::shared_ptr<std::promise<gid_t>>> tasks;
         std::set<gid_t> replayGids;
+        
+        std::thread promiseConsumerThread([&isRunning, &tasks, &tasksMutex, &replayGidCount]() {
+            while (isRunning || !tasks.empty()) {
+                if (tasks.empty()) {
+                    continue;
+                }
+                
+                tasksMutex.lock();
+                auto promise = std::move(tasks.front());
+                tasks.pop();
+                tasksMutex.unlock();
+                
+                gid_t gid = promise->get_future().get();
+                if (gid != UINT64_MAX) {
+                    std::cout << gid << std::endl;
+                    replayGidCount++;
+                }
+            }
+        });
         
         while (_reader.nextHeader()) {
             auto header = _reader.txnHeader();
@@ -195,6 +217,7 @@ namespace ultraverse::state::v2 {
             if (_plan.isRollbackGid(gid) || _plan.hasUserQuery(gid)) {
                 _reader.nextTransaction();
                 auto transaction = _reader.txnBody();
+                
                 
                 if (!transaction->isRelatedToDatabase(_plan.dbName())) {
                     _logger->trace("skipping transaction #{} because it is not related to database {}",
@@ -221,25 +244,26 @@ namespace ultraverse::state::v2 {
                 }
                 
                 continue;
-            } else if (rowCluster.shouldReplay(gid)) {
-                // _logger->info("shouldReplay({}) returned true", gid);
-                // replayGids.emplace(transaction->gid());
-                replayGidCount++;
-                {
-                    // std::scoped_lock<std::mutex> _lock(stdoutLock);
-                    std::cout << gid<< std::endl;
-                    // std::cout.flush();
-                    
-                }
+            } else {
+                std::scoped_lock _lock(tasksMutex);
+                tasks.push(taskExecutor.post<gid_t>([gid, &rowCluster]() {
+                    if (rowCluster.shouldReplay(gid)) {
+                        return gid;
+                    }
+                    return UINT64_MAX;
+                }));
             }
             
             _reader.skipTransaction();
         }
         
-        while (!tasks.empty()) {
-            tasks.front()->get_future().wait();
-            tasks.pop();
+        
+        isRunning = false;
+        
+        if (promiseConsumerThread.joinable()) {
+            promiseConsumerThread.join();
         }
+
         
         taskExecutor.shutdown();
         
