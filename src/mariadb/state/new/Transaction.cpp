@@ -50,22 +50,6 @@ namespace ultraverse::state::v2 {
         _flags = flags;
     }
     
-    std::unordered_set<std::string> &Transaction::readSet() {
-        return _readSet;
-    }
-    
-    std::unordered_set<std::string> &Transaction::writeSet() {
-        return _writeSet;
-    }
-    
-    std::unordered_set<std::string> &Transaction::readTableSet() {
-        return _readTableSet;
-    }
-    
-    std::unordered_set<std::string> &Transaction::writeTableSet() {
-        return _writeTableSet;
-    }
-    
     void Transaction::updateRWSet() {
         // not implemented
     }
@@ -85,10 +69,6 @@ namespace ultraverse::state::v2 {
     
     std::vector<std::shared_ptr<Query>> &Transaction::queries() {
         return _queries;
-    }
-    
-    std::vector<StateItem> &Transaction::variableSet() {
-        return _variableSet;
     }
     
     CombinedIterator<StateItem> Transaction::whereSet_begin() {
@@ -131,47 +111,6 @@ namespace ultraverse::state::v2 {
     
     Transaction &Transaction::operator<<(std::shared_ptr<Query> &query) {
         _queries.push_back(query);
-        
-        std::transform(
-            query->readSet().begin(), query->readSet().end(),
-            std::inserter(_readSet, _readSet.end()),
-            &utility::toLower
-        );
-        
-        std::transform(
-            query->readSet().begin(), query->readSet().end(),
-            std::inserter(_readTableSet, _readTableSet.end()), [&query](auto &col) {
-                std::string table(col);
-                auto it = table.find('.');
-                
-                if (it != std::string::npos) {
-                    table.erase(it, table.size());
-                }
-                
-                return query->database() + "." + table;
-            }
-        );
-        
-        std::transform(
-            query->writeSet().begin(), query->writeSet().end(),
-            std::inserter(_writeSet, _writeSet.end()),
-            &utility::toLower
-        );
-        
-        // FIXME
-        std::transform(
-            query->writeSet().begin(), query->writeSet().end(),
-            std::inserter(_writeTableSet, _writeTableSet.end()), [&query](auto &col) {
-                std::string table(col);
-                auto it = table.find('.');
-                
-                if (it != std::string::npos) {
-                    table.erase(it, table.size());
-                }
-        
-                return query->database() + "." + table;
-            }
-        );
         
         return *this;
     }

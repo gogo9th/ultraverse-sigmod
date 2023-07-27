@@ -299,7 +299,7 @@ public:
             );
         }
         
-        _pendingTxn->variableSet() = procMatcher->variableSet(*procCall);
+        // _pendingTxn->variableSet() = procMatcher->variableSet(*procCall);
         
         _pendingTxn->setGid(_gid++);
         *_stateLogWriter << *_pendingTxn;

@@ -60,20 +60,12 @@ namespace ultraverse::state::v2 {
         
         uint8_t flags();
         void setFlags(uint8_t flags);
-    
-        std::unordered_set<std::string> &readSet();
-        std::unordered_set<std::string> &writeSet();
-        
-        std::unordered_set<std::string> &readTableSet();
-        std::unordered_set<std::string> &writeTableSet();
         
         void updateRWSet();
         
         TransactionHeader header();
         
         std::vector<std::shared_ptr<Query>> &queries();
-        
-        std::vector<StateItem> &variableSet();
         
         CombinedIterator<StateItem> whereSet_begin();
         
@@ -147,18 +139,8 @@ namespace ultraverse::state::v2 {
         uint64_t _nextPos;
         
         std::vector<gid_t> _dependencies;
-    
+        
         std::vector<std::shared_ptr<Query>> _queries;
-        
-        std::vector<StateItem> _variableSet;
-    
-        std::unordered_set<std::string> _readSet;
-        std::unordered_set<std::string> _writeSet;
-        
-        
-        std::unordered_set<std::string> _readTableSet;
-        std::unordered_set<std::string> _writeTableSet;
-        
     };
 }
 

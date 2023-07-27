@@ -117,10 +117,12 @@ public:
             auto transaction = reader.txnBody();
             
             _logger->info("Transaction #{}", transaction->gid());
+            /*
             _logger->info("    - ReadSet: {}",
                           join(transaction->readSet().begin(), transaction->readSet().end(), ", "));
             _logger->info("    - WriteSet: {}",
                           join(transaction->writeSet().begin(), transaction->writeSet().end(), ", "));
+             */
             
             
             _logger->info("    - Flags: {}", transaction->flags());
