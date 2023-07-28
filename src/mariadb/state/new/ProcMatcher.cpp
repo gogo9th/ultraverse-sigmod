@@ -284,63 +284,88 @@ namespace ultraverse::state::v2 {
         return std::move(_variableSet);
     }
     
-    std::shared_ptr<Query> ProcMatcher::asQuery(int index, const ProcCall &procCall) const {
-        const auto &code = codes().at(index);
-        auto query = std::make_shared<Query>();
-        auto procParameters = procCall.buildItemSet(*this);
+    std::vector<std::shared_ptr<Query>> ProcMatcher::asQuery(int index, const ProcCall &procCall) const {
+        std::vector<std::shared_ptr<Query>> queries;
         
-        std::string statement = "SELECT 1";
+        auto &code = codes().at(index);
         
-        switch (code->type()) {
-            case ultparser::Query_QueryType_DDL:
-                statement = code->ddl().statement();
-                break;
-            case ultparser::Query_QueryType_DML:
-                statement = code->dml().statement();
-                break;
-            case ultparser::Query_QueryType_IF:
-                _logger->error("IF statement is not supported");
-                break;
-            default:
-                _logger->error("unsupprted statement type: {}", code->type());
-                break;
-        }
+        const std::function<void(const ultparser::Query &)> processQuery = [&](const ultparser::Query &code) {
+            auto query = std::make_shared<Query>();
+            auto procParameters = procCall.buildItemSet(*this);
+            
+            std::string statement = "SELECT 1";
+            
+            switch (code.type()) {
+                case ultparser::Query_QueryType_DDL:
+                    statement = code.ddl().statement();
+                    break;
+                case ultparser::Query_QueryType_DML:
+                    statement = code.dml().statement();
+                    break;
+                case ultparser::Query_QueryType_IF: {
+                    auto &block = code.if_block();
+                    for (const auto &_query: block.then_block()) {
+                        processQuery(_query);
+                    }
+                    
+                    for (const auto &_query: block.else_block()) {
+                        processQuery(_query);
+                    }
+                }
+                    return;
+                    
+                case ultparser::Query_QueryType_WHILE: {
+                    auto &whileBlock = code.while_block();
+                    for (const auto &_query: whileBlock.block()) {
+                        processQuery(_query);
+                    }
+                }
+                    return;
+                default:
+                    _logger->error("unsupprted statement type: {}", code.type());
+                    break;
+            }
+            
+            auto event = std::make_shared<mariadb::QueryEvent>(
+                "fillme",
+                statement,
+                0
+            );
+            
+            std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->variableSet()));
+            event->parse();
+            
+            query->setStatement(statement);
+            query->setFlags(Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
+            
+            query->readSet().insert(
+                event->readSet().begin(), event->readSet().end()
+            );
+            query->writeSet().insert(
+                event->writeSet().begin(), event->writeSet().end()
+            );
+            
+            query->itemSet().insert(
+                query->itemSet().end(),
+                event->itemSet().begin(), event->itemSet().end()
+            );
+            
+            query->whereSet().insert(
+                query->whereSet().end(),
+                event->whereSet().begin(), event->whereSet().end()
+            );
+            
+            query->varMap().insert(
+                query->varMap().end(),
+                event->varMap().begin(), event->varMap().end()
+            );
+            
+            return queries.push_back(query);
+        };
         
-        auto event = std::make_shared<mariadb::QueryEvent>(
-            "fillme",
-            statement,
-            0
-        );
+        processQuery(*code);
         
-        std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->variableSet()));
-        event->parse();
-        
-        query->setStatement(statement);
-        query->setFlags(Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
-        
-        query->readSet().insert(
-            event->readSet().begin(), event->readSet().end()
-        );
-        query->writeSet().insert(
-            event->writeSet().begin(), event->writeSet().end()
-        );
-
-        query->itemSet().insert(
-            query->itemSet().end(),
-            event->itemSet().begin(), event->itemSet().end()
-        );
-
-        query->whereSet().insert(
-            query->whereSet().end(),
-            event->whereSet().begin(), event->whereSet().end()
-        );
-        
-        query->varMap().insert(
-            query->varMap().end(),
-            event->varMap().begin(), event->varMap().end()
-        );
-        
-        return query;
+        return queries;
     }
     
     const std::vector<std::string> &ProcMatcher::parameters() const {

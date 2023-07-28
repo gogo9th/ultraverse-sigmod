@@ -94,7 +94,7 @@ namespace ultraverse::state::v2 {
         
         
         std::vector<StateItem> variableSet(const ProcCall &procCall) const;
-        std::shared_ptr<Query> asQuery(int index, const ProcCall &procCall) const;
+        std::vector<std::shared_ptr<Query>> asQuery(int index, const ProcCall &procCall) const;
         
         const std::vector<std::string> &parameters() const;
         const std::vector<std::shared_ptr<ultparser::Query>> codes() const;

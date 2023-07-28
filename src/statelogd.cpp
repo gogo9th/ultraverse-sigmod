@@ -267,13 +267,13 @@ public:
                 
                 for (int i = prevIndex; i < index; i++) {
                     _logger->trace("filling truncated query: {}", i);
-                    auto _query = procMatcher->asQuery(i, *procCall);
-                    
-                    _query->setDatabase(pendingQuery->database());
-                    _query->setTimestamp(pendingQuery->timestamp());
-                    _query->setFlags(state::v2::Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
-                    
-                    *_pendingTxn << _query;
+                    auto queries = procMatcher->asQuery(i, *procCall);
+                    for (auto &query : queries) {
+                        query->setDatabase(pendingQuery->database());
+                        query->setTimestamp(pendingQuery->timestamp());
+                        query->setFlags(state::v2::Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
+                        *_pendingTxn << query;
+                    }
                 }
                 
                 
