@@ -80,7 +80,7 @@ namespace ultraverse::state::v2 {
         bool isKeyColumnItem(const RelationshipResolver &resolver, const StateItem& item) const;
         
         void insert(ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid);
-        void insert(ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver);
+        void insert(ClusterType type, const std::vector<StateItem> &items, gid_t gid);
         
         /**
          * @brief 주어진 트랜잭션을 클러스터에 추가한다.
@@ -127,9 +127,15 @@ namespace ultraverse::state::v2 {
         };
         
     private:
-        std::pair<std::vector<StateItem>, std::vector<StateItem>> merge(
-            ClusterType type,
-            CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver
+        static std::map<std::string, std::set<std::string>> buildKeyColumnsMap(const std::set<std::string> &keyColumns);
+        
+        /**
+         * @brief 주어진 transaction의 readSet, writeSet으로부터 key column과 관련된 StateItem을 추출한다.
+         * @return pair<R, W>
+         */
+        std::pair<std::vector<StateItem>, std::vector<StateItem>> extractItems(
+            Transaction &transaction,
+            const RelationshipResolver &resolver
         ) const;
         
         /**
@@ -147,6 +153,7 @@ namespace ultraverse::state::v2 {
         std::mutex _clusterInsertionLock;
         
         std::set<std::string> _keyColumns;
+        std::map<std::string, std::set<std::string>> _keyColumnsMap;
         std::unordered_map<std::string, Cluster> _clusters;
         
         std::mutex _targetCacheLock;

@@ -2,10 +2,12 @@
 // Created by cheesekun on 6/20/23.
 //
 
-#include "StateCluster.hpp"
 
 #include <execution>
 #include <utility>
+
+#include "utils/StringUtil.hpp"
+#include "StateCluster.hpp"
 
 namespace ultraverse::state::v2 {
     
@@ -54,10 +56,25 @@ namespace ultraverse::state::v2 {
         return it->first;
     }
     
+    std::map<std::string, std::set<std::string>>
+    StateCluster::buildKeyColumnsMap(const std::set<std::string> &keyColumns) {
+        std::map<std::string, std::set<std::string>> keyColumnsMap;
+        
+        for (const auto &keyColumn: keyColumns) {
+            const auto pair = utility::splitTableName(keyColumn);
+            const auto &tableName = pair.first;
+            const auto &columnName = pair.second;
+            
+            keyColumnsMap[tableName].insert(keyColumn);
+        }
+        
+        return std::move(keyColumnsMap);
+    }
     
     StateCluster::StateCluster(const std::set<std::string> &keyColumns):
         _logger(createLogger("StateCluster")),
         _keyColumns(keyColumns),
+        _keyColumnsMap(std::move(buildKeyColumnsMap(keyColumns))),
         _clusters()
     {
     
@@ -142,138 +159,162 @@ namespace ultraverse::state::v2 {
         }
     }
     
-    std::pair<std::vector<StateItem>, std::vector<StateItem>> StateCluster::merge(ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver) const {
-        static const auto isKeyColumnItem = [&resolver, this](const StateItem &item) {
-            return this->isKeyColumnItem(resolver, item);
+    std::pair<std::vector<StateItem>, std::vector<StateItem>>
+    StateCluster::extractItems(Transaction &transaction, const RelationshipResolver &resolver) const {
+        
+        std::map<std::string, StateItem> readKeyItems;
+        std::map<std::string, StateItem> writeKeyItems;
+        
+        std::vector<StateItem> _readKeyItems;
+        std::vector<StateItem> _writeKeyItems;
+        
+        auto processFn = [this, &resolver, &readKeyItems, &writeKeyItems](bool isWrite) {
+            return [this, &resolver, &readKeyItems, &writeKeyItems, isWrite](const StateItem &item) {
+                const auto &real = resolver.resolveRowChain(item);
+                
+                if (real != nullptr) {
+                    auto &_item = readKeyItems[real->name];
+                    
+                    if (_item.name.empty()) {
+                        _item.name = real->name;
+                        _item.function_type = FUNCTION_IN_INTERNAL;
+                    }
+                    
+                    _item.data_list.insert(
+                        _item.data_list.end(),
+                        item.data_list.begin(), item.data_list.end()
+                        );
+                } else {
+                    const auto &realColumn = resolver.resolveChain(item.name);
+                    
+                    if (!realColumn.empty()) {
+                        // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
+                        auto &_item = readKeyItems[realColumn];
+                        
+                        if (_item.name.empty()) {
+                            _item.name = realColumn;
+                            _item.function_type = FUNCTION_IN_INTERNAL;
+                        }
+                        
+                        _item.data_list.insert(
+                            _item.data_list.end(),
+                            item.data_list.begin(), item.data_list.end()
+                        );
+                    } else if (_keyColumns.find(item.name) != _keyColumns.end()) {
+                        // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
+                        auto &_item = isWrite ? writeKeyItems[item.name] : readKeyItems[item.name];
+                        
+                        if (_item.name.empty()) {
+                            _item.name = item.name;
+                            _item.function_type = FUNCTION_IN_INTERNAL;
+                        }
+                        
+                        _item.data_list.insert(
+                            _item.data_list.end(),
+                            item.data_list.begin(), item.data_list.end()
+                        );
+                    }
+                }
+            };
         };
         
-        std::map<std::string, StateItem> merged;
-        std::map<std::string, StateItem> merged_read;
+        {
+            auto it = transaction.readSet_begin();
+            const auto &end = it.end();
+            
+            std::for_each(it, end, processFn(false));
+        }
         
-        auto it = std::move(begin);
+        {
+            auto it = transaction.writeSet_begin();
+            const auto &end = it.end();
+            
+            std::for_each(it, end, processFn(true));
+        }
         
-        while (true) {
-            it = std::find_if(it, end, isKeyColumnItem);
+        for (const auto &pair: _keyColumnsMap) {
+            const auto &table = pair.first;
+            const auto &keyColumns = pair.second;
             
-            if (it == end) {
-                break;
-            }
-            
-            auto &item = *it;
-            auto &columnName = item.name;
-            
-            const auto &real = resolver.resolveRowChain(item);
-            
-            if (real != nullptr) {
-                auto &_item = merged_read[real->name];
+            {
+                std::set<std::string> foundReadColumns;
                 
-                if (_item.name.empty()) {
-                    _item.name = real->name;
-                    _item.function_type = FUNCTION_IN_INTERNAL;
+                for (const auto &keyColumn: keyColumns) {
+                    if (readKeyItems.find(keyColumn) != readKeyItems.end()) {
+                        foundReadColumns.insert(keyColumn);
+                    }
                 }
                 
-                _item.data_list.insert(
-                    _item.data_list.end(),
-                    item.data_list.begin(), item.data_list.end()
-                );
-            } else {
-                const auto &realColumn = resolver.resolveChain(item.name);
+                if (foundReadColumns.empty() || foundReadColumns.size() == keyColumns.size()) {
+                    continue;
+                }
                 
-                if (!realColumn.empty()) {
-                    // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
-                    auto &_item = merged_read[realColumn];
-                    
-                    if (_item.name.empty()) {
-                        _item.name = realColumn;
-                        _item.function_type = FUNCTION_IN_INTERNAL;
+                for (const auto &keyColumn: keyColumns) {
+                    if (foundReadColumns.find(keyColumn) != foundReadColumns.end()) {
+                        continue;
                     }
                     
-                    _item.data_list.insert(
-                        _item.data_list.end(),
-                        item.data_list.begin(), item.data_list.end()
-                    );
-                } else {
-                    // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
-                    auto &_item = type == READ ? merged_read[item.name] : merged[item.name];
-                    
-                    if (_item.name.empty()) {
-                        _item.name = item.name;
-                        _item.function_type = FUNCTION_IN_INTERNAL;
-                    }
-                    
-                    _item.data_list.insert(
-                        _item.data_list.end(),
-                        item.data_list.begin(), item.data_list.end()
-                    );
-
+                    readKeyItems[keyColumn] = StateItem::Wildcard(keyColumn);
                 }
             }
-        
-            ++it;
+            {
+                std::set<std::string> foundWriteColumns;
+                
+                for (const auto &keyColumn: keyColumns) {
+                    if (writeKeyItems.find(keyColumn) != writeKeyItems.end()) {
+                        foundWriteColumns.insert(keyColumn);
+                    }
+                }
+                
+                if (foundWriteColumns.empty() || foundWriteColumns.size() == keyColumns.size()) {
+                    continue;
+                }
+                
+                for (const auto &keyColumn: keyColumns) {
+                    if (foundWriteColumns.find(keyColumn) != foundWriteColumns.end()) {
+                        continue;
+                    }
+                    
+                    writeKeyItems[keyColumn] = StateItem::Wildcard(keyColumn);
+                }
+            }
         }
         
-        std::vector<StateItem> result;
-        result.reserve(merged.size());
+        // insert all values to vector
+        std::transform(
+            readKeyItems.begin(), readKeyItems.end(),
+            std::back_inserter(_readKeyItems),
+            [](const auto &pair) {
+                return pair.second;
+            }
+        );
         
-        for (auto &pair: merged) {
-            result.emplace_back(std::move(pair.second));
-        }
+        std::transform(
+            writeKeyItems.begin(), writeKeyItems.end(),
+            std::back_inserter(_writeKeyItems),
+            [](const auto &pair) {
+                return pair.second;
+            }
+        );
         
-        std::vector<StateItem> result_read;
-        result_read.reserve(merged_read.size());
-        
-        for (auto &pair: merged_read) {
-            result_read.emplace_back(std::move(pair.second));
-        }
-        
-        
-        return std::move(std::make_pair(std::move(result), std::move(result_read)));
+        return std::make_pair(
+            std::move(_readKeyItems),
+            std::move(_writeKeyItems)
+        );
     }
     
     
-    void StateCluster::insert(StateCluster::ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver) {
-        static const auto isKeyColumnItem = [&resolver, this](const StateItem &item) {
-            return this->isKeyColumnItem(resolver, item);
-        };
-        
-        const auto &pair = merge(type, begin, end, resolver);
-        const auto &items = pair.first;
-        const auto &itemsRead = pair.second;
-        
-        for (const auto &item: items) {
-            /*
-            auto &columnName = item.name;
-            
-            const auto &real = resolver.resolveRowChain(item);
-            
-            if (real != nullptr) {
-                // fk / alias를 해결한 경우에는 type 상관없이 강제로 READ 관계로 넣는다
-                insert(READ, real->name, real->MakeRange2(), gid);
-            } else {
-                const auto &realColumn = resolver.resolveChain(item.name);
-                
-                if (!realColumn.empty()) {
-                    // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
-                    // 이 경우에도 FK를 해결한 경우이므로 type 상꽌없이 강제로 READ 관계로 넣는다
-                    insert(READ, realColumn, item.MakeRange2(), gid);
-                } else {
-                    // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
-                    insert(type, columnName, item.MakeRange2(), gid);
-                }
-            }
-             */
-            
+    void StateCluster::insert(StateCluster::ClusterType type, const std::vector<StateItem> &items, gid_t gid) {
+        std::for_each(items.begin(), items.end(), [this, type, gid](const auto &item) {
             insert(type, item.name, item.MakeRange2(), gid);
-        }
-        
-        for (const auto &item: itemsRead) {
-            insert(READ, item.name, item.MakeRange2(), gid);
-        }
+        });
     }
     
     void StateCluster::insert(const std::shared_ptr<Transaction>& transaction, const RelationshipResolver &resolver) {
-        insert(READ, transaction->readSet_begin(), transaction->readSet_end(), transaction->gid(), resolver);
-        insert(WRITE, transaction->writeSet_begin(), transaction->writeSet_end(), transaction->gid(), resolver);
+        const auto &rwItemsPair = extractItems(*transaction, resolver);
+        
+        insert(READ, rwItemsPair.first, transaction->gid());
+        insert(WRITE, rwItemsPair.second, transaction->gid());
     }
     
     std::optional<StateRange> StateCluster::match(StateCluster::ClusterType type, const std::string &columnName,
@@ -285,22 +326,14 @@ namespace ultraverse::state::v2 {
         }
         
         const auto &cluster = _clusters.at(columnName);
-        
+        const auto &rwItemsPair = extractItems(*transaction, resolver);
         
         if (type == READ) {
-            const auto &pair = merge(type, transaction->readSet_begin(), transaction->readSet_end(), resolver);
-            const auto &items = pair.first;
-            const auto &itemsRead = pair.second;
-            
-            return std::move(StateCluster::Cluster::match(READ, columnName, cluster.read, itemsRead, resolver));
+            return std::move(StateCluster::Cluster::match(READ, columnName, cluster.read, rwItemsPair.first, resolver));
         }
         
         if (type == WRITE) {
-            const auto &pair = merge(type, transaction->writeSet_begin(), transaction->writeSet_end(), resolver);
-            const auto &items = pair.first;
-            const auto &itemsRead = pair.second;
-            
-            return std::move(StateCluster::Cluster::match(WRITE, columnName, cluster.write, items, resolver));
+            return std::move(StateCluster::Cluster::match(WRITE, columnName, cluster.write, rwItemsPair.second, resolver));
         }
         
         return std::nullopt;
