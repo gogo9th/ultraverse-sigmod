@@ -333,31 +333,25 @@ namespace ultraverse::state::v2 {
             );
             
             std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->variableSet()));
+            
             event->parse();
+            event->buildRWSet();
             
             query->setStatement(statement);
             query->setFlags(Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
             
             query->readSet().insert(
+                query->readSet().end(),
                 event->readSet().begin(), event->readSet().end()
             );
             query->writeSet().insert(
+                query->writeSet().end(),
                 event->writeSet().begin(), event->writeSet().end()
-            );
-            
-            query->itemSet().insert(
-                query->itemSet().end(),
-                event->itemSet().begin(), event->itemSet().end()
-            );
-            
-            query->whereSet().insert(
-                query->whereSet().end(),
-                event->whereSet().begin(), event->whereSet().end()
             );
             
             query->varMap().insert(
                 query->varMap().end(),
-                event->varMap().begin(), event->varMap().end()
+                event->variableSet().begin(), event->variableSet().end()
             );
             
             return queries.push_back(query);

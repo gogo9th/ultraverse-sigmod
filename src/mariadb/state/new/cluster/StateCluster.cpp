@@ -272,8 +272,8 @@ namespace ultraverse::state::v2 {
     }
     
     void StateCluster::insert(const std::shared_ptr<Transaction>& transaction, const RelationshipResolver &resolver) {
-        insert(READ, transaction->whereSet_begin(), transaction->whereSet_end(), transaction->gid(), resolver);
-        insert(WRITE, transaction->itemSet_begin(), transaction->itemSet_end(), transaction->gid(), resolver);
+        insert(READ, transaction->readSet_begin(), transaction->readSet_end(), transaction->gid(), resolver);
+        insert(WRITE, transaction->writeSet_begin(), transaction->writeSet_end(), transaction->gid(), resolver);
     }
     
     std::optional<StateRange> StateCluster::match(StateCluster::ClusterType type, const std::string &columnName,
@@ -288,7 +288,7 @@ namespace ultraverse::state::v2 {
         
         
         if (type == READ) {
-            const auto &pair = merge(type, transaction->whereSet_begin(), transaction->whereSet_end(), resolver);
+            const auto &pair = merge(type, transaction->readSet_begin(), transaction->readSet_end(), resolver);
             const auto &items = pair.first;
             const auto &itemsRead = pair.second;
             
@@ -296,7 +296,7 @@ namespace ultraverse::state::v2 {
         }
         
         if (type == WRITE) {
-            const auto &pair = merge(type, transaction->itemSet_begin(), transaction->itemSet_end(), resolver);
+            const auto &pair = merge(type, transaction->writeSet_begin(), transaction->writeSet_end(), resolver);
             const auto &items = pair.first;
             const auto &itemsRead = pair.second;
             

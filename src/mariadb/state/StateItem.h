@@ -28,7 +28,8 @@ enum EN_FUNCTION_TYPE
   FUNCTION_GT,
   FUNCTION_GE,
   FUNCTION_BETWEEN,
-  FUNCTION_IN_INTERNAL
+  FUNCTION_IN_INTERNAL,
+  FUNCTION_WILDCARD
 };
 
 class StateData
@@ -298,6 +299,7 @@ public:
   ~StateItem();
   
   static StateItem EQ(const std::string &name, const StateData &data);
+  static StateItem Wildcard(const std::string &name);
 
   /**
    * @deprecated use ::MakeRange2().

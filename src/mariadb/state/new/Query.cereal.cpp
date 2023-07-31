@@ -30,18 +30,9 @@ namespace ultraverse::state::v2 {
             _affectedTables,
             _readSet,
             _writeSet,
-            _foreignKeySet,
-            
-            _itemSet,
-            _updateSet,
-            _whereSet,
             _varMap,
             
-            _affectedRows,
-            _rowSet,
-            _changeSet,
-            
-            _sqlVarMap
+            _affectedRows
         );
     }
 }

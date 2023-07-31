@@ -1245,6 +1245,9 @@ bool StateItem::is_data_ok(const StateItem &item)
       return false;
     else
       return true;
+    
+  case FUNCTION_WILDCARD:
+    return true;
 
   default:
     return false;
@@ -1521,6 +1524,10 @@ std::shared_ptr<StateRange> StateItem::MakeRange(const StateItem &item) {
                 range->SetBegin(item.data_list[0], true);
                 return range;
             
+            case FUNCTION_WILDCARD:
+                range->setWildcard(true);
+                return range;
+            
             default:
                 break;
         }
@@ -1551,3 +1558,10 @@ StateItem StateItem::EQ(const std::string &name, const StateData &data) {
     return item;
 }
 
+StateItem StateItem::Wildcard(const std::string &name) {
+    StateItem item;
+    item.name = name;
+    item.function_type = FUNCTION_WILDCARD;
+    
+    return item;
+}

@@ -71,28 +71,17 @@ namespace ultraverse::state::v2 {
         uint8_t flags();
         void setFlags(uint8_t flags);
         
-        ColumnSet &readSet();
-        ColumnSet &writeSet();
-        std::unordered_set<std::string> &foreignKeySet();
-        
         /**
          * @brief Returns the set of 'row items' that were affected by the query.
          */
-        std::vector<StateItem> &itemSet();
+        std::vector<StateItem> &readSet();
         /**
          * @breif Returns the set of 'row items' before the update was applied.
          */
-        std::vector<StateItem> &updateSet();
-        std::vector<StateItem> &whereSet();
+        std::vector<StateItem> &writeSet();
         std::vector<StateItem> &varMap();
         
-        std::vector<std::string> &rowSet();
-        std::vector<std::string> &changeSet();
-        
-        std::unordered_map<std::string, StateData> &sqlVarMap();
-        
         std::string varMappedStatement(const std::vector<StateItem> &variableSet) const;
-        
         
         template <typename Archive>
         void serialize(Archive &archive);
@@ -114,20 +103,11 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, StateHash> _afterHash;
     
         std::unordered_set<std::string> _affectedTables;
-        ColumnSet _readSet;
-        ColumnSet _writeSet;
-        std::unordered_set<std::string> _foreignKeySet;
-    
-        std::vector<StateItem> _itemSet;
-        std::vector<StateItem> _updateSet;
-        std::vector<StateItem> _whereSet;
+        std::vector<StateItem> _readSet;
+        std::vector<StateItem> _writeSet;
         std::vector<StateItem> _varMap;
         
-        std::unordered_map<std::string, StateData> _sqlVarMap;
-        
         uint32_t _affectedRows;
-        std::vector<std::string> _rowSet;
-        std::vector<std::string> _changeSet;
     };
 }
 

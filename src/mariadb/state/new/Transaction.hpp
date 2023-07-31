@@ -67,46 +67,46 @@ namespace ultraverse::state::v2 {
         
         std::vector<std::shared_ptr<Query>> &queries();
         
-        CombinedIterator<StateItem> whereSet_begin();
+        CombinedIterator<StateItem> readSet_begin();
         
         /**
          * @note 성능 이슈가 발생할 수 있으므로 너무 자주 호출하지 마십시오. (아래 예시 참조)
          * @example
          *      // 나쁜 사용예
-         *      auto it = transaction.whereSet_begin();
-         *      while (it != transaction.whereSet_end()) {
+         *      auto it = transaction.readSet_begin();
+         *      while (it != transaction.readSet_end()) {
          *          //       ^^^^^^^^^^^^^^^^^^^^^^^^^^ 매번 호출되면서 transaction.query를 순회하며 새 vector를 내부적으로 만듬
          *      }
          *
          *      // 좋은 사용예
-         *      auto it = transaction.whereSet_begin();
-         *      auto itEnd = transaction.whereSet_end();
+         *      auto it = transaction.readSet_begin();
+         *      auto itEnd = transaction.readSet_end();
          *
          *      while (it != itEnd) {
          *          // ...
          *      }
          */
-        CombinedIterator<StateItem> whereSet_end();
+        CombinedIterator<StateItem> readSet_end();
         
-        CombinedIterator<StateItem> itemSet_begin();
+        CombinedIterator<StateItem> writeSet_begin();
         /**
          * @note 성능 이슈가 발생할 수 있으므로 너무 자주 호출하지 마십시오. (아래 예시 참조)
          * @example
          *      // 나쁜 사용예
-         *      auto it = transaction.itemSet_begin();
-         *      while (it != transaction.itemSet_end()) {
+         *      auto it = transaction.writeSet_begin();
+         *      while (it != transaction.writeSet_end()) {
          *          //       ^^^^^^^^^^^^^^^^^^^^^^^^^ 매번 호출되면서 transaction.query를 순회하며 새 vector를 내부적으로 만듬
          *      }
          *
          *      // 좋은 사용예
-         *      auto it = transaction.itemSet_begin();
-         *      auto itEnd = transaction.itemSet_end();
+         *      auto it = transaction.writeSet_begin();
+         *      auto itEnd = transaction.writeSet_end();
          *
          *      while (it != itEnd) {
          *          // ...
          *      }
          */
-        CombinedIterator<StateItem> itemSet_end();
+        CombinedIterator<StateItem> writeSet_end();
         
         
         /**

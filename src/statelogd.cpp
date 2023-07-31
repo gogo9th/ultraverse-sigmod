@@ -181,8 +181,9 @@ public:
                     
                     auto promise = _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, rowEvent = std::move(rowEvent), tableMapEvent = std::move(tableMapEvent), pendingRowQueryEvent]() {
                         auto pendingQuery = std::make_shared<state::v2::Query>();
-                        processRowEvent(rowEvent, pendingQuery, tableMapEvent);
-                        processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
+                        
+                        processRowEvent(rowEvent, pendingRowQueryEvent, pendingQuery, tableMapEvent);
+                        // processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
                         
                         return pendingQuery;
                     });
@@ -266,7 +267,6 @@ public:
                 }
                 
                 for (int i = prevIndex; i < index; i++) {
-                    _logger->trace("filling truncated query: {}", i);
                     auto queries = procMatcher->asQuery(i, *procCall);
                     for (auto &query : queries) {
                         query->setDatabase(pendingQuery->database());
@@ -323,6 +323,7 @@ public:
         if (event->isDDL()) {
             event->parse();
             event->parseDDL();
+            event->buildRWSet();
 
             pendingQuery->setFlags(
                 pendingQuery->flags() |
@@ -330,9 +331,11 @@ public:
             );
 
             pendingQuery->readSet().insert(
-                event->readSet().begin(), event->readSet().end()
+                pendingQuery->readSet().end(),
+                event->readSet().begin(),event->readSet().end()
             );
             pendingQuery->writeSet().insert(
+                pendingQuery->writeSet().end(),
                 event->writeSet().begin(), event->writeSet().end()
             );
 
@@ -348,10 +351,14 @@ public:
                 event->parseDDL(1);
             }
             
+            event->buildRWSet();
+            
             pendingQuery->readSet().insert(
+                pendingQuery->readSet().end(),
                 event->readSet().begin(), event->readSet().end()
             );
             pendingQuery->writeSet().insert(
+                pendingQuery->writeSet().end(),
                 event->writeSet().begin(), event->writeSet().end()
             );
 
@@ -400,31 +407,13 @@ public:
         _tableMap[event->tableId()] = event;
     }
     
-    void processRowEvent(std::shared_ptr<mariadb::RowEvent> event, std::shared_ptr<state::v2::Query> pendingQuery, std::shared_ptr<mariadb::TableMapEvent> tableMapEvent) {
-        _logger->trace("[ROW] processing row event");
+    void processRowEvent(std::shared_ptr<mariadb::RowEvent> event,
+                         std::shared_ptr<mariadb::RowQueryEvent> rowQueryEvent,
+                         std::shared_ptr<state::v2::Query> pendingQuery,
+                         std::shared_ptr<mariadb::TableMapEvent> tableMapEvent) {
         
-        /*
-        _tableMapMutex.lock();
-        auto table = _tableMap[event->tableId()];
-        // auto &hash = _stateHashMap[table->table()];
-         */
-
-        /*
-        if (!hash.isInitialized()) {
-            hash.init();
-        }
-         */
-
         event->mapToTable(*tableMapEvent);
     
-        /*
-        for (auto &it: _tableMap) {
-            if (it.second->database() == table->database()) {
-                pendingQuery->setBeforeHash(it.second->table(), _stateHashMap[it.second->table()]);
-            }
-        }
-         */
-
         switch (event->type()) {
             case mariadb::RowEvent::INSERT:
                 pendingQuery->setType(state::v2::Query::INSERT);
@@ -436,121 +425,64 @@ public:
                 pendingQuery->setType(state::v2::Query::UPDATE);
                 break;
         }
-    
-        for (int i = 0; i < event->affectedRows(); i++) {
-            switch (event->type()) {
-                case mariadb::RowEvent::INSERT:
-                    pendingQuery->rowSet().push_back(event->rowSet(i));
-
-                    // hash += event->rowSet(i);
-                    break;
-                case mariadb::RowEvent::DELETE:
-                    pendingQuery->rowSet().push_back(event->rowSet(i));
-
-                    // hash -= event->rowSet(i);
-                    break;
-            
-                case mariadb::RowEvent::UPDATE:
-                    pendingQuery->rowSet().push_back(event->rowSet(i));
-                    pendingQuery->changeSet().push_back(event->changeSet(i));
-
-                    // hash -= event->rowSet(i);
-                    // hash += event->changeSet(i);
-                    break;
-            }
-        }
-        
-        /*
-        for (auto &it: _tableMap) {
-            if (it.second->database() == table->database()) {
-                pendingQuery->setAfterHash(it.second->table(), _stateHashMap[it.second->table()]);
-            }
-        }
-         */
-        // _tableMapMutex.unlock();
 
         pendingQuery->setTimestamp(event->timestamp());
         pendingQuery->setAffectedRows(event->affectedRows());
-
+        pendingQuery->setStatement(rowQueryEvent->statement());
         pendingQuery->setDatabase(tableMapEvent->database());
-
-        pendingQuery->itemSet().insert(
-            pendingQuery->itemSet().begin(),
-            event->itemSet().begin(), event->itemSet().end()
-        );
         
-        pendingQuery->updateSet().insert(
-            pendingQuery->updateSet().begin(),
-            event->updateSet().begin(), event->updateSet().end()
-        );
-
+        
+        mariadb::QueryEvent dummyEvent(pendingQuery->database(), rowQueryEvent->statement(), 0);
         
         if (!(event->flags() & 1)) {
             pendingQuery->setFlags(pendingQuery->flags() | state::v2::Query::FLAG_IS_CONTINUOUS);
         }
-    }
-    
-    void processRowQueryEvent(std::shared_ptr<mariadb::RowQueryEvent> event, std::shared_ptr<state::v2::Query> pendingQuery) {
-        pendingQuery->setStatement(event->statement());
-
-        if (isProcedureHint(event->statement())) {
+        
+        
+        dummyEvent.itemSet().insert(
+            dummyEvent.itemSet().end(),
+            event->itemSet().begin(), event->itemSet().end()
+        );
+        
+        dummyEvent.itemSet().insert(
+            dummyEvent.itemSet().end(),
+            event->updateSet().begin(), event->updateSet().end()
+        );
+        
+        if (!dummyEvent.parse()) {
+            dummyEvent.parseDDL(1);
+        }
+        dummyEvent.buildRWSet();
+        
+        pendingQuery->readSet().insert(
+            pendingQuery->readSet().end(),
+            dummyEvent.readSet().begin(), dummyEvent.readSet().end()
+        );
+        
+        pendingQuery->writeSet().insert(
+            pendingQuery->writeSet().end(),
+            dummyEvent.writeSet().begin(), dummyEvent.writeSet().end()
+        );
+        
+        pendingQuery->varMap().insert(
+            pendingQuery->varMap().end(),
+            dummyEvent.variableSet().begin(), dummyEvent.variableSet().end()
+        );
+        
+        if (isProcedureHint(rowQueryEvent->statement())) {
             std::scoped_lock<std::mutex> _lock(_procLogMutex);
-
+            
             /*
             if (_pendingProcCall != nullptr) {
                 return;
             }
              */
             
-            const auto &json = pendingQuery->itemSet().begin()->data_list.at(0).getAs<std::string>();
+            const auto &json = pendingQuery->writeSet().begin()->data_list.at(0).getAs<std::string>();
             _pendingProcCall = prepareProcedureCall(json);
         }
-
-
-        mariadb::QueryEvent dummyEvent(pendingQuery->database(), event->statement(), 0);
-        
-        dummyEvent.itemSet().insert(
-            dummyEvent.itemSet().begin(),
-            pendingQuery->itemSet().begin(), pendingQuery->itemSet().end()
-        );
-        
-        /*
-        dummyEvent.whereSet().insert(
-            dummyEvent.whereSet().begin(),
-            pendingQuery->whereSet().begin(), pendingQuery->whereSet().end()
-        );
-         */
-        
-        if (!dummyEvent.parse()) {
-            dummyEvent.parseDDL(1);
-        }
-
-        pendingQuery->readSet().insert(
-            dummyEvent.readSet().begin(), dummyEvent.readSet().end()
-        );
-        pendingQuery->writeSet().insert(
-            dummyEvent.writeSet().begin(), dummyEvent.writeSet().end()
-        );
-        
-        /*
-        pendingQuery->itemSet().insert(
-            pendingQuery->itemSet().begin(),
-            dummyEvent.itemSet().begin(), dummyEvent.itemSet().end()
-        );
-         */
-        pendingQuery->whereSet().insert(
-            pendingQuery->whereSet().begin(),
-            dummyEvent.whereSet().begin(), dummyEvent.whereSet().end()
-        );
-        
-        pendingQuery->varMap().insert(
-            pendingQuery->varMap().end(),
-            dummyEvent.varMap().begin(), dummyEvent.varMap().end()
-        );
-        
-        pendingQuery->sqlVarMap() = dummyEvent.sqlVarMap();
     }
-
+    
     void sigintHandler(int param) {
         terminateStatus = true;
         _binlogReader->terminate();

@@ -313,8 +313,8 @@ namespace ultraverse::state::v2 {
         
         std::future<void> readSetTask = std::async(std::launch::async, [this, &transaction, &relations, &defers, &_mapMutex, nodeId] () {
             // WRITE - READ / READ - READ
-            auto it = transaction->whereSet_begin();
-            const auto itEnd = transaction->whereSet_end();
+            auto it = transaction->readSet_begin();
+            const auto itEnd = transaction->readSet_end();
             
             std::for_each(std::execution::par, it, itEnd, [this, &relations, &defers, &_mapMutex, nodeId] (const auto &item) {
                 std::string name = std::move(_resolver.resolveChain(item.name));
@@ -368,8 +368,8 @@ namespace ultraverse::state::v2 {
         
         std::future<void> writeSetTask = std::async(std::launch::async, [this, &transaction, &relations, &defers, &_mapMutex, nodeId] () {
             // WRITE - WRITE, READ - WRITE
-            auto it = transaction->itemSet_begin();
-            const auto itEnd = transaction->itemSet_end();
+            auto it = transaction->writeSet_begin();
+            const auto itEnd = transaction->writeSet_end();
             
             std::for_each(std::execution::par, it, itEnd, [this, &relations, &defers, &_mapMutex, &transaction, nodeId] (const auto &item) {
                 std::string name = std::move(_resolver.resolveChain(item.name));

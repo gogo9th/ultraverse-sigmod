@@ -71,36 +71,36 @@ namespace ultraverse::state::v2 {
         return _queries;
     }
     
-    CombinedIterator<StateItem> Transaction::whereSet_begin() {
+    CombinedIterator<StateItem> Transaction::readSet_begin() {
         std::vector<std::reference_wrapper<std::vector<StateItem>>> containers;
         
         std::transform(
             std::begin(_queries), std::end(_queries),
             std::back_inserter(containers),
-            [](std::shared_ptr<Query> &query) { return std::reference_wrapper<std::vector<StateItem>>(query->whereSet()); }
+            [](std::shared_ptr<Query> &query) { return std::reference_wrapper<std::vector<StateItem>>(query->readSet()); }
         );
         
         return CombinedIterator<StateItem>(containers);
     }
     
-    CombinedIterator<StateItem> Transaction::whereSet_end() {
-        return whereSet_begin().end();
+    CombinedIterator<StateItem> Transaction::readSet_end() {
+        return readSet_begin().end();
     }
     
-    CombinedIterator<StateItem> Transaction::itemSet_begin() {
+    CombinedIterator<StateItem> Transaction::writeSet_begin() {
         std::vector<std::reference_wrapper<std::vector<StateItem>>> containers;
         
         std::transform(
             std::begin(_queries), std::end(_queries),
             std::back_inserter(containers),
-            [](std::shared_ptr<Query> &query) { return std::reference_wrapper<std::vector<StateItem>>(query->itemSet()); }
+            [](std::shared_ptr<Query> &query) { return std::reference_wrapper<std::vector<StateItem>>(query->writeSet()); }
         );
         
         return CombinedIterator<StateItem>(containers);
     }
     
-    CombinedIterator<StateItem> Transaction::itemSet_end() {
-        return itemSet_begin().end();
+    CombinedIterator<StateItem> Transaction::writeSet_end() {
+        return writeSet_begin().end();
     }
     
     bool Transaction::isRelatedToDatabase(const std::string database) {

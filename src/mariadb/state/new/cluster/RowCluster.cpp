@@ -344,13 +344,13 @@ namespace ultraverse::state::v2 {
     }
     
     bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
-        for (auto &expr: query.whereSet()) {
+        for (auto &expr: query.readSet()) {
             if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases)) {
                 return true;
             }
         }
         
-        for (auto &expr: query.itemSet()) {
+        for (auto &expr: query.writeSet()) {
             if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases)) {
                 return true;
             }

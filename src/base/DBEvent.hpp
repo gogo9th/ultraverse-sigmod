@@ -84,6 +84,23 @@ namespace ultraverse::base {
      */
     class QueryEventBase: public DBEvent {
     public:
+        enum QueryType {
+            UNKNOWN = 0,
+            
+            // DML
+            SELECT = 1,
+            INSERT = 2,
+            UPDATE = 3,
+            DELETE = 4,
+            
+            // DDL
+            CREATE_TABLE = 11,
+            ALTER_TABLE = 12,
+            DROP_TABLE = 13,
+            RENAME_TABLE = 14,
+            TRUNCATE_TABLE = 15,
+        };
+        
         event_type::Value eventType() override {
             return event_type::QUERY;
         }
@@ -111,9 +128,14 @@ namespace ultraverse::base {
         bool tokenize();
         /**
          * @brief SQL statement를 파싱 시도한다.
+         * @note 이 메소드는 _itemSet, _variableSet, _whereSet, _varMap 을 채운다.
          */
         bool parse();
         
+        /**
+         * @brief _itemSet, _whereSet으로부터 _readSet, _writeSet을 채운다.
+         */
+        void buildRWSet();
         
         /**
          * @deprecated 더 이상 사용되지 않는다.
@@ -143,36 +165,21 @@ namespace ultraverse::base {
          * @brief DML 쿼리인지 여부를 반환한다.
          */
         bool isDML() const;
-    
-        /**
-         * @brief 이 쿼리가 읽기 액세스하는 테이블 컬럼의 목록을 반환한다.
-         */
-        std::unordered_set<std::string> &readSet();
-        /**
-         * @brief 이 쿼리가 쓰기 액세스하는 테이블 컬럼의 목록을 반환한다.
-         */
-        std::unordered_set<std::string> &writeSet();
+        
+        std::vector<StateItem> &itemSet();
     
         /**
          * @brief 이 쿼리의 실행 결과 (row image)를 반환한다.
          */
-        std::vector<StateItem> &itemSet();
+        std::vector<StateItem> &readSet();
         /**
          * @brief WHERE 절의 row image를 반환한다.
          */
-        std::vector<StateItem> &whereSet();
+        std::vector<StateItem> &writeSet();
         /**
          * @brief SQL 변수의 row image를 반환한다.
          */
         std::vector<StateItem> &variableSet();
-        /**
-         * TODO: 문서화 필요
-         */
-        std::vector<StateItem> &varMap();
-        
-        
-        /** @deprecated */
-        std::unordered_map<std::string, StateData> &sqlVarMap();
         
     protected:
         LoggerPtr _logger;
@@ -198,22 +205,21 @@ namespace ultraverse::base {
         
         StateItem *findStateItem(const std::string &name);
         
+        QueryType _queryType;
+        
         std::vector<int16_t> _tokens;
         std::vector<size_t> _tokenPos;
+        
+        std::unordered_set<std::string> _relatedTables;
     
-        std::unordered_set<std::string> _readSet;
-        std::unordered_set<std::string> _writeSet;
+        std::unordered_set<std::string> _readColumns;
+        std::unordered_set<std::string> _writeColumns;
+        std::vector<StateItem> _readItems;
+        std::vector<StateItem> _writeItems;
     
-        /** @deprecated use _insertSet, _deleteSet instead. */
         std::vector<StateItem> _itemSet;
         std::vector<StateItem> _variableSet;
-        
-        std::vector<StateItem> _insertSet;
-        std::vector<StateItem> _deleteSet;
         std::vector<StateItem> _whereSet;
-        std::vector<StateItem> _varMap;
-        
-        std::unordered_map<std::string, StateData> _sqlVarMap;
         
         hsql::SQLParserResult _parseResult;
     };

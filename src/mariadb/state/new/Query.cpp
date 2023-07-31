@@ -96,45 +96,18 @@ namespace ultraverse::state::v2 {
         _flags = flags;
     }
     
-    ColumnSet &Query::readSet() {
+    std::vector<StateItem> &Query::readSet() {
         return _readSet;
     }
     
-    ColumnSet &Query::writeSet() {
+    std::vector<StateItem> &Query::writeSet() {
         return _writeSet;
-    }
-    
-    std::unordered_set<std::string> &Query::foreignKeySet() {
-        return _foreignKeySet;
-    }
-    
-    std::vector<StateItem> &Query::itemSet() {
-        return _itemSet;
-    }
-    
-    std::vector<StateItem> &Query::updateSet() {
-        return _updateSet;
-    }
-    
-    std::vector<StateItem> &Query::whereSet() {
-        return _whereSet;
     }
     
     std::vector<StateItem> &Query::varMap() {
         return _varMap;
     }
-    
-    std::vector<std::string> &Query::rowSet() {
-        return _rowSet;
-    }
-    
-    std::vector<std::string> &Query::changeSet() {
-        return _changeSet;
-    }
-    
-    std::unordered_map<std::string, StateData> &Query::sqlVarMap() {
-        return _sqlVarMap;
-    }
+
     
     std::string Query::varMappedStatement(const std::vector<StateItem> &variableSet) const {
         std::string statement = this->statement();

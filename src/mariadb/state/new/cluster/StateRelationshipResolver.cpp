@@ -140,8 +140,8 @@ namespace ultraverse::state::v2 {
             const auto &alias = pair.first;
             const auto &real = pair.second;
             
-            auto itBegin = transaction.itemSet_begin();
-            auto itEnd = transaction.itemSet_end();
+            auto itBegin = transaction.writeSet_begin();
+            auto itEnd = transaction.writeSet_end();
             
             auto aliasIt = std::find_if(itBegin, itEnd, [alias](const auto &item) { return item.name == alias; });
             auto itemIt = std::find_if(itBegin, itEnd, [real](const auto &item) { return item.name == real; });
