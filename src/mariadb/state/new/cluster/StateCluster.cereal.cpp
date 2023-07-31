@@ -4,8 +4,6 @@
 
 #include <cereal/types/vector.hpp>
 #include <cereal/types/set.hpp>
-#include <cereal/types/map.hpp>
-#include <cereal/types/unordered_set.hpp>
 #include <cereal/types/unordered_map.hpp>
 
 #include "StateCluster.hpp"

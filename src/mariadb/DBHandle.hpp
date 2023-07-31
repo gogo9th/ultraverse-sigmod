@@ -15,6 +15,9 @@
 #include "utils/log.hpp"
 
 namespace ultraverse::mariadb {
+    /**
+     * @brief MySQL DB 핸들 클래스
+     */
     class DBHandle: base::DBHandle {
     public:
         explicit DBHandle();

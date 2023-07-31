@@ -67,7 +67,7 @@ namespace ultraverse::state::v2 {
         return _keyColumns;
     }
     
-    const std::map<std::string, StateCluster::Cluster> &StateCluster::clusters() const {
+    const std::unordered_map<std::string, StateCluster::Cluster> &StateCluster::clusters() const {
         return _clusters;
     }
     

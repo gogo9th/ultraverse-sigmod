@@ -23,6 +23,37 @@ namespace ultraverse::state::v2 {
         void serialize(Archive &archive);
     };
     
+    /**
+     * @brief FK / Alias 관계를 해결(resolve)하기 위한 인터페이스
+     *
+     * @details MySQL같은 관계형 DB에서는 다음과 같은 형태로 테이블 간 관계를 정의하여 사용하는 경우가 있다.
+     * <pre>
+     *   users.id -> posts.user_id
+     *   users.id -> comments.user_id
+     *   users.id -> likes.user_id
+     *   ...
+     * </pre>
+     *
+     * 그 외에도, 다음과 같은 형태로 Alias 관계를 정의하여 사용하는 경우가 있다.
+     * <pre>
+     *   users.id -> users.handle_name
+     *   (users.id = 1) == (users.handle_name == '@butter')
+     *
+     *   @butter는 users.id가 1인 사용자의 핸들 이름이다.
+     *   이 경우, users.id와 users.handle_name은 Alias 관계로 정의되어 있다고 볼 수 있다.
+     * </pre>
+     *
+     * 그리고, Alias와 FK 관계를 함께 사용하는 경우도 있다.
+     * <pre>
+     *   users.id -> users.handle_name
+     *   (users.id = 1) == (users.handle_name == '@butter')
+     *
+     *   posts.author -> users.handle_name -> users.id
+     *   (posts.author = '@butter') == (users.handle_name = '@butter') == (users.id = 1)
+     * </pre>
+     *
+     * 이 클래스는 이러한 관계를 해결하여 원래 컬럼 이름을 찾아주는 역할을 한다.
+     */
     class RelationshipResolver {
     public:
         

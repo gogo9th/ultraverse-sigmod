@@ -19,6 +19,9 @@
 
 #include "utils/log.hpp"
 
+/**
+ * @brief 추상화된 DB 이벤트 타입
+ */
 namespace ultraverse::event_type {
     enum Value {
         UNKNOWN = 0,
@@ -44,9 +47,15 @@ namespace ultraverse::column_type {
 }
 
 namespace ultraverse::base {
+    /**
+     * @brief 여러 DB 소프트웨어를 지원하기 위한 binlog 이벤트 추상화 클래스
+     */
     class DBEvent {
     public:
+        
+        /** @brief 이벤트 타입을 반환한다 */
         virtual event_type::Value eventType() = 0;
+        /** @brief 이 이벤트가 실행된 시간을 반환한다 */
         virtual uint64_t timestamp() = 0;
         
         const char *rawObject() {
@@ -58,6 +67,9 @@ namespace ultraverse::base {
         };
     };
     
+    /**
+     * @brief 트랜잭션 종료 (ID 발행) 이벤트
+     */
     class TransactionIDEventBase: public DBEvent {
     public:
         event_type::Value eventType() override {
@@ -67,6 +79,9 @@ namespace ultraverse::base {
         virtual uint64_t transactionId() = 0;
     };
     
+    /**
+     * @brief 쿼리 실행 이벤트
+     */
     class QueryEventBase: public DBEvent {
     public:
         event_type::Value eventType() override {
@@ -75,36 +90,84 @@ namespace ultraverse::base {
         
         QueryEventBase();
         
+        /**
+         * @brief QueryEventBase::parse() 의 오류 코드를 반환한다.
+         */
         virtual const int64_t error() = 0;
         
+        /**
+         * @brief statement (쿼리문)을 반환한다.
+         */
         virtual const std::string &statement() = 0;
+        /**
+         * @brief 쿼리가 실행된 데이터베이스 이름을 반환한다.
+         */
         virtual const std::string &database() = 0;
         
         /**
-         * try to tokenize SQL statement.
-         * @return returns false if fails.
+         * @brief tokenize를 시도한다.
+         * @return 실패 시 false를 반환한다.
          */
         bool tokenize();
         /**
-         * try to parse SQL statement if needed.
+         * @brief SQL statement를 파싱 시도한다.
          */
         bool parse();
-
+        
+        
+        /**
+         * @deprecated 더 이상 사용되지 않는다.
+         */
         bool parseSelect();
+        /**
+         * @brief DDL (CREATE TABLE ... 등)을 파싱한다.
+         * @deprecated 더 이상 사용해선 안된다. QueryEventBase::parse()로 통합되어야 한다.
+         */
         bool parseDDL(int limit = -1);
         
+        /**
+         * @brief QueryEventBase::tokenize() 의 결과물에 액세스한다.
+         * @return
+         */
         std::vector<int16_t> tokens() const;
+        /**
+         * @brief QueryEventBase::tokenize() 의 결과물에 액세스한다.
+         */
         std::vector<size_t> tokenPos() const;
         
+        /**
+         * @brief DDL 쿼리인지 여부를 반환한다.
+         */
         bool isDDL() const;
+        /**
+         * @brief DML 쿼리인지 여부를 반환한다.
+         */
         bool isDML() const;
     
+        /**
+         * @brief 이 쿼리가 읽기 액세스하는 테이블 컬럼의 목록을 반환한다.
+         */
         std::unordered_set<std::string> &readSet();
+        /**
+         * @brief 이 쿼리가 쓰기 액세스하는 테이블 컬럼의 목록을 반환한다.
+         */
         std::unordered_set<std::string> &writeSet();
     
+        /**
+         * @brief 이 쿼리의 실행 결과 (row image)를 반환한다.
+         */
         std::vector<StateItem> &itemSet();
+        /**
+         * @brief WHERE 절의 row image를 반환한다.
+         */
         std::vector<StateItem> &whereSet();
+        /**
+         * @brief SQL 변수의 row image를 반환한다.
+         */
         std::vector<StateItem> &variableSet();
+        /**
+         * TODO: 문서화 필요
+         */
         std::vector<StateItem> &varMap();
         
         

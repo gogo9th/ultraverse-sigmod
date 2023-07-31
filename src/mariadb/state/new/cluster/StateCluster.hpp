@@ -19,25 +19,33 @@
 
 #include "utils/log.hpp"
 
-/**
- * @brief Row-level clustering을 위한 클래스
- *
- * TODO: StateRowCluster로 이름 바꿔야 하지 않을까??
- *
- * +-----------------------+
- * | users.id              |
- * +-----------------------+
- * | +-------------------+ |
- * | | user.id=1         | |
- * | +-------------------+ |
- * | | read = {1, 3, 5}  | |
- * | | write = {2, 4, 6} | |
- * | +-------------------+ |
- * +-----------------------+
- *
- */
 namespace ultraverse::state::v2 {
-    
+
+    /**
+     * @brief Row-level clustering을 위한 클래스
+     *
+     * TODO: StateRowCluster로 이름 바꿔야 하지 않을까??
+     * <pre>
+     * +-----------------------+-----------------------+
+     * | users.id              | posts.id              |
+     * +-----------------------+-----------------------+
+     * | +-------------------+ | +-------------------+ |
+     * | | user.id=1         | | | post.id=1         | |
+     * | +-------------------+ | +-------------------+ |
+     * | | read = {1, 3, 5}  | | | read = {1, 3, 5}  | |
+     * | | write = {2, 4, 6} | | | write = {2, 4, 6} | |
+     * | +-------------------+ | +-------------------+ |
+     * | +-------------------+ |                       |
+     * | | user.id=1         | |                       |
+     * | +-------------------+ |                       |
+     * | | read = {1, 3, 5}  | |                       |
+     * | | write = {2, 4, 6} | |                       |
+     * | +-------------------+ |                       |
+     * |                       |                       |
+     * +-----------------------+ +-----------------------+
+     * </pre>
+     *
+     */
     class StateCluster {
     public:
         enum ClusterType {
@@ -64,32 +72,57 @@ namespace ultraverse::state::v2 {
         StateCluster(const std::set<std::string> &keyColumns);
         
         const std::set<std::string> &keyColumns() const;
-        const std::map<std::string, Cluster> &clusters() const;
+        const std::unordered_map<std::string, Cluster> &clusters() const;
         
+        /**
+         * @brief 주어진 컬럼이 키 컬럼인지 확인한다
+         */
         bool isKeyColumnItem(const RelationshipResolver &resolver, const StateItem& item) const;
         
         void insert(ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid);
         void insert(ClusterType type, CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, gid_t gid, const RelationshipResolver &resolver);
+        
+        /**
+         * @brief 주어진 트랜잭션을 클러스터에 추가한다.
+         */
         void insert(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
         
         std::optional<StateRange> match(ClusterType type, const std::string &columnName, const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver) const;
         
         void describe();
         
+        /**
+         * @brief rollback 대상 트랜잭션을 추가한다.
+         */
         void addRollbackTarget(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
+        /**
+         * @brief prepend 대상 트랜잭션을 추가한다.
+         */
         void addPrependTarget(gid_t gid, const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
         
+        /**
+         * @brief 주어진 gid를 가진 트랜잭션이 재실행 대상인지 확인한다.
+         */
         bool shouldReplay(gid_t gid);
         
         template <typename Archive>
         void serialize(Archive &archive);
         
     private:
+        /**
+         * @brief rollback / append 대상 트랜잭션 관련 데이터를 캐싱하기 위한 클래스
+         */
         class TargetTransactionCache {
         public:
             std::shared_ptr<Transaction> transaction;
             
+            /**
+             * @brief rollback / append 대상 트랜잭션이 읽어들이는 컬럼(과 그 범위)
+             */
             std::unordered_map<std::string, StateRange> read;
+            /**
+             * @brief rollback / append 대상 트랜잭션이 써내는 컬럼(과 그 범위)
+             */
             std::unordered_map<std::string, StateRange> write;
         };
         
@@ -99,8 +132,14 @@ namespace ultraverse::state::v2 {
             CombinedIterator<StateItem> begin, CombinedIterator<StateItem> end, const RelationshipResolver &resolver
         ) const;
         
+        /**
+         * rollback / append 대상 트랜잭션의 캐시를 갱신한다.
+         */
         void invalidateTargetCache(std::unordered_map<gid_t, TargetTransactionCache> &targets, const RelationshipResolver &resolver);
         
+        /**
+         * @brief 주어진 gid를 가진 트랜잭션이 재실행 대상인지 확인한다 (internal)
+         */
         bool shouldReplay(gid_t gid, const TargetTransactionCache &cache);
         
         LoggerPtr _logger;
@@ -108,7 +147,7 @@ namespace ultraverse::state::v2 {
         std::mutex _clusterInsertionLock;
         
         std::set<std::string> _keyColumns;
-        std::map<std::string, Cluster> _clusters;
+        std::unordered_map<std::string, Cluster> _clusters;
         
         std::mutex _targetCacheLock;
         std::unordered_map<gid_t, TargetTransactionCache> _rollbackTargets;

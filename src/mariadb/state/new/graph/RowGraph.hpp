@@ -40,6 +40,9 @@ namespace ultraverse::state::v2 {
     using RowGraphId =
         boost::graph_traits<RowGraphInternal>::vertex_descriptor;
     
+    /**
+     * @brief 트랜잭션 동시 실행 가능 여부 판정을 위한 Rowid-level 그래프
+     */
     class RowGraph {
     public:
         struct RWStateHolder {
@@ -48,31 +51,57 @@ namespace ultraverse::state::v2 {
         };
         explicit RowGraph(const std::set<std::string> &keyColumns, const RelationshipResolver &resolver);
         
+        /**
+         * @brief 트랜잭션을 그래프에 추가하고, 의존성을 해결한다.
+         * @return 그래프의 노드 ID를 반환한다.
+         * @note 그래프의 노드 ID는 트랜잭션 GID와 다르다!
+         */
         RowGraphId addNode(std::shared_ptr<Transaction> transaction);
         
+        /**
+         * @brief 사용되지 않음
+         */
         std::unordered_set<RowGraphId> dependenciesOf(RowGraphId nodeId);
+        /**
+         * @brief 사용되지 않음
+         */
         std::unordered_set<RowGraphId> dependentsOf(RowGraphId nodeId);
         
+        /**
+         * @brief 사용되지 않음
+         */
         std::unordered_set<RowGraphId> entrypoints();
         
+        /**
+         * @brief 모든 그래프 노드가 처리되었는지 여부를 반환한다.
+         */
         bool isFinalized() const;
        
         /**
-         * finds for 'entrypoint node', and marks it as processed by workerId
-         * @returns node id for the 'entrypoint', or UINT64_MAX if not found
+         * @brief workerId가 처리할 수 있는 노드를 찾는다.
+         * @return 노드 ID를 반환한다. 단, 당장 처리할 수 있는 노드가 없으면 nullptr를 반환한다.
          */
         RowGraphId entrypoint(int workerId);
         
+        /**
+         * @brief 노드 ID로 노드에 액세스한다.
+         */
         std::shared_ptr<RowGraphNode> nodeFor(RowGraphId nodeId);
         
         /**
-         * call me on every 1000 transactions
+         * @brief 가비지 콜렉팅을 실시한다. (처리된 노드들을 제거한다.)
          */
         void gc();
         
+        /**
+         * @brief 현재 그래프를 graphviz dot 형식으로 출력한다.
+         */
         void dump();
         
     private:
+        /**
+         * @brief 의존성을 해결하여 노드와 노드간 간선 (edge)를 추가한다.
+         */
         void buildEdge(RowGraphId nodeId);
         
         LoggerPtr _logger;
@@ -81,6 +110,11 @@ namespace ultraverse::state::v2 {
         std::set<std::string> _keyColumns;
         
         RowGraphInternal _graph;
+        
+        /**
+         * @brief (컬럼, Range)를 가장 마지막으로 읽고 쓴 노드 ID를 저장하는 맵
+         * @details 노드간 간선을 빠르게 추가하기 위해 사용한다.
+         */
         std::map<
             std::string,
             std::unordered_map<StateRange, RWStateHolder>
