@@ -35,6 +35,27 @@
 
 using namespace ultraverse;
 
+
+struct PendingTransaction {
+    std::shared_ptr<state::v2::Transaction> transaction;
+    
+    std::queue<
+        std::shared_ptr<std::promise<
+            std::shared_ptr<state::v2::Query>
+        >>
+    > queries;
+    
+    std::queue<std::shared_ptr<state::v2::Query>> queryObjs;
+    
+    std::unordered_map<uint64_t, std::shared_ptr<mariadb::TableMapEvent>> tableMaps;
+    
+    std::shared_ptr<ProcCall> procCall;
+    std::mutex _procCallMutex;
+    
+    std::shared_ptr<mariadb::TransactionIDEvent> tidEvent;
+};
+
+
 class StateLogWriterApp: public ultraverse::Application {
 public:
     StateLogWriterApp():
@@ -122,8 +143,28 @@ public:
 
         _stateLogWriter = std::make_unique<state::v2::StateLogWriter>(".", _stateLogName);
 
-        _pendingTxn = std::make_shared<state::v2::Transaction>();
-        _pendingQuery = std::make_shared<state::v2::Query>();
+        // _pendingTxn = std::make_shared<state::v2::Transaction>();
+        // _pendingQuery = std::make_shared<state::v2::Query>();
+        
+        _writerThread = std::thread([this]() {
+            while (!terminateStatus) {
+                if (_pendingTransactions.empty()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 16));
+                    continue;
+                }
+                
+                auto promise = _pendingTransactions.front();
+                
+                {
+                    std::scoped_lock<std::mutex> _lock(_txnQueueMutex);
+                    _pendingTransactions.pop();
+                }
+                
+                auto transaction = std::move(promise->get_future().get());
+                
+                *_stateLogWriter << *transaction;
+            }
+        });
 
         if (!_checkpointPath.empty()) {
             _stateLogWriter->open(std::ios::out | std::ios::binary | std::ios::app);
@@ -132,12 +173,14 @@ public:
             std::ifstream is(_checkpointPath, std::ios::binary);
             if (is) {
                 cereal::BinaryInputArchive archive(is);
+                /*
                 archive(_gid);
                 archive(pos);
                 archive(_tableMap);
                 archive(_stateHashMap);
                 archive(_pendingTxn);
                 archive(_pendingQuery);
+                 */
 
                 _logger->info("gid: {}", _gid);
             } else {
@@ -155,6 +198,7 @@ public:
         }
 
         std::shared_ptr<mariadb::RowQueryEvent> pendingRowQueryEvent;
+        std::shared_ptr<PendingTransaction> currentTransaction = std::make_shared<PendingTransaction>();
 
         while (_binlogReader->next()) {
             auto event = _binlogReader->currentEvent();
@@ -165,32 +209,57 @@ public:
             
             switch (event->eventType()) {
                 case event_type::QUERY:
-                    processQueryEvent(std::dynamic_pointer_cast<mariadb::QueryEvent>(event));
+                    currentTransaction->queries.push(
+                        _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, event = std::move(event)]() {
+                            return processQueryEvent(std::dynamic_pointer_cast<mariadb::QueryEvent>(event));
+                        })
+                    );
                     break;
                 case event_type::TXNID:
-                    processTransactionIDEvent(std::dynamic_pointer_cast<mariadb::TransactionIDEvent>(event));
-                    break;
+                    currentTransaction->tidEvent = std::dynamic_pointer_cast<mariadb::TransactionIDEvent>(event);
+                    _pendingTransactions.push(_taskExecutor.post<std::shared_ptr<state::v2::Transaction>>([this, currentTransaction = std::move(currentTransaction)]() {
+                        while (!currentTransaction->queries.empty()) {
+                            auto promise = std::move(currentTransaction->queries.front());
+                            currentTransaction->queries.pop();
+                            
+                            currentTransaction->queryObjs.push(
+                                promise->get_future().get()
+                            );
+                        }
+                        
+                        return processTransactionIDEvent(currentTransaction);
+                    }));
                     
+                    
+                    while (_pendingTransactions.size() > 128) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 16));
+                    }
+                    
+                    currentTransaction = std::make_shared<PendingTransaction>();
+                    break;
                 // row events
                 case event_type::TABLE_MAP:
-                    processTableMapEvent(std::dynamic_pointer_cast<mariadb::TableMapEvent>(event));
+                    processTableMapEvent(currentTransaction, std::dynamic_pointer_cast<mariadb::TableMapEvent>(event));
                     break;
                 case event_type::ROW_EVENT: {
                     auto rowEvent = std::dynamic_pointer_cast<mariadb::RowEvent>(event);
-                    auto tableMapEvent = _tableMap[rowEvent->tableId()];
+                    auto tableMapEvent = currentTransaction->tableMaps[rowEvent->tableId()];
                     
-                    auto promise = _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, rowEvent = std::move(rowEvent), tableMapEvent = std::move(tableMapEvent), pendingRowQueryEvent]() {
+                    auto promise = _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, currentTransaction, rowEvent = std::move(rowEvent), pendingRowQueryEvent, tableMapEvent]() {
                         auto pendingQuery = std::make_shared<state::v2::Query>();
                         
-                        processRowEvent(rowEvent, pendingRowQueryEvent, pendingQuery, tableMapEvent);
+                        processRowEvent(
+                            currentTransaction,
+                            rowEvent,
+                            pendingRowQueryEvent,
+                            pendingQuery,
+                            tableMapEvent
+                        );
                         // processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
                         
                         return pendingQuery;
                     });
-                    
-                    auto future = promise->get_future();
-                    
-                    _pendingQueries.push(future.get());
+                    currentTransaction->queries.push(promise);
                 }
                     break;
                 case event_type::ROW_QUERY:
@@ -212,28 +281,37 @@ public:
      * inserts pending query object to transaction
      */
     void finalizeQuery() {
-        *_pendingTxn << _pendingQuery;
-        _pendingQuery = std::make_shared<state::v2::Query>();
     }
     
-    void finalizeTransaction() {
-        while (!_pendingQueries.empty()) {
-            auto pendingQuery = std::move(_pendingQueries.front());
-            _pendingQueries.pop();
+    std::shared_ptr<state::v2::Transaction> finalizeTransaction(std::shared_ptr<PendingTransaction> transaction) {
+        auto transactionObj = std::make_shared<state::v2::Transaction>();
+        
+        auto &queries = transaction->queryObjs;
+        
+        while (!queries.empty()) {
+            auto pendingQuery = std::move(queries.front());
+            queries.pop();
+            
+            if (pendingQuery == nullptr) {
+                continue;
+            }
             
             // auto pendingQuery = promise->get_future().get();
             
-            *_pendingTxn << pendingQuery;
+            *transactionObj << pendingQuery;
         }
         
         _logger->info("finalizeTransaction: {}", _gid);
-        _pendingTxn->setGid(_gid++);
-        *_stateLogWriter << *_pendingTxn;
-        _pendingTxn = std::make_shared<state::v2::Transaction>();
+        transactionObj->setGid(_gid++);
+        
+        return std::move(transactionObj);
     }
     
-    void finalizeTransaction(std::shared_ptr<ProcCall> procCall) {
+    std::shared_ptr<state::v2::Transaction> finalizeTransaction(std::shared_ptr<PendingTransaction> transaction, std::shared_ptr<ProcCall> procCall) {
         assert(procCall != nullptr);
+        
+        auto transactionObj = std::make_shared<state::v2::Transaction>();
+        auto &queries = transaction->queryObjs;
         
         auto procMatcher = procedureDefinition(procCall->procName());
         int prevIndex = 1;
@@ -242,17 +320,16 @@ public:
             _logger->error("procedure definition for {} is not available!", procCall->procName());
             
             // process as normal transaction
-            finalizeTransaction();
-            return;
+            return finalizeTransaction(transaction);
         }
         
-        while (!_pendingQueries.empty()) {
-            auto pendingQuery = std::move(_pendingQueries.front());
-            _pendingQueries.pop();
+        while (!queries.empty()) {
+            auto pendingQuery = std::move(queries.front());
+            queries.pop();
             
-            // auto pendingQuery = promise->get_future().get();
-            
-            assert(pendingQuery != nullptr);
+            if (pendingQuery == nullptr) {
+                continue;
+            }
             
             {
                 if (isProcedureHint(pendingQuery->statement())) {
@@ -272,7 +349,7 @@ public:
                         query->setDatabase(pendingQuery->database());
                         query->setTimestamp(pendingQuery->timestamp());
                         query->setFlags(state::v2::Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
-                        *_pendingTxn << query;
+                        *transactionObj << query;
                     }
                 }
                 
@@ -281,36 +358,36 @@ public:
             }
             
             APPEND_QUERY:
-            *_pendingTxn << pendingQuery;
+            *transactionObj << pendingQuery;
         }
         
         {
             auto procCallQuery = std::make_shared<state::v2::Query>();
             procCallQuery->setStatement(procCall->statements()[0]);
-            procCallQuery->setDatabase(_pendingTxn->queries()[0]->database());
-            procCallQuery->setTimestamp(_pendingTxn->queries()[0]->timestamp());
+            procCallQuery->setDatabase(transactionObj->queries()[0]->database());
+            procCallQuery->setTimestamp(transactionObj->queries()[0]->timestamp());
             procCallQuery->setFlags(state::v2::Query::FLAG_IS_PROCCALL_QUERY);
             
-            *_pendingTxn << procCallQuery;
+            *transactionObj << procCallQuery;
             
             
-            _pendingTxn->setFlags(
-                _pendingTxn->flags() | state::v2::Transaction::FLAG_IS_PROCEDURE_CALL
+            transactionObj->setFlags(
+                transactionObj->flags() | state::v2::Transaction::FLAG_IS_PROCEDURE_CALL
             );
         }
         
         // _pendingTxn->variableSet() = procMatcher->variableSet(*procCall);
         
-        _pendingTxn->setGid(_gid++);
-        *_stateLogWriter << *_pendingTxn;
-        _pendingTxn = std::make_shared<state::v2::Transaction>();
+        transactionObj->setGid(_gid++);
+        
+        return std::move(transactionObj);
     }
     
-    void processQueryEvent(std::shared_ptr<mariadb::QueryEvent> event) {
+    std::shared_ptr<state::v2::Query> processQueryEvent(std::shared_ptr<mariadb::QueryEvent> event) {
         auto pendingQuery = std::make_shared<state::v2::Query>();
         
-        if (event->statement() == "BEGIN") {
-            return;
+        if (event->statement() == "BEGIN" || event->statement() == "COMMIT") {
+            return nullptr;
         }
         
         pendingQuery->setTimestamp(event->timestamp());
@@ -339,10 +416,12 @@ public:
                 event->writeSet().begin(), event->writeSet().end()
             );
 
-            _pendingTxn->setFlags(
+            /*
+            tr->setFlags(
                 _pendingTxn->flags() |
                 state::v2::Transaction::FLAG_CONTAINS_DDL
             );
+             */
 
         } else if (event->isDML()) {
             // rowset, changeset이 없으므로 해시 계산 불가능
@@ -370,44 +449,47 @@ public:
              */
         }
         
+        return pendingQuery;
+        /*
+        
         *_pendingTxn << pendingQuery;
         _pendingTxn->setXid(0);
         _pendingTxn->setGid(_gid++);
         *_stateLogWriter << *_pendingTxn;
         _pendingTxn = std::make_shared<state::v2::Transaction>();
+         */
     }
     
-    void processTransactionIDEvent(std::shared_ptr<mariadb::TransactionIDEvent> event) {
-        if (_pendingProcCall != nullptr) {
-            auto pendingProcCall = _pendingProcCall;
-            _pendingProcCall = nullptr;
-            finalizeTransaction(pendingProcCall);
+    std::shared_ptr<state::v2::Transaction> processTransactionIDEvent(std::shared_ptr<PendingTransaction> transaction) {
+        _logger->info("Transaction ID #{} processed.", transaction->tidEvent->transactionId());
+        
+        if (transaction->procCall != nullptr) {
+            return finalizeTransaction(transaction, transaction->procCall);
         } else {
-            finalizeTransaction();
+            return finalizeTransaction(transaction);
         }
-        
-        _logger->info("Transaction ID #{} processed.", event->transactionId());
     }
     
-    void processTableMapEvent(std::shared_ptr<mariadb::TableMapEvent> event) {
+    void processTableMapEvent(std::shared_ptr<PendingTransaction> transaction, std::shared_ptr<mariadb::TableMapEvent> event) {
         // std::scoped_lock<std::mutex> _scopedLock(_tableMapMutex);
-        _logger->debug("[ROW] read table map event: table id {} will be mapped with {}.{}", event->tableId(), event->database(), event->table());
+        // _logger->debug("[ROW] read table map event: table id {} will be mapped with {}.{}", event->tableId(), event->database(), event->table());
         
-        auto it = std::find_if(_tableMap.begin(), _tableMap.end(), [&event](auto &prevEvent) {
+        auto it = std::find_if(transaction->tableMaps.begin(), transaction->tableMaps.end(), [&event](auto &prevEvent) {
             return (
                 prevEvent.second->database() == event->database() &&
                 prevEvent.second->table() == event->table()
             );
         });
         
-        if (it != _tableMap.end()) {
-            _tableMap.erase(it);
+        if (it != transaction->tableMaps.end()) {
+            transaction->tableMaps.erase(it);
         }
        
-        _tableMap[event->tableId()] = event;
+        transaction->tableMaps[event->tableId()] = event;
     }
     
-    void processRowEvent(std::shared_ptr<mariadb::RowEvent> event,
+    void processRowEvent(std::shared_ptr<PendingTransaction> transaction,
+                         std::shared_ptr<mariadb::RowEvent> event,
                          std::shared_ptr<mariadb::RowQueryEvent> rowQueryEvent,
                          std::shared_ptr<state::v2::Query> pendingQuery,
                          std::shared_ptr<mariadb::TableMapEvent> tableMapEvent) {
@@ -470,21 +552,20 @@ public:
         );
         
         if (isProcedureHint(rowQueryEvent->statement())) {
-            std::scoped_lock<std::mutex> _lock(_procLogMutex);
-            
-            /*
-            if (_pendingProcCall != nullptr) {
-                return;
-            }
-             */
+            std::scoped_lock lock(transaction->_procCallMutex);
             
             const auto &json = pendingQuery->writeSet().begin()->data_list.at(0).getAs<std::string>();
-            _pendingProcCall = prepareProcedureCall(json);
+            transaction->procCall = prepareProcedureCall(json);
         }
     }
     
     void sigintHandler(int param) {
         terminateStatus = true;
+        
+        if (_writerThread.joinable()) {
+            _writerThread.join();
+        }
+        
         _binlogReader->terminate();
     }
 
@@ -495,7 +576,7 @@ public:
         std::ofstream os(checkpointPath, std::ios::binary);
         if (os.is_open()) {
             cereal::BinaryOutputArchive archive(os);
-            archive(_gid, pos, _tableMap, _stateHashMap, _pendingTxn, _pendingQuery);
+            // archive(_gid, pos, _tableMap, _stateHashMap, _pendingTxn, _pendingQuery);
             os.close();
         }
 
@@ -508,7 +589,7 @@ public:
     std::shared_ptr<ProcCall> prepareProcedureCall(const std::string &jsonStr) {
         using namespace nlohmann;
         
-        _logger->debug(jsonStr);
+        // _logger->debug(jsonStr);
         
         auto jsonObj = std::move(json::parse(jsonStr));
         
@@ -617,21 +698,22 @@ private:
     
     int _gid = 0;
     
+    std::thread _writerThread;
+    std::mutex _txnQueueMutex;
+    
     std::unique_ptr<mariadb::BinaryLogSequentialReader> _binlogReader;
     std::unique_ptr<state::v2::StateLogWriter> _stateLogWriter;
 
     std::unique_ptr<state::v2::ProcLogReader> _procLogReader;
     std::mutex _procLogMutex;
+    
+    std::queue<std::shared_ptr<std::promise<
+        std::shared_ptr<state::v2::Transaction>>
+    >> _pendingTransactions;
 
     std::unordered_map<uint64_t, std::shared_ptr<mariadb::TableMapEvent>> _tableMap;
     std::unordered_map<std::string, state::StateHash> _stateHashMap;
     
-    std::shared_ptr<state::v2::Transaction> _pendingTxn;
-    std::shared_ptr<state::v2::Query> _pendingQuery;
-    std::shared_ptr<ProcCall> _pendingProcCall;
-
-    std::queue<std::shared_ptr<state::v2::Query>> _pendingQueries;
-    std::mutex _tableMapMutex;
     
     std::unordered_map<std::string, std::shared_ptr<state::v2::ProcMatcher>> _procedureDefinitions;
     std::mutex _procDefMutex;
