@@ -14,8 +14,7 @@ namespace ultraverse::state::v2 {
         _type(UNKNOWN),
         _flags(0),
         _timestamp(0),
-        _affectedRows(0),
-        _referencePos(0)
+        _affectedRows(0)
     {
     
     }

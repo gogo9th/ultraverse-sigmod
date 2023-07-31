@@ -21,13 +21,6 @@ namespace ultraverse::state::v2 {
             
             _flags,
             
-            _referenceFile,
-            _referencePos,
-            
-            _beforeHash,
-            _afterHash,
-            
-            _affectedTables,
             _readSet,
             _writeSet,
             _varMap,

@@ -95,14 +95,9 @@ namespace ultraverse::state::v2 {
         
         uint8_t _flags;
     
-        // binlog reference
-        std::string _referenceFile;
-        uint64_t _referencePos;
-        
         std::unordered_map<std::string, StateHash> _beforeHash;
         std::unordered_map<std::string, StateHash> _afterHash;
     
-        std::unordered_set<std::string> _affectedTables;
         std::vector<StateItem> _readSet;
         std::vector<StateItem> _writeSet;
         std::vector<StateItem> _varMap;
