@@ -94,7 +94,7 @@ namespace ultraverse::state::v2 {
         /**
          * @brief rollback 대상 트랜잭션을 추가한다.
          */
-        void addRollbackTarget(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
+        void addRollbackTarget(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver, bool revalidate = true);
         /**
          * @brief prepend 대상 트랜잭션을 추가한다.
          */
@@ -157,6 +157,7 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, Cluster> _clusters;
         
         std::mutex _targetCacheLock;
+        std::unordered_map<std::string, std::unordered_map<StateRange, std::reference_wrapper<const std::unordered_set<gid_t>>>> _targetCache;
         std::unordered_map<gid_t, TargetTransactionCache> _rollbackTargets;
         std::unordered_map<gid_t, TargetTransactionCache> _prependTargets;
     };

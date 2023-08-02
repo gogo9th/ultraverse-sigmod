@@ -366,7 +366,8 @@ namespace ultraverse::state::v2 {
     }
     
     void StateCluster::addRollbackTarget(const std::shared_ptr<Transaction> &transaction,
-                                         const RelationshipResolver &resolver) {
+                                         const RelationshipResolver &resolver,
+                                         bool revalidate) {
         std::scoped_lock lock(_targetCacheLock);
         
         _rollbackTargets.insert(std::make_pair(transaction->gid(), TargetTransactionCache {
@@ -374,7 +375,9 @@ namespace ultraverse::state::v2 {
             {}, {}
         }));
         
-        invalidateTargetCache(_rollbackTargets, resolver);
+        if (revalidate) {
+            invalidateTargetCache(_rollbackTargets, resolver);
+        }
     }
     
     void StateCluster::addPrependTarget(gid_t gid,
@@ -391,6 +394,8 @@ namespace ultraverse::state::v2 {
     }
     
     void StateCluster::invalidateTargetCache(std::unordered_map<gid_t, TargetTransactionCache> &targets, const RelationshipResolver &resolver) {
+        _targetCache.clear();
+        
         for (auto &pair: targets) {
             auto &cache = pair.second;
             
@@ -406,6 +411,18 @@ namespace ultraverse::state::v2 {
                 
                 if (writeRange.has_value()) {
                     cache.write[keyColumn] = writeRange.value();
+                    std::unordered_map<StateRange, std::reference_wrapper<const std::unordered_set<gid_t>>>
+                        &cacheMap = _targetCache[keyColumn];
+                    if (cacheMap.find(writeRange.value()) == cacheMap.end()) {
+                        auto range = writeRange.value();
+                        const auto &cluster = _clusters.at(keyColumn);
+                        auto it = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(), [this, &range](const auto &pair) {
+                            return pair.first == range || StateRange::isIntersects(pair.first, range);
+                        });
+                        
+                        const std::unordered_set<gid_t> &gids = it->second;
+                        cacheMap.emplace(range, std::ref(gids));
+                    }
                 }
             }
         }
@@ -418,19 +435,25 @@ namespace ultraverse::state::v2 {
         }
         
         return std::any_of(
+            _targetCache.begin(), _targetCache.end(),
+            [this, gid](const auto &pair) {
+                const auto &column = pair.first;
+                const auto &ranges = pair.second;
+                return std::any_of(ranges.begin(), ranges.end(), [this, &column, gid](const auto &pair) {
+                    const auto &gids = pair.second.get();
+                    return gids.find(gid) != gids.end();
+                });
+            }
+        );
+        
+        /*
+        return std::any_of(
             _rollbackTargets.begin(), _rollbackTargets.end(),
             [this, gid](const auto &pair) {
                 return shouldReplay(gid, pair.second);
-                /*
-                if (shouldReplay(gid, pair.second)) {
-                    _logger->debug("shouldReplay({}): related with rollback target {}", gid, pair.first);
-                    return true;
-                }
-                
-                return false;
-                 */
             }
         );
+        */
     }
     
     bool StateCluster::shouldReplay(gid_t gid, const StateCluster::TargetTransactionCache &cache) {

@@ -233,8 +233,11 @@ namespace ultraverse::state::v2 {
                     continue;
                 }
                 
+                auto nextGid = transaction->gid() + 1;
+                bool shouldRevalidate = !(_plan.isRollbackGid(nextGid) || _plan.hasUserQuery(nextGid));
+                
                 if (_plan.isRollbackGid(transaction->gid())) {
-                    rowCluster.addRollbackTarget(transaction, cachedResolver);
+                    rowCluster.addRollbackTarget(transaction, cachedResolver, shouldRevalidate);
                 }
                 
                 if (_plan.hasUserQuery(transaction->gid())) {
@@ -243,6 +246,7 @@ namespace ultraverse::state::v2 {
                     rowCluster.addPrependTarget(transaction->gid(), userQuery, cachedResolver);
                 }
                 
+               
                 continue;
             } else {
                 std::scoped_lock _lock(tasksMutex);
