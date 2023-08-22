@@ -153,7 +153,9 @@ sub mysqldump {
         'mysqldump', 
         '-R', # include procedures
         '--flush-logs',
-        '--lock-all-tables',
+        '--single-transaction',
+        '--complete-insert',
+        # '--lock-all-tables',
         '-h', '127.0.0.1',
         '-u', 'root',
         '--password=password',
@@ -224,7 +226,7 @@ sub bootstrap {
             croak("failed to run benchbase");
         }
 
-        sleep 10;
+        sleep 30;
 
         if (mysqldump('benchbase', sprintf("%s/dbdump.sql", $project_path)) != 0) {
             croak("failed to execute mysqldump");
