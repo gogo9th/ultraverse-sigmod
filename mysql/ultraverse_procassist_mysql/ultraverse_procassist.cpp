@@ -58,7 +58,19 @@ static struct st_mysql_audit procassist_descriptor=
 {
   MYSQL_AUDIT_INTERFACE_VERSION, nullptr,
   procassist_notify,
-  { MYSQL_AUDIT_GENERAL_CLASS | MYSQL_AUDIT_TABLE_ACCESS_ALL }
+  {(unsigned long)MYSQL_AUDIT_GENERAL_ALL,
+     (unsigned long)MYSQL_AUDIT_CONNECTION_ALL,
+     (unsigned long)MYSQL_AUDIT_PARSE_ALL,
+     0, /* This event class is currently not supported. */
+     (unsigned long)MYSQL_AUDIT_TABLE_ACCESS_ALL,
+     (unsigned long)MYSQL_AUDIT_GLOBAL_VARIABLE_ALL,
+     (unsigned long)MYSQL_AUDIT_SERVER_STARTUP_ALL,
+     (unsigned long)MYSQL_AUDIT_SERVER_SHUTDOWN_ALL,
+     (unsigned long)MYSQL_AUDIT_COMMAND_ALL,
+     (unsigned long)MYSQL_AUDIT_QUERY_ALL,
+     (unsigned long)MYSQL_AUDIT_STORED_PROGRAM_ALL,
+     (unsigned long)MYSQL_AUDIT_AUTHENTICATION_ALL,
+     (unsigned long)MYSQL_AUDIT_MESSAGE_ALL }
 };
 
 /*

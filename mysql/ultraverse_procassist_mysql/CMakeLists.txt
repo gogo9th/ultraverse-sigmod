@@ -1,6 +1,8 @@
 INCLUDE_DIRECTORIES(cereal/include)
 INCLUDE_DIRECTORIES(nlohmann-json/include)
 
+# add_compile_options(-msse4.2 -O2)
+
 SET(ULTRAVERSE_PROCASSIST_SRCS
     
     ProcCall.cpp

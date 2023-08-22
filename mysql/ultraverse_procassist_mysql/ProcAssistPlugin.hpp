@@ -24,6 +24,8 @@ public:
   
 private:
   void handleGeneralEvent(MYSQL_THD thd, const mysql_event_general *event);
+  void handleQueryEvent(MYSQL_THD thd, const mysql_event_query *event);
+  void handleStoredProgramEvent(MYSQL_THD thd, const mysql_event_stored_program *event);
   
   void writeProcLog(std::shared_ptr<ProcCall> procCall);
   
