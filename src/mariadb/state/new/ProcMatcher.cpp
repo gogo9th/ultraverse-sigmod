@@ -87,32 +87,28 @@ namespace ultraverse::state::v2 {
             for (const auto &parameter: procedureInfo.parameters()) {
                 instance._parameters.push_back(parameter.name());
             }
-            
-            for (const auto &statement: procedureInfo.statements()) {
-                if (statement.type() == ultparser::Query_QueryType_IF) {
-                    auto &ifBlock = statement.if_block();
-                    
-                    for (const auto &child: ifBlock.then_block()) {
-                        statements.push_back(std::make_shared<ultparser::Query>(child));
+         
+            const std::function<void(const google::protobuf::RepeatedPtrField<ultparser::Query> &)> insertStatements = [&statements, &insertStatements](const google::protobuf::RepeatedPtrField<ultparser::Query> &_statements) {
+                for (const auto &_statement: _statements) {
+                    if (_statement.type() == ultparser::Query_QueryType_IF) {
+                        auto &ifBlock = _statement.if_block();
+                        
+                        insertStatements(ifBlock.then_block());
+                        insertStatements(ifBlock.else_block());
+                        
+                        continue;
+                    } else if (_statement.type() == ultparser::Query_QueryType_WHILE) {
+                        auto &whileBlock = _statement.while_block();
+                        
+                        insertStatements(whileBlock.block());
+                        continue;
                     }
                     
-                    for (const auto &child: ifBlock.else_block()) {
-                        statements.push_back(std::make_shared<ultparser::Query>(child));
-                    }
-                    
-                    continue;
-                } else if (statement.type() == ultparser::Query_QueryType_WHILE) {
-                    auto &whileBlock = statement.while_block();
-                    
-                    for (const auto &child: whileBlock.block()) {
-                        statements.push_back(std::make_shared<ultparser::Query>(child));
-                    }
-                    
-                    continue;
+                    statements.push_back(std::make_shared<ultparser::Query>(_statement));
                 }
-                
-                statements.push_back(std::make_shared<ultparser::Query>(statement));
-            }
+            };
+            
+            insertStatements(procedureInfo.statements());
         }
         
         return;
