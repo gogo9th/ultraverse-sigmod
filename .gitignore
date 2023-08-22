@@ -109,3 +109,5 @@ fabric.properties
 __pycache__
 
 !go.mod
+
+/docs
