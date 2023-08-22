@@ -11,7 +11,6 @@ pkg_check_modules(FMT REQUIRED fmt)
 pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
-pkg_check_modules(MOZJS102 REQUIRED mozjs-102)
 
 pkg_check_modules(MARIADB mysqlclient)
 
@@ -22,7 +21,7 @@ endif()
 
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-add_compile_options(-msse4.2 -O2)
+add_compile_options(-march=native -O2)
 # add_link_options(-fsanitize=leak)
 
 set(ULTRAVERSE_DEPENDENCIES
@@ -56,9 +55,12 @@ set(LIBULTRAVERSE_BASE_SRCS
     utils/log.hpp
     utils/StringUtil.cpp
     utils/StringUtil.hpp
+
+    mariadb/state/new/CombinedIterator.cpp 
+    mariadb/state/new/CombinedIterator.hpp
     
     ${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen/ultparser_query.pb.cc
-    mariadb/state/new/CombinedIterator.cpp mariadb/state/new/CombinedIterator.hpp)
+)
 
 set(LIBULTRAVERSE_STATE_SRCS
     
@@ -170,6 +172,7 @@ set(DB_STATE_CHANGE_SRCS
     db_state_change.cpp
 )
 
+
 add_executable(state_log_viewer ${STATE_LOG_VIEWER_SRCS})
 add_executable(statelogd ${STATELOGD_SRCS})
 add_executable(db_state_change ${DB_STATE_CHANGE_SRCS})
@@ -177,3 +180,4 @@ add_executable(db_state_change ${DB_STATE_CHANGE_SRCS})
 target_link_libraries(state_log_viewer ultraverse ${ULTRAVERSE_DEPENDENCIES})
 target_link_libraries(statelogd ultraverse ${ULTRAVERSE_DEPENDENCIES})
 target_link_libraries(db_state_change ultraverse ${ULTRAVERSE_DEPENDENCIES})
+
