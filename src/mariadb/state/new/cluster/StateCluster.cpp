@@ -2,9 +2,12 @@
 // Created by cheesekun on 6/20/23.
 //
 
+#include <sstream>
 
 #include <execution>
 #include <utility>
+
+#include <fmt/format.h>
 
 #include "utils/StringUtil.hpp"
 #include "StateCluster.hpp"
@@ -434,26 +437,105 @@ namespace ultraverse::state::v2 {
             return false;
         }
         
-        return std::any_of(
-            _targetCache.begin(), _targetCache.end(),
-            [this, gid](const auto &pair) {
-                const auto &column = pair.first;
-                const auto &ranges = pair.second;
-                return std::any_of(ranges.begin(), ranges.end(), [this, &column, gid](const auto &pair) {
+        size_t matched = 0;
+        
+        for (const auto &pair: _keyColumnsMap) {
+            const auto &keyColumns = pair.second;
+            
+            size_t count = 0;
+            
+            for (const auto &keyColumn: keyColumns) {
+                if (_targetCache.find(keyColumn) == _targetCache.end()) {
+                    continue;
+                }
+                
+                const auto &ranges = _targetCache[keyColumn];
+                
+                if (std::any_of(ranges.begin(), ranges.end(), [gid](const auto &pair) {
                     const auto &gids = pair.second.get();
                     return gids.find(gid) != gids.end();
-                });
+                })) {
+                    count++;
+                }
             }
-        );
+            
+            if (count == 0) {
+                continue;
+            } else if (count == keyColumns.size()) {
+                matched++;
+            } else {
+                return false;
+            }
+        }
         
-        /*
-        return std::any_of(
-            _rollbackTargets.begin(), _rollbackTargets.end(),
-            [this, gid](const auto &pair) {
-                return shouldReplay(gid, pair.second);
+        return matched > 0;
+    }
+    
+    std::string StateCluster::generateReplaceQuery(const std::string &targetDB, const std::string &intermediateDB) {
+        std::string query = fmt::format("use {};\n\n", targetDB);
+        
+        for (const auto &pair: _keyColumnsMap) {
+            const auto &tableName = pair.first;
+            const auto &keyColumns = pair.second;
+            std::stringstream sstream;
+            
+            sstream << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE ", tableName, intermediateDB, tableName);
+            
+            size_t i = 0;
+            bool changed = false;
+            
+            for (const auto &keyColumn: keyColumns) {
+                if (_targetCache.find(keyColumn) == _targetCache.end()) {
+                    goto NEXT_COLUMN;
+                }
+                
+                {
+                    const auto &ranges = _targetCache[keyColumn];
+                    
+                    if (ranges.empty()) {
+                        goto NEXT_COLUMN;
+                    }
+                    
+                    changed = true;
+                    
+                    if (ranges.size() == 1 && ranges.begin()->first.wildcard()) {
+                        // TODO: mark as wildcard
+                        goto NEXT_COLUMN;
+                    }
+                    
+                    sstream << "(";
+                    
+                    size_t j = 0;
+                    
+                    for (const auto &range: ranges) {
+                        sstream << "(";
+                        sstream << range.first.MakeWhereQuery(keyColumn);
+                        sstream << ")";
+                        
+                        if (j++ != ranges.size() - 1) {
+                            sstream << " OR ";
+                        }
+                    }
+                    
+                    sstream << ")";
+                    
+                    if (i++ != keyColumns.size() - 1) {
+                        sstream << " AND ";
+                    }
+                }
+                
+                NEXT_COLUMN:
+                i++;
             }
-        );
-        */
+            
+            sstream << ";\n";
+            
+            if (changed) {
+                query += sstream.str();
+            }
+        }
+        
+        return std::move(query);
     }
     
     bool StateCluster::shouldReplay(gid_t gid, const StateCluster::TargetTransactionCache &cache) {
