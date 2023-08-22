@@ -136,19 +136,9 @@ public:
                 _logger->info("            - Database: {}", query->database());
                 _logger->info("            - Timestamp: {}", query->timestamp());
                 _logger->info("            - AffectedRows: {}", query->affectedRows());
-                _logger->info("            - ReadSet: {}",
-                              join(query->readSet().begin(), query->readSet().end(), ", "));
-                _logger->info("            - WriteSet: {}",
-                              join(query->writeSet().begin(), query->writeSet().end(), ", "));
-                _logger->info("            - ForeignKeySet: {}",
-                              join(query->foreignKeySet().begin(), query->foreignKeySet().end(), ", "));
+
                 
                 if (isVerbose) {
-                    _logger->info("            - ItemSet: {}",
-                                  joinItemSet(query->itemSet().begin(), query->itemSet().end(), ", "));
-        
-                    _logger->info("            - WhereSet: {}",
-                                  joinItemSet(query->whereSet().begin(), query->whereSet().end(), ", "));
                 }
                 
                 _logger->info("            - Flags: {}", query->flags());
