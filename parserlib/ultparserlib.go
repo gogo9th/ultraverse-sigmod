@@ -211,6 +211,7 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 				}
 				break
 			default:
+				// TODO: 다른 연산자 지원도 추가해야 합니다.
 				fmt.Printf("FIXME: Unsupported unary operator: %s\n", unaryExpr.Op.String())
 				break
 			}
@@ -469,6 +470,8 @@ func is_proc_node(node *ast.StmtNode) bool {
 		return true
 	case *ast.ProcedureElseBlock:
 		return true
+	case *ast.ProcedureJump:
+		return true
 	default:
 		return false
 	}
@@ -545,6 +548,7 @@ func process_proc_label_block(node *ast.ProcedureLabelBlock) *pb.ProcedureIfBloc
 
 /**
  * 프로시저 관련 노드를 처리하여 Query protobuf 메시지를 채워 넣습니다.
+ * FIXME: 프로시저 내 모든 쿼리가 추출되고 있지 않습니다.
  */
 func process_proc_node(node *ast.StmtNode) *pb.Query {
 	if ifStmt, ok := (*node).(*ast.ProcedureIfInfo); ok {
@@ -596,6 +600,8 @@ func process_proc_node(node *ast.StmtNode) *pb.Query {
 			Type:    pb.Query_IF,
 			IfBlock: block,
 		}
+	} else if _, ok := (*node).(*ast.ProcedureJump); ok {
+		// do nothing
 	} else {
 		fmt.Printf("FIXME: Unsupported procedure type: %T\n", node)
 	}
