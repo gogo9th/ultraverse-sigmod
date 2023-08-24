@@ -38,7 +38,7 @@ set(ULTRAVERSE_DEPENDENCIES
     OpenSSL::SSL
     
     tbb
-    
+
     ${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp/libultparser/libultparser.so
 )
 
@@ -149,6 +149,7 @@ include_directories(${PYTHON3_INCLUDE_DIRS})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(ultraverse SHARED ${LIBULTRAVERSE_SRCS})
+add_dependencies(ultraverse ultparserlib)
 
 target_link_libraries(ultraverse ${ULTRAVERSE_DEPENDENCIES})
 

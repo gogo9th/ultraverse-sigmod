@@ -318,7 +318,7 @@ namespace ultraverse::state::v2 {
                 }
                     return;
                 default:
-                    _logger->error("unsupprted statement type: {}", code.type());
+                    _logger->error("unsupprted statement type: {}", (int) code.type());
                     break;
             }
             

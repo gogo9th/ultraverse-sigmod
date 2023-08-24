@@ -3,6 +3,13 @@ module parserlib
 go 1.20
 
 require (
+	github.com/gogo/protobuf v1.3.2
+	github.com/pingcap/tidb v1.1.0-beta.0.20230627145337-9fd5f4a8e4f2
+	github.com/pingcap/tidb/parser v0.0.0-20230627145337-9fd5f4a8e4f2
+	google.golang.org/protobuf v1.30.0
+)
+
+require (
 	github.com/BurntSushi/toml v1.3.0 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -18,7 +25,6 @@ require (
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13 // indirect
 	github.com/elastic/gosigar v0.14.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/btree v1.1.2 // indirect
 	github.com/google/uuid v1.3.0 // indirect
@@ -36,8 +42,6 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20230530111525-e4919c190b46 // indirect
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22 // indirect
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21 // indirect
-	github.com/pingcap/tidb v1.1.0-beta.0.20230627145337-9fd5f4a8e4f2 // indirect
-	github.com/pingcap/tidb/parser v0.0.0-20230627145337-9fd5f4a8e4f2 // indirect
 	github.com/pingcap/tipb v0.0.0-20230602100112-acb7942db1ca // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
@@ -72,6 +76,5 @@ require (
 	golang.org/x/text v0.9.0 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
 	google.golang.org/grpc v1.54.0 // indirect
-	google.golang.org/protobuf v1.30.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )

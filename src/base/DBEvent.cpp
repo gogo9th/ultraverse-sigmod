@@ -140,7 +140,7 @@ namespace ultraverse::base {
             _queryType = DELETE;
             return processDelete(dmlQuery);
         } else {
-            _logger->error("ASSERTION FAILURE: unknown DML type: {}", dmlQuery.type());
+            _logger->error("ASSERTION FAILURE: unknown DML type: {}", (int) dmlQuery.type());
             return false;
         }
         
@@ -313,7 +313,7 @@ namespace ultraverse::base {
                         parent.function_type = FUNCTION_NE;
                         break;
                     default:
-                        _logger->warn("unsupported operator: {}", expr.operator_());
+                        _logger->warn("unsupported operator: {}", (int) expr.operator_());
                         return;
                 }
                 
