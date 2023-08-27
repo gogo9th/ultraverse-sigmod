@@ -70,7 +70,7 @@ public:
     }
     
     std::string optString() override {
-        return "b:o:c:r:p:dMvVh";
+        return "b:o:c:r:p:dnvVh";
     }
     
     int main() override {
@@ -85,7 +85,7 @@ public:
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -r file        restore state and resume from given .ultchkpoint file\n"
             "    -d             force discard previous log and start over\n"
-            "    -M             treat server variant as MySQL"
+            "    -n             do not read binlog.index continuously (quit after reaching EOF)\n"
             "    -v             set logger level to DEBUG\n"
             "    -V             set logger level to TRACE\n"
             "    -h             print this help and exit application\n";
@@ -137,6 +137,7 @@ public:
     
     void writerMain() {
         _binlogReader = std::make_unique<mariadb::MySQLBinaryLogSequentialReader>(".", _binlogIndexPath);
+        _binlogReader->setPollDisabled(isArgSet('n'));
 
         if (isArgSet('p')) {
             _procLogReader = std::make_unique<state::v2::ProcLogReader>();
@@ -329,9 +330,6 @@ public:
             
             *transactionObj << pendingQuery;
         }
-        
-        _logger->info("finalizeTransaction: {}", _gid);
-        // transactionObj->setGid(_gid++);
         
         return std::move(transactionObj);
     }

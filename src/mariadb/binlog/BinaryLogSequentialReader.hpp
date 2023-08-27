@@ -19,6 +19,9 @@ namespace ultraverse::mariadb {
         
         std::shared_ptr<base::DBEvent> currentEvent();
         
+        bool isPollDisabled() const;
+        void setPollDisabled(bool isPollDisabled);
+        
         void terminate();
         
     protected:
@@ -38,6 +41,7 @@ namespace ultraverse::mariadb {
         int _currentIndex;
     
         bool terminateSignal = false;
+        bool _isPollDisabled;
     
     private:
         std::unique_ptr<BinaryLogReaderBase> _binaryLogReader;
