@@ -19,10 +19,14 @@
 #include "StateClusterWriter.hpp"
 #include "GIDIndexReader.hpp"
 
+#include "StateChangeReport.hpp"
+
 
 namespace ultraverse::state::v2 {
     
     void StateChanger::makeCluster() {
+        StateChangeReport report(StateChangeReport::MAKE_CLUSTER, _plan);
+        
         TaskExecutor taskExecutor(_plan.threadNum());
         StateCluster rowCluster(_plan.keyColumns());
         
@@ -136,10 +140,18 @@ namespace ultraverse::state::v2 {
         _logger->info("make_cluster(): saving cluster..");
         clusterWriter << rowCluster;
         
-        dropIntermediateDB();
+        if (_plan.dropIntermediateDB()) {
+            dropIntermediateDB();
+        }
+        
+        if (!_plan.reportPath().empty()) {
+            report.writeToJSON(_plan.reportPath());
+        }
     }
     
     void StateChanger::prepare() {
+        StateChangeReport report(StateChangeReport::PREPARE, _plan);
+        
         TaskExecutor taskExecutor(_plan.threadNum());
         StateCluster rowCluster(_plan.keyColumns());
         
@@ -155,6 +167,7 @@ namespace ultraverse::state::v2 {
         size_t totalCount = 0;
         
         createIntermediateDB();
+        report.setIntermediateDBName(_intermediateDBName);
         
         
         if (!_plan.dbDumpPath().empty()) {
@@ -168,6 +181,7 @@ namespace ultraverse::state::v2 {
             
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
+            report.setSQLLoadTime(time.count());
         }
         
         {
@@ -201,6 +215,7 @@ namespace ultraverse::state::v2 {
                 gid_t gid = promise->get_future().get();
                 if (gid != UINT64_MAX) {
                     std::cout << gid << std::endl;
+                    
                     replayGidCount++;
                 }
             }
@@ -234,7 +249,7 @@ namespace ultraverse::state::v2 {
                 }
                 
                 auto nextGid = transaction->gid() + 1;
-                bool shouldRevalidate = !(_plan.isRollbackGid(nextGid) || _plan.hasUserQuery(nextGid));
+                bool shouldRevalidate = !_plan.isRollbackGid(nextGid) && !_plan.hasUserQuery(nextGid);
                 
                 if (_plan.isRollbackGid(transaction->gid())) {
                     rowCluster.addRollbackTarget(transaction, cachedResolver, shouldRevalidate);
@@ -271,8 +286,6 @@ namespace ultraverse::state::v2 {
         
         taskExecutor.shutdown();
         
-        _logger->info("prepare(): {} / {} transactions will be replayed ({}%)", replayGidCount, totalCount, ((double) replayGidCount / totalCount) * 100);
-        // rowCluster.describe();
         
         {
             auto phase_main_end = std::chrono::steady_clock::now();
@@ -280,16 +293,32 @@ namespace ultraverse::state::v2 {
             _phase2Time = time.count();
         }
         
+        report.setReplayGidCount(replayGidCount);
+        report.setTotalCount(totalCount);
+        report.setExecutionTime(_phase2Time);
+        
+        _logger->info("prepare(): {} / {} transactions will be replayed ({}%)", replayGidCount, totalCount, ((double) replayGidCount / totalCount) * 100);
+        // rowCluster.describe();
+        
         _logger->info("prepare(): main phase {}s", _phase2Time);
         
-        dropIntermediateDB();
+        if (_plan.dropIntermediateDB()) {
+            dropIntermediateDB();
+        }
         
         std::cout.flush();
         
+        std::string replaceQuery = rowCluster.generateReplaceQuery(_plan.dbName(), "__INTERMEDIATE_DB__");
+        _logger->debug("TODO: execute query: \n{}", replaceQuery);
+        report.setReplaceQuery(replaceQuery);
         
         close(STDIN_FILENO);
         close(STDOUT_FILENO);
         close(STDERR_FILENO);
+        
+        if (!_plan.reportPath().empty()) {
+            report.writeToJSON(_plan.reportPath());
+        }
     }
 
 }

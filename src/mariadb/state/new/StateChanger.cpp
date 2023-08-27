@@ -21,6 +21,7 @@
 #include "base/TaskExecutor.hpp"
 #include "utils/StringUtil.hpp"
 
+#include "StateChangeReport.hpp"
 
 #include "StateChanger.hpp"
 
@@ -44,8 +45,10 @@ namespace ultraverse::state::v2 {
     
     void StateChanger::fullReplay() {
         _mode = OperationMode::FULL_REPLAY;
+        StateChangeReport report(StateChangeReport::EXECUTE, _plan);
         
         createIntermediateDB();
+        report.setIntermediateDBName(_intermediateDBName);
         
         if (!_plan.dbDumpPath().empty()) {
             auto load_backup_start = std::chrono::steady_clock::now();
@@ -58,6 +61,7 @@ namespace ultraverse::state::v2 {
             
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
+            report.setSQLLoadTime(time.count());
         }
         
         _logger->info("opening state log");
@@ -76,9 +80,14 @@ namespace ultraverse::state::v2 {
             auto transaction = _reader.txnBody();
             auto gid = transactionHeader->gid;
             auto flags = transactionHeader->flags;
+            
+            if (_plan.isRollbackGid(gid)) {
+                _logger->info("skipping rollback transaction #{}", gid);
+                continue;
+            }
  
  
-            _logger->info("replaying transaction #{}", gid);
+            // _logger->info("replaying transaction #{}", gid);
             
             dbHandle.get().executeQuery("USE " + _intermediateDBName);
             dbHandle.get().executeQuery("BEGIN");
@@ -91,23 +100,6 @@ namespace ultraverse::state::v2 {
                     if (isProcedureCall && !isProcedureCallQuery) {
                         goto NEXT_QUERY;
                     }
-                    
-                    /*
-                    if (isProcedureCall && isProcedureCallQuery) {
-                        if (query->statement().find("Payment") != std::string::npos) {
-                            // FIXME: skip payment
-                            goto NEXT_QUERY;
-                        }
-                    }
-                    
-                    const auto &statement = isProcedureCall ?
-                        query->varMappedStatement(transaction->variableSet()) : // FIXME
-                        query->statement();
-                    
-                    logger->info("replaying query: {}", statement);
-                     */
-                    
-                    std::cout << query->statement() << std::endl;
                     
                     if (dbHandle.get().executeQuery(query->statement()) != 0) {
                         _logger->error("query execution failed: {}", mysql_error(dbHandle.get()));
@@ -153,7 +145,15 @@ namespace ultraverse::state::v2 {
         _logger->info("total {} queries replayed", _replayedQueries);
         _logger->info("main phase {}s", _phase2Time);
         
-        dropIntermediateDB();
+        report.setExecutionTime(_phase2Time);
+        
+        if (!_plan.reportPath().empty()) {
+            report.writeToJSON(_plan.reportPath());
+        }
+        
+        if (_plan.dropIntermediateDB()) {
+            dropIntermediateDB();
+        }
     }
 
     
