@@ -53,6 +53,9 @@ struct PendingTransaction {
     std::mutex _procCallMutex;
     
     std::shared_ptr<mariadb::TransactionIDEvent> tidEvent;
+    
+    bool flag1 = false;
+    std::string tmp;
 };
 
 
@@ -62,7 +65,7 @@ public:
         Application(),
         
         _logger(createLogger("statelogd")),
-        _taskExecutor(16)
+        _taskExecutor(1)
     {
     }
     
@@ -148,7 +151,7 @@ public:
         // _pendingQuery = std::make_shared<state::v2::Query>();
         
         _writerThread = std::thread([this]() {
-            while (!terminateStatus) {
+            while (!terminateStatus || !_pendingTransactions.empty()) {
                 if (_pendingTransactions.empty()) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 16));
                     continue;
@@ -257,6 +260,8 @@ public:
                     auto rowEvent = std::dynamic_pointer_cast<mariadb::RowEvent>(event);
                     auto tableMapEvent = currentTransaction->tableMaps[rowEvent->tableId()];
                     
+                    auto promise = std::make_shared<std::promise<std::shared_ptr<state::v2::Query>>>();
+                    /*
                     auto promise = _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, currentTransaction, rowEvent = std::move(rowEvent), pendingRowQueryEvent, tableMapEvent]() {
                         auto pendingQuery = std::make_shared<state::v2::Query>();
                         
@@ -271,9 +276,7 @@ public:
                         
                         return pendingQuery;
                     });
-                    /*
-                    auto promise = std::make_shared<std::promise<std::shared_ptr<state::v2::Query>>>();
-                    
+                     */
                     auto pendingQuery = std::make_shared<state::v2::Query>();
                     
                     processRowEvent(
@@ -285,7 +288,6 @@ public:
                     );
                     // processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
                     promise->set_value(pendingQuery);
-                     */
                     
                     currentTransaction->queries.push(promise);
                 }
@@ -302,12 +304,14 @@ public:
                 break;
             }
         }
+        
         terminateStatus = true;
+        
         if (_writerThread.joinable()) {
             _writerThread.join();
         }
         
-        // terminateProcess();
+        _stateLogWriter->close();
     }
     
     /**
