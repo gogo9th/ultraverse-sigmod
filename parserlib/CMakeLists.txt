@@ -7,13 +7,18 @@ if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cpp_autogen)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/cpp_autogen)
 endif()
 
+
+if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/pb)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pb)
+endif()
+
 if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cpp_autogen/ultparser_query.pb.cc)
     file(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/cpp_autogen/ultparser_query.pb.cc "/* dummy file */")
 endif()
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/ULTPARSERLIB_DEP_INSTALLED
-    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/go.mod
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/go.mod ${CMAKE_CURRENT_SOURCE_DIR}/go.sum
     COMMAND go get
     COMMAND touch ${CMAKE_CURRENT_SOURCE_DIR}/ULTPARSERLIB_DEP_INSTALLED
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -22,39 +27,31 @@ add_custom_command(
 
 
 set(ULTPARSERLIB_GO_SRCS
-    ultparserlib.go
+    ${CMAKE_CURRENT_SOURCE_DIR}/ultparserlib.go
 )
 
 set(ULTPARSERLIB_PROTOBUF_SRCS
-    ultparser_query.proto
+    ${CMAKE_CURRENT_SOURCE_DIR}/ultparser_query.proto
 )
 
 set(ULTPARSERLIB_PROTOBUF_CPP_AUTOGEN_SRCS
-    cpp_autogen/ultparser_query.pb.cc
-    cpp_autogen/ultparser_query.pb.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_autogen/ultparser_query.pb.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp_autogen/ultparser_query.pb.h
 )
 
 set(ULTPARSERLIB_PROTOBUF_GO_AUTOGEN_SRCS
-    pb/ultparser_query.pb.go
+    ${CMAKE_CURRENT_SOURCE_DIR}/pb/ultparser_query.pb.go
 )
 
-set(ULTPARSERLIB_SONAME cpp/libultparser/libultparser.so)
+set(ULTPARSERLIB_SONAME ${CMAKE_CURRENT_BINARY_DIR}/cpp/libultparser/libultparser.so)
 
 add_custom_command(
-    OUTPUT ${ULTPARSERLIB_PROTOBUF_CPP_AUTOGEN_SRCS}
+    OUTPUT ${ULTPARSERLIB_PROTOBUF_CPP_AUTOGEN_SRCS} ${ULTPARSERLIB_PROTOBUF_GO_AUTOGEN_SRCS}
     DEPENDS ${ULTPARSERLIB_PROTOBUF_SRCS}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMAND mkdir -p cpp_autogen && protoc --experimental_allow_proto3_optional --cpp_out=cpp_autogen ${ULTPARSERLIB_PROTOBUF_SRCS}
-    COMMENT "Generating protobuf cpp autogen files"
-)
-
-add_custom_command(
-    OUTPUT ${ULTPARSERLIB_PROTOBUF_GO_AUTOGEN_SRCS}
-    DEPENDS
-        ${ULTPARSERLIB_PROTOBUF_SRCS}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMAND mkdir -p pb && protoc --plugin=${PROTOC_GEN_GO_BIN} --experimental_allow_proto3_optional --go_out=pb ${ULTPARSERLIB_PROTOBUF_SRCS}
-    COMMENT "Generating protobuf go autogen files"
+    COMMAND protoc --experimental_allow_proto3_optional --cpp_out=cpp_autogen ultparser_query.proto
+    COMMAND protoc --plugin=${PROTOC_GEN_GO_BIN} --experimental_allow_proto3_optional --go_out=pb ultparser_query.proto
+    COMMENT "Generating protobuf autogen files for go/cpp"
 )
 
 add_custom_command(
@@ -63,7 +60,7 @@ add_custom_command(
         ${CMAKE_CURRENT_SOURCE_DIR}/ULTPARSERLIB_DEP_INSTALLED
         ${ULTPARSERLIB_PROTOBUF_GO_AUTOGEN_SRCS} ${ULTPARSERLIB_GO_SRCS}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMAND mkdir -p cpp/parserlib && env go build -o ${CMAKE_CURRENT_BINARY_DIR}/${ULTPARSERLIB_SONAME} -buildmode=c-shared ${ULTPARSERLIB_GO_SRCS}
+    COMMAND env go build -o ${ULTPARSERLIB_SONAME} -buildmode=c-shared ${ULTPARSERLIB_GO_SRCS}
     COMMENT "Building ultparserlib.so"
 )
 
