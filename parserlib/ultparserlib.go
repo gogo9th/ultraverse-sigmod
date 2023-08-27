@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 /**
@@ -23,18 +24,23 @@ import (
  * 스레드 ID를 키로 사용합니다.
  */
 var parser_instances map[int64]*parser.Parser
+var parser_mutex sync.Mutex
 
 /**
  * 스레드 ID에 맞는 파서 인스턴스를 반환합니다.
  */
 func get_parser_instance_for(threadId int64) *parser.Parser {
 	// returns a parser instance for the given threadId
+	parser_mutex.Lock()
 
 	if parser_instances[threadId] == nil {
 		parser_instances[threadId] = parser.New()
 	}
 
-	return parser_instances[threadId]
+	instance := parser_instances[threadId]
+	parser_mutex.Unlock()
+
+	return instance
 }
 
 /**
@@ -717,9 +723,11 @@ func repr_node(node *ast.StmtNode) string {
  */
 //export ult_sql_parser_init
 func ult_sql_parser_init() {
+	parser_mutex.Lock()
 	if parser_instances == nil {
 		parser_instances = make(map[int64]*parser.Parser)
 	}
+	parser_mutex.Unlock()
 }
 
 /**
@@ -728,7 +736,9 @@ func ult_sql_parser_init() {
  */
 //export ult_sql_parser_deinit
 func ult_sql_parser_deinit() {
+	parser_mutex.Lock()
 	parser_instances = nil
+	parser_mutex.Unlock()
 }
 
 /**
