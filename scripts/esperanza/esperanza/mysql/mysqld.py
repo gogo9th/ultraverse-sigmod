@@ -96,8 +96,12 @@ class MySQLDaemon:
                 "-uroot",
                 "-ppassword",
                 "-R",
+                "--skip-opt",
+                "--create-options",
+                "--extended-insert",
                 "--flush-logs",
-                "--single-transaction",
+                # "--single-transaction",
+                "--lock-all-tables",
                 "--complete-insert",
                 database,
                 f"--result-file={output}"
@@ -188,7 +192,7 @@ class MySQLDaemon:
 
         return True
 
-    def stop(self) -> bool:
+    def stop(self, timeout=None) -> bool:
         """
         stops the MySQL daemon.
         returns True if the daemon was stopped successfully, False otherwise.
@@ -199,7 +203,7 @@ class MySQLDaemon:
             return False
 
         self.mysqld_handle.send_signal(15)
-        self.mysqld_handle.wait()
+        self.mysqld_handle.wait(timeout=timeout)
 
         self.mysqld_handle = None
 

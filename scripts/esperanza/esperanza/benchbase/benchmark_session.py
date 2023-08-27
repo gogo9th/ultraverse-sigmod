@@ -1,8 +1,9 @@
-import logging
+import sys
 import os
 import subprocess
 import time
 import signal
+import logging
 
 from datetime import datetime
 
@@ -42,7 +43,7 @@ class BenchmarkSession:
 
         def sigint_handler(sig, frame):
             self.logger.info("SIGINT received, stopping...")
-            self.mysqld.stop()
+            self.mysqld.stop(5)
             exit(0)
 
         signal.signal(signal.SIGINT, sigint_handler)
@@ -57,14 +58,127 @@ class BenchmarkSession:
 
         os.chdir(benchbase_home)
 
-        retval = subprocess.call(
+        handle = subprocess.Popen(
             [f"{benchbase_home}/run-mariadb"] + args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE
         )
+
+        # Q: should i use handle.communicate() instead of handle.stdout.read()?
+        # A: no, because handle.communicate() waits for the process to finish, which is not what we want.
+        #    we want to read the output while the process is running.
+
+        with open(f"{self.session_path}/benchbase.log", 'w') as f:
+            while True:
+                line = handle.stdout.readline()
+                if not line:
+                    break
+                print("\33[2K\r", end='')
+                print(line.decode('utf-8').strip(), end='')
+                sys.stdout.flush()
+                f.write(line.decode('utf-8'))
+
+        print()
+
+        retval = handle.wait()
 
         os.chdir(cwd)
 
         if retval != 0:
             raise Exception("failed to run benchbase")
+
+    def run_statelogd(self):
+        """
+        runs statelogd.
+        """
+        ultraverse_home = os.environ['ULTRAVERSE_HOME']
+
+        self.logger.info("running statelogd...")
+
+        cwd = os.getcwd()
+        os.chdir(self.session_path)
+
+        handle = subprocess.Popen([
+            f"{ultraverse_home}/statelogd",
+
+            '-b', 'server-binlog.index',
+            '-o', 'benchbase',
+
+            '-n'
+        ], stderr=subprocess.PIPE)
+
+        with open(f"{self.session_path}/statelogd.log", 'w') as f:
+            while True:
+                line = handle.stderr.readline()
+                if not line:
+                    break
+                print("\33[2K\r", end='')
+                print(line.decode('utf-8').strip(), end='')
+                sys.stdout.flush()
+                f.write(line.decode('utf-8'))
+
+        print()
+
+        retval = handle.wait()
+
+        os.chdir(cwd)
+
+        if retval != 0:
+            raise Exception("failed to run statelogd: process exited with non-zero code " + str(retval))
+
+
+    def run_db_state_change(self, args: list[str], stdout_name: str="db_state_change.stdout", stderr_name: str="db_state_change.stderr", pipe_stdin_file=None):
+        """
+        runs db_state_change.
+        """
+        ultraverse_home = os.environ['ULTRAVERSE_HOME']
+
+        self.logger.info("running db_state_change with args: " + " ".join(args))
+
+        cwd = os.getcwd()
+        os.chdir(self.session_path)
+
+        handle = subprocess.Popen(
+            [f"{ultraverse_home}/db_state_change"] + args,
+            stdin=subprocess.PIPE if pipe_stdin_file is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+
+        if pipe_stdin_file is not None:
+            with open(pipe_stdin_file, 'r') as stdin_f:
+                while True:
+                    line = stdin_f.readline()
+                    if not line:
+                        break
+                    handle.stdin.write(line.encode('utf-8'))
+            handle.stdin.close()
+
+        with open(f"{self.session_path}/{stdout_name}", 'w') as stdout_f, \
+             open(f"{self.session_path}/{stderr_name}", 'w') as stderr_f:
+            while True:
+                out_line = handle.stdout.readline()
+                err_line = handle.stderr.readline()
+                if not out_line and not err_line:
+                    break
+
+                if out_line:
+                    stdout_f.write(out_line.decode('utf-8'))
+
+                if err_line:
+                    print("\33[2K\r", end='')
+                    print(err_line.decode('utf-8').strip(), end='')
+                    sys.stdout.flush()
+                    stderr_f.write(err_line.decode('utf-8'))
+
+        print()
+
+        retval = handle.wait()
+
+        os.chdir(cwd)
+
+        if retval != 0:
+            raise Exception("failed to run db_state_change: process exited with non-zero code " + str(retval))
 
     def prepare(self):
         """
@@ -82,15 +196,18 @@ class BenchmarkSession:
         self.run_benchbase([self.bench_name, 'mariadb', self.amount, 'prepare'])
         time.sleep(5)
 
-        self.logger.info("dumping database...")
+        self.mysqld.stop()
+
+        self.mysqld.start()
+        time.sleep(5)
 
         # checkpoint
+        self.logger.info("dumping database...")
         self.mysqld.mysqldump("benchbase", f"{self.session_path}/dbdump.sql")
 
         self.mysqld.stop()
 
-
-        # fill data
+        # execute
         self.mysqld.flush_binlogs()
 
         self.mysqld.start()
@@ -101,14 +218,19 @@ class BenchmarkSession:
 
         self.mysqld.stop()
 
+        self.mysqld.start()
+        time.sleep(5)
+
+        self.logger.info("dumping database...")
+        self.mysqld.mysqldump("benchbase", f"{self.session_path}/dbdump_latest.sql")
+
+        self.mysqld.stop()
+
+
         os.system(f"mv -v {self.session_path}/mysql/server-binlog.* {self.session_path}/")
         os.system(f"cp -rv {os.getcwd()}/procdefs/${self.bench_name} {self.session_path}/procdef")
 
-    def run_statelogd(self):
-        pass
 
-    def run_db_state_change(self, args: list[str]):
-        pass
 
     def tablediff(self, table1: str, table2: str, columns: list[str]):
         """
@@ -116,23 +238,22 @@ class BenchmarkSession:
         """
         self.logger.info(f"comparing tables '{table1}' and '{table2}'...")
 
-        columns_str = ", ".join(columns)
-        columns_t1 = ", ".join(list(map(lambda c: f"{table1}.{c}", columns)))
-        columns_t2 = ", ".join(list(map(lambda c: f"{table2}.{c}", columns)))
+        columns_str = ", ".join(list(map(lambda c: f"`{c}`", columns)))
+        columns_t1 = ", ".join(list(map(lambda c: f"t1.`{c}`", columns)))
+        columns_t2 = ", ".join(list(map(lambda c: f"t2.`{c}`", columns)))
 
         base_sql = (f"SELECT '{table1}' as `set`, t1.*"
                     f"    FROM {table1} t1"
                     f"    WHERE ROW({columns_t1}) NOT IN"
                     f"    (SELECT {columns_str} FROM {table2})"
-                    f"UNION ALL"
+                    f"UNION ALL "
                     f"SELECT '{table2}' as `set`, t2.*"
                     f"    FROM {table2} t2"
                     f"    WHERE ROW({columns_t2}) NOT IN"
                     f"    (SELECT {columns_str} FROM {table1})")
 
         sql = (f"SELECT CONCAT(\"found \", COUNT(*), \" differences\")"
-               f"FROM ({base_sql})")
-
+               f"FROM ({base_sql}) d")
 
         # run mysql and get stdout into variable
         retval = subprocess.call([
@@ -140,9 +261,44 @@ class BenchmarkSession:
             '-h127.0.0.1',
             '-uroot',
             '-ppassword',
-            '--raw',
+            '-B', '--silent', '--raw',
             '-e', sql
         ])
 
         if retval != 0:
             raise Exception("failed to compare tables")
+
+    def load_dump(self, db_name: str, sqlfile: str):
+        """
+        loads the given sql dump.
+        """
+        self.logger.info(f"loading dump '{sqlfile}' into {db_name}...")
+
+        self.eval(f"DROP DATABASE IF EXISTS {db_name}")
+        self.eval(f"CREATE DATABASE {db_name}")
+
+        # run mysql and get stdout into variable
+        retval = subprocess.call([
+            'mysql',
+            '-h127.0.0.1',
+            '-uroot',
+            '-ppassword',
+            db_name,
+            '-B', '--silent', '--raw',
+            '-e', f"source {sqlfile}"
+        ], stdout=subprocess.DEVNULL)
+
+        if retval != 0:
+            raise Exception("failed to load dump")
+
+    def eval(self, sql: str) -> bool:
+        retval = subprocess.call([
+            'mysql',
+            '-h127.0.0.1',
+            '-uroot',
+            '-ppassword',
+            '-B', '--silent', '--raw',
+            '-e', sql
+        ])
+
+        return retval == 0
