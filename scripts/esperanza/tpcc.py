@@ -133,7 +133,7 @@ if __name__ == "__main__":
     os.putenv("DB_USER", "admin")
     os.putenv("DB_PASS", "password")
 
-    session = BenchmarkSession("tpcc", "1m", session_path=f'{os.getcwd()}/runs/tpcc-1m-20230829144754')
+    session = BenchmarkSession("tpcc", "1m")
     logger = session.logger
     # session.prepare()
 
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     session.mysqld.start()
 
     # mysqld 기동이 끝날 때까지 기다린다.
-    time.sleep(99999)
+    time.sleep(10)
 
     # 클러스터 생성한다
     logger.info("creating cluster...")
