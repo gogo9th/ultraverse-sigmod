@@ -230,7 +230,8 @@ class BenchmarkSession:
 
 
         os.system(f"mv -v {self.session_path}/mysql/server-binlog.* {self.session_path}/")
-        os.system(f"cp -rv {os.getcwd()}/procdefs/${self.bench_name} {self.session_path}/procdef")
+        os.system(f"mkdir -p {self.session_path}/procdef")
+        os.system(f"cp -rv {os.getcwd()}/procdefs/{self.bench_name}/* {self.session_path}/procdef/")
 
 
 
