@@ -142,7 +142,8 @@ class BenchmarkSession:
             [f"{ultraverse_home}/db_state_change"] + args,
             stdin=subprocess.PIPE if pipe_stdin_file is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            text=True
         )
 
         if pipe_stdin_file is not None:
@@ -151,7 +152,7 @@ class BenchmarkSession:
                     line = stdin_f.readline()
                     if not line:
                         break
-                    handle.stdin.write(line.encode('utf-8'))
+                    handle.stdin.write(line)
             handle.stdin.close()
 
         with open(f"{self.session_path}/{stdout_name}", 'w') as stdout_f, \
@@ -163,13 +164,14 @@ class BenchmarkSession:
                     break
 
                 if out_line:
-                    stdout_f.write(out_line.decode('utf-8'))
+                    stdout_f.write(out_line)
 
                 if err_line:
                     print("\33[2K\r", end='')
-                    print(err_line.decode('utf-8').strip(), end='')
+                    print(err_line.strip(), end='')
                     sys.stdout.flush()
-                    stderr_f.write(err_line.decode('utf-8'))
+                    stderr_f.write(err_line)
+                    stderr_f.flush()
 
         print()
 
