@@ -4,6 +4,7 @@ import subprocess
 import time
 import signal
 import logging
+import fcntl
 
 from datetime import datetime
 
@@ -131,6 +132,12 @@ class BenchmarkSession:
         """
         runs db_state_change.
         """
+
+        def set_nonblock_io(io):
+            fd = io.fileno()
+            fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
         ultraverse_home = os.environ['ULTRAVERSE_HOME']
 
         self.logger.info("running db_state_change with args: " + " ".join(args))
@@ -143,8 +150,10 @@ class BenchmarkSession:
             stdin=subprocess.PIPE if pipe_stdin_file is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
         )
+
+        set_nonblock_io(handle.stdout)
+        set_nonblock_io(handle.stderr)
 
         if pipe_stdin_file is not None:
             with open(pipe_stdin_file, 'r') as stdin_f:
@@ -152,26 +161,43 @@ class BenchmarkSession:
                     line = stdin_f.readline()
                     if not line:
                         break
-                    handle.stdin.write(line)
+                    handle.stdin.write(line.encode('utf-8'))
             handle.stdin.close()
+
+        ends_with_newline = False
 
         with open(f"{self.session_path}/{stdout_name}", 'w') as stdout_f, \
              open(f"{self.session_path}/{stderr_name}", 'w') as stderr_f:
-            while True:
-                out_line = handle.stdout.readline()
-                err_line = handle.stderr.readline()
-                if not out_line and not err_line:
-                    break
+            while handle.poll() is None:
+                time.sleep(0.016)
+                out_line = handle.stdout.read()
+                err_line = handle.stderr.read()
 
                 if out_line:
-                    stdout_f.write(out_line)
+                    stdout_f.write(out_line.decode('utf-8'))
+                    stdout_f.flush()
 
                 if err_line:
-                    print("\33[2K\r", end='')
-                    print(err_line.strip(), end='')
+                    # print("\33[2K\r", end='')
+                    # print(err_line.decode('utf-8').strip(), end='\n')
+                    # sys.stdout.flush()
+
+                    line_str = err_line.decode('utf-8')
+                    line = line_str.splitlines(keepends=False)[-1]
+
+                    if ends_with_newline:
+                        sys.stdout.write("\33[2K\r")
+                        sys.stdout.flush()
+
+                    ends_with_newline = line_str.endswith('\n')
+
+                    sys.stdout.write(line)
                     sys.stdout.flush()
-                    stderr_f.write(err_line)
+                    stderr_f.write(err_line.decode('utf-8'))
                     stderr_f.flush()
+
+        handle.stdout.close()
+        handle.stderr.close()
 
         print()
 
