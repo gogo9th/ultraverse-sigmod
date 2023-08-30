@@ -145,6 +145,14 @@ namespace ultraverse::state::v2 {
         _writeStateLog = writeStateLog;
     }
     
+    const std::string &StateChangePlan::reportPath() const {
+        return _reportPath;
+    }
+    
+    void StateChangePlan::setReportPath(const std::string &reportPath) {
+        _reportPath = reportPath;
+    }
+    
     bool StateChangePlan::isFullReplay() const {
         return _isFullReplay;
     }
@@ -159,6 +167,14 @@ namespace ultraverse::state::v2 {
     
     void StateChangePlan::setDryRun(bool isDryRun) {
         _isDryRun = isDryRun;
+    }
+    
+    bool StateChangePlan::dropIntermediateDB() const {
+        return _dropIntermediateDB;
+    }
+    
+    void StateChangePlan::setDropIntermediateDB(bool dropIntermediateDB) {
+        _dropIntermediateDB = dropIntermediateDB;
     }
     
     int StateChangePlan::threadNum() const {

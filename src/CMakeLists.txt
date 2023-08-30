@@ -108,7 +108,7 @@ set(LIBULTRAVERSE_STATE_SRCS
     mariadb/state/new/cluster/StateRelationshipResolver.cpp mariadb/state/new/cluster/StateRelationshipResolver.hpp
     mariadb/state/new/graph/RowGraph.cpp
     mariadb/state/new/graph/RowGraph.hpp
-    mariadb/state/new/StateClusterWriter.cpp mariadb/state/new/StateClusterWriter.hpp)
+    mariadb/state/new/StateClusterWriter.cpp mariadb/state/new/StateClusterWriter.hpp mariadb/state/new/StateChangeReport.cpp mariadb/state/new/StateChangeReport.hpp)
 
 set(LIBULTRAVERSE_MARIADB_SRCS
     mariadb/DBHandle.cpp

@@ -19,10 +19,14 @@
 
 #include "StateChanger.hpp"
 #include "GIDIndexReader.hpp"
+#include "StateChangeReport.hpp"
 
 namespace ultraverse::state::v2 {
     void StateChanger::replay() {
+        StateChangeReport report(StateChangeReport::EXECUTE, _plan);
+        
         createIntermediateDB();
+        report.setIntermediateDBName(_intermediateDBName);
         
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
@@ -125,6 +129,7 @@ namespace ultraverse::state::v2 {
             
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
+            report.setSQLLoadTime(time.count());
         }
         
         auto phase_main_start = std::chrono::steady_clock::now();
@@ -167,12 +172,21 @@ namespace ultraverse::state::v2 {
         }
         
         _logger->info("replay(): main phase {}s", _phase2Time);
+        report.setExecutionTime(_phase2Time);
         
         if (gcThread.joinable()) {
             gcThread.join();
         }
         
-        dropIntermediateDB();
+        if (!_plan.reportPath().empty()) {
+            report.writeToJSON(_plan.reportPath());
+        }
+        
+        if (_plan.dropIntermediateDB()) {
+            dropIntermediateDB();
+        }
+        
+        // dropIntermediateDB();
     }
     
     void StateChanger::replayThreadMain(int workerId, RowGraph &rowGraph) {

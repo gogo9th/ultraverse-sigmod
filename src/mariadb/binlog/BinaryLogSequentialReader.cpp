@@ -13,7 +13,9 @@ namespace ultraverse::mariadb {
     
         _basePath(basePath),
         _indexFile(indexFile),
-        _currentIndex(0)
+        
+        _currentIndex(0),
+        _isPollDisabled(false)
     {
     }
     
@@ -35,6 +37,10 @@ namespace ultraverse::mariadb {
             auto result = _binaryLogReader->next();
             if (!result) {
                 using namespace std::chrono_literals;
+                
+                if (_isPollDisabled) {
+                    return false;
+                }
                 
                 if (pollNext()) {
                     continue;
@@ -102,7 +108,15 @@ namespace ultraverse::mariadb {
         }
         return _binaryLogReader->pos();
     }
-
+    
+    bool BinaryLogSequentialReader::isPollDisabled() const {
+        return _isPollDisabled;
+    }
+    
+    void BinaryLogSequentialReader::setPollDisabled(bool isPollDisabled) {
+        _isPollDisabled = isPollDisabled;
+    }
+    
     void BinaryLogSequentialReader::terminate() {
         terminateSignal = true;
     }

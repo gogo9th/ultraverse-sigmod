@@ -23,6 +23,7 @@ namespace ultraverse::state::v2 {
     }
     
     void StateLogWriter::close() {
+        _stream.flush();
         _stream.close();
     }
 

@@ -72,7 +72,7 @@ namespace ultraverse {
     }
     
     std::string DBStateChangeApp::optString() {
-        return "b:i:d:s:g:e:k:a:C:S:wDvVh";
+        return "b:i:d:s:g:e:k:a:C:S:r:NwDvVh";
     }
     
     int DBStateChangeApp::main() {
@@ -99,6 +99,8 @@ namespace ultraverse {
             "    -a colA=colB   column aliases (eg. user.name=user.id,...)\n"
             "    -C threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -S gid,gid,... list of gids to skip processing\n"
+            "    -r reportfile  report file\n"
+            "    -N             do not drop intermediate database\n"
             "    -w             write state log which contains state changed\n"
             "    -D             dry-run\n"
             "    -v             set logger level to DEBUG\n"
@@ -168,9 +170,11 @@ namespace ultraverse {
             throw std::runtime_error("make_clustermap cannot be executed with other actions.");
         }
         
+        /*
         if (fullReplay && actions.size() > 1) {
             throw std::runtime_error("full_replay cannot be executed with other actions.");
         }
+         */
         
         StateChangePlan changePlan;
         
@@ -301,6 +305,17 @@ namespace ultraverse {
                 );
             }
         } // @end(skipProcessing)
+        
+        { // @start(reportPath)
+            if (isArgSet('r')) {
+                auto reportPath = getArg('r');
+                changePlan.setReportPath(reportPath);
+            }
+        } // @end(reportPath)
+        
+        { // @start(dropIntermediateDB)
+            changePlan.setDropIntermediateDB(!isArgSet('N'));
+        }
     
         { // @start(writeStateLog)
             if (isArgSet('w')) {

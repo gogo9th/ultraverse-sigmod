@@ -472,7 +472,7 @@ namespace ultraverse::state::v2 {
     }
     
     std::string StateCluster::generateReplaceQuery(const std::string &targetDB, const std::string &intermediateDB) {
-        std::string query = fmt::format("use {};\n\n", targetDB);
+        std::string query = fmt::format("use {};\nSET FOREIGN_KEY_CHECKS=0;\n", targetDB);
         
         for (const auto &pair: _keyColumnsMap) {
             const auto &tableName = pair.first;
@@ -534,6 +534,8 @@ namespace ultraverse::state::v2 {
                 query += sstream.str();
             }
         }
+        
+        query += "\nSET FOREIGN_KEY_CHECKS=1;\n";
         
         return std::move(query);
     }

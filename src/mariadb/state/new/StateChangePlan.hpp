@@ -60,6 +60,9 @@ namespace ultraverse::state::v2 {
         bool writeStateLog() const;
         void setWriteStateLog(bool writeStateLog);
         
+        const std::string &reportPath() const;
+        void setReportPath(const std::string &reportPath);
+
         bool isFullReplay() const;
         void setFullReplay(bool isFullReplay);
         
@@ -68,6 +71,9 @@ namespace ultraverse::state::v2 {
         
         int threadNum() const;
         void setThreadNum(int threadNum);
+        
+        bool dropIntermediateDB() const;
+        void setDropIntermediateDB(bool dropIntermediateDB);
         
         std::set<std::string> &keyColumns();
         std::vector<std::pair<std::string, std::string>> &columnAliases();
@@ -96,13 +102,16 @@ namespace ultraverse::state::v2 {
         std::string _procCallLogPath;
 
         bool _writeStateLog;
+        std::string _reportPath;
         
         std::set<std::string> _keyColumns;
         std::vector<std::pair<std::string, std::string>> _columnAliases;
     
         std::vector<uint64_t> _skipGids;
+        
         bool _isFullReplay;
         bool _isDryRun;
+        bool _dropIntermediateDB;
         
         int _threadNum;
     };
