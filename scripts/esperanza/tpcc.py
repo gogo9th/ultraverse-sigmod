@@ -135,10 +135,10 @@ if __name__ == "__main__":
 
     session = BenchmarkSession("tpcc", "1m")
     logger = session.logger
-    # session.prepare()
+    session.prepare()
 
     # statelogd를 실행해서 binary log에서 statelog를 생성한다.
-    # session.run_statelogd()
+    session.run_statelogd()
 
     # db_state_change를 실행하기 위해 mysqld를 실행한다.
     logger.info("starting mysqld...")
