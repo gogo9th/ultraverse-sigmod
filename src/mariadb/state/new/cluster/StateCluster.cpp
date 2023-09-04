@@ -176,7 +176,7 @@ namespace ultraverse::state::v2 {
                 const auto &real = resolver.resolveRowChain(item);
                 
                 if (real != nullptr) {
-                    auto &_item = readKeyItems[real->name];
+                    auto &_item = isWrite ? writeKeyItems[real->name] : readKeyItems[real->name];
                     
                     if (_item.name.empty()) {
                         _item.name = real->name;
@@ -192,7 +192,7 @@ namespace ultraverse::state::v2 {
                     
                     if (!realColumn.empty()) {
                         // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
-                        auto &_item = readKeyItems[realColumn];
+                        auto &_item = isWrite ? writeKeyItems[item.name] : readKeyItems[realColumn];
                         
                         if (_item.name.empty()) {
                             _item.name = realColumn;
@@ -403,8 +403,14 @@ namespace ultraverse::state::v2 {
             auto &cache = pair.second;
             
             for (const auto &keyColumn: _keyColumns) {
+                std::string column = resolver.resolveChain(keyColumn);
+                
+                if (column.empty()) {
+                    column = keyColumn;
+                }
+                
                 // auto readRange = match(READ, keyColumn, cache.transaction, resolver);
-                auto writeRange = match(WRITE, keyColumn, cache.transaction, resolver);
+                auto writeRange = match(WRITE, column, cache.transaction, resolver);
                 
                 /*
                 if (readRange.has_value()) {
@@ -413,18 +419,20 @@ namespace ultraverse::state::v2 {
                  */
                 
                 if (writeRange.has_value()) {
-                    cache.write[keyColumn] = writeRange.value();
+                    cache.write[column] = writeRange.value();
                     std::unordered_map<StateRange, std::reference_wrapper<const std::unordered_set<gid_t>>>
-                        &cacheMap = _targetCache[keyColumn];
+                        &cacheMap = _targetCache[column];
                     if (cacheMap.find(writeRange.value()) == cacheMap.end()) {
                         auto range = writeRange.value();
-                        const auto &cluster = _clusters.at(keyColumn);
+                        const auto &cluster = _clusters.at(column);
                         auto it = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(), [this, &range](const auto &pair) {
                             return pair.first == range || StateRange::isIntersects(pair.first, range);
                         });
                         
                         const std::unordered_set<gid_t> &gids = it->second;
                         cacheMap.emplace(range, std::ref(gids));
+                        
+                        cache.read[column] = it->first;
                     }
                 }
             }
@@ -471,67 +479,79 @@ namespace ultraverse::state::v2 {
         return matched > 0;
     }
     
-    std::string StateCluster::generateReplaceQuery(const std::string &targetDB, const std::string &intermediateDB) {
+    std::string StateCluster::generateReplaceQuery(const std::string &targetDB, const std::string &intermediateDB, const RelationshipResolver &resolver) {
         std::string query = fmt::format("use {};\nSET FOREIGN_KEY_CHECKS=0;\n", targetDB);
         
         for (const auto &pair: _keyColumnsMap) {
             const auto &tableName = pair.first;
             const auto &keyColumns = pair.second;
-            std::stringstream sstream;
-            
-            sstream << fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE ", tableName, intermediateDB, tableName);
             
             size_t i = 0;
             bool changed = false;
+            bool isWildcard = false;
+            
+            std::stringstream whereStream;
             
             for (const auto &keyColumn: keyColumns) {
-                if (_targetCache.find(keyColumn) == _targetCache.end()) {
-                    goto NEXT_COLUMN;
+                std::string resolvedColumn = resolver.resolveChain(keyColumn);
+                
+                if (resolvedColumn.empty()) {
+                    resolvedColumn = keyColumn;
                 }
                 
                 {
-                    const auto &ranges = _targetCache[keyColumn];
-                    
-                    if (ranges.empty()) {
-                        goto NEXT_COLUMN;
-                    }
-                    
-                    changed = true;
-                    
-                    if (ranges.size() == 1 && ranges.begin()->first.wildcard()) {
-                        // TODO: mark as wildcard
-                        goto NEXT_COLUMN;
-                    }
-                    
-                    sstream << "(";
-                    
                     size_t j = 0;
                     
-                    for (const auto &range: ranges) {
-                        sstream << "(";
-                        sstream << range.first.MakeWhereQuery(keyColumn);
-                        sstream << ")";
+                    whereStream << "(";
+                    
+                    auto it = _rollbackTargets.begin();
+                    
+                    while (true) {
+                        it = std::find_if(
+                            it, _rollbackTargets.end(),
+                            [&resolvedColumn](const auto &pair) {
+                                return pair.second.read.find(resolvedColumn) != pair.second.read.end();
+                            }
+                       );
                         
-                        if (j++ != ranges.size() - 1) {
-                            sstream << " OR ";
+                        if (it == _rollbackTargets.end()) {
+                            break;
+                        } else if (j++ != 0) {
+                            whereStream << " OR ";
                         }
+                        
+                        const auto &range = it->second.read.at(resolvedColumn);
+                        
+                        if (range.wildcard()) {
+                            isWildcard = true;
+                            goto NEXT_COLUMN;
+                        } else {
+                            changed = true;
+                        }
+                        
+                        whereStream << "(";
+                        whereStream << range.MakeWhereQuery(keyColumn);
+                        whereStream << ")";
+                        
+                        it++;
                     }
                     
-                    sstream << ")";
+                    whereStream << ")";
                     
                     if (i++ != keyColumns.size() - 1) {
-                        sstream << " AND ";
+                        whereStream << " AND ";
                     }
+                    
                 }
                 
                 NEXT_COLUMN:
                 i++;
             }
             
-            sstream << ";\n";
-            
-            if (changed) {
-                query += sstream.str();
+            if (isWildcard) {
+                query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{};\n", tableName, intermediateDB, tableName);
+            } else if (changed) {
+                query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, intermediateDB, tableName, whereStream.str());
             }
         }
         

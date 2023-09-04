@@ -105,7 +105,7 @@ namespace ultraverse::state::v2 {
          */
         bool shouldReplay(gid_t gid);
         
-        std::string generateReplaceQuery(const std::string &targetDB, const std::string &intermediateDB);
+        std::string generateReplaceQuery(const std::string &targetDB, const std::string &intermediateDB, const RelationshipResolver &resolver);
         
         template <typename Archive>
         void serialize(Archive &archive);
