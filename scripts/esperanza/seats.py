@@ -10,21 +10,40 @@ DB_STATE_CHANGE_BASE_OPTIONS = [
     '-b', 'dbdump.sql',
     '-i', 'benchbase',
     '-d', 'benchbase',
-    '-k', 'warehouse.w_id,customer.c_w_id,stocks.s_w_id,order_line.ol_w_id,district.d_w_id,order.o_w_id,history.h_c_w_id,item.i_id',
+    '-k', 'customer2.c_id,flight.f_id,frequent_flyer.ff_c_id,reservation.r_c_id,reservation.r_f_id,airport.ap_id',
+    '-a', 'customer2.c_id_str=customer2.c_id,flight.f_id=flight.f_al_id,frequent_flyer.ff_c_id_str=frequent_flyer.ff_c_id,airport.ap_id=airport.ap_co_id'
 ]
 
 DB_TABLE_DIFF_OPTIONS = {
     # 테이블 비교를 할 테이블들을 지정한다.
     # 'table': ['col1', 'col2', ...] 같이 기입한다.
-    'warehouse': ['w_id', 'w_ytd', 'w_tax', 'w_name', 'w_street_1', 'w_street_2', 'w_city', 'w_state', 'w_zip'],
-    'item': ['i_id', 'i_name', 'i_price', 'i_data', 'i_im_id'],
-    'stock': ['s_w_id', 's_i_id', 's_quantity', 's_ytd', 's_order_cnt', 's_remote_cnt', 's_data', 's_dist_01', 's_dist_02', 's_dist_03', 's_dist_04', 's_dist_05', 's_dist_06', 's_dist_07', 's_dist_08', 's_dist_09', 's_dist_10'],
-    'district': ['d_w_id', 'd_id', 'd_ytd', 'd_tax', 'd_next_o_id', 'd_name', 'd_street_1', 'd_street_2', 'd_city', 'd_state', 'd_zip'],
-    'customer': ['c_w_id', 'c_d_id', 'c_id', 'c_discount', 'c_credit', 'c_last', 'c_first', 'c_credit_lim', 'c_balance', 'c_ytd_payment', 'c_payment_cnt', 'c_delivery_cnt', 'c_street_1', 'c_street_2', 'c_city', 'c_state', 'c_zip', 'c_phone', 'c_since', 'c_middle', 'c_data'],
-    'history': ['h_c_id', 'h_c_d_id', 'h_c_w_id', 'h_d_id', 'h_w_id', 'h_date', 'h_amount', 'h_data'],
-    'oorder': ['o_w_id', 'o_d_id', 'o_id', 'o_c_id', 'o_carrier_id', 'o_ol_cnt', 'o_all_local', 'o_entry_d'],
-    'new_order': ['no_w_id', 'no_d_id', 'no_o_id'],
-    'order_line': ['ol_w_id', 'ol_d_id', 'ol_o_id', 'ol_number', 'ol_i_id', 'ol_delivery_d', 'ol_amount', 'ol_supply_w_id', 'ol_quantity', 'ol_dist_info']
+    'warehouse': [
+        'w_id', 'w_ytd', 'w_tax', 'w_name', 'w_street_1', 'w_street_2', 'w_city', 'w_state', 'w_zip', 
+    ],
+    'item': [
+        'i_id', 'i_name', 'i_price', 'i_data', 'i_im_id', 
+    ],
+    'stock': [
+        's_w_id', 's_i_id', 's_quantity', 's_ytd', 's_order_cnt', 's_remote_cnt', 's_data', 's_dist_01', 's_dist_02', 's_dist_03', 's_dist_04', 's_dist_05', 's_dist_06', 's_dist_07', 's_dist_08', 's_dist_09', 's_dist_10', 
+    ],
+    'district': [
+        'd_w_id', 'd_id', 'd_ytd', 'd_tax', 'd_next_o_id', 'd_name', 'd_street_1', 'd_street_2', 'd_city', 'd_state', 'd_zip', 
+    ],
+    'customer': [
+        'c_w_id', 'c_d_id', 'c_id', 'c_discount', 'c_credit', 'c_last', 'c_first', 'c_credit_lim', 'c_balance', 'c_ytd_payment', 'c_payment_cnt', 'c_delivery_cnt', 'c_street_1', 'c_street_2', 'c_city', 'c_state', 'c_zip', 'c_phone', 'c_since', 'c_middle', 'c_data', 
+    ],
+    'history': [
+        'h_c_id', 'h_c_d_id', 'h_c_w_id', 'h_d_id', 'h_w_id', 'h_date', 'h_amount', 'h_data', 
+    ],
+    'oorder': [
+        'o_w_id', 'o_d_id', 'o_id', 'o_c_id', 'o_carrier_id', 'o_ol_cnt', 'o_all_local', 'o_entry_d', 
+    ],
+    'new_order': [
+        'no_w_id', 'no_d_id', 'no_o_id', 
+    ],
+    'order_line': [
+        'ol_w_id', 'ol_d_id', 'ol_o_id', 'ol_number', 'ol_i_id', 'ol_delivery_d', 'ol_amount', 'ol_supply_w_id', 'ol_quantity', 'ol_dist_info', 
+    ],
 }
 
 def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do_extra_replay_st: bool=False, do_table_diff: bool=False):
@@ -133,7 +152,7 @@ if __name__ == "__main__":
     os.putenv("DB_USER", "admin")
     os.putenv("DB_PASS", "password")
 
-    session = BenchmarkSession("tpcc", "1m")
+    session = BenchmarkSession("seats", "1m")
     logger = session.logger
     session.prepare()
 
