@@ -548,11 +548,16 @@ namespace ultraverse::state::v2 {
                 i++;
             }
             
+
+            query += fmt::format("TRUNCATE {};\n", tableName);
+            
             if (isWildcard) {
                 query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{};\n", tableName, intermediateDB, tableName);
             } else if (changed) {
                 query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, intermediateDB, tableName, whereStream.str());
             }
+
+            query += "\n";
         }
         
         query += "\nSET FOREIGN_KEY_CHECKS=1;\n";
