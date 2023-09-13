@@ -373,7 +373,7 @@ public:
                 auto index = procMatcher->matchForward(pendingQuery->statement(), prevIndex);
                 
                 if (index == -1) {
-                    _logger->error("query not matched: {}", pendingQuery->statement());
+                    _logger->error("query not matched: {} at index {}", pendingQuery->statement(), prevIndex);
                     goto APPEND_QUERY;
                 }
                 

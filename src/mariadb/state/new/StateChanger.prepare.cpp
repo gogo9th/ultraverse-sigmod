@@ -308,7 +308,7 @@ namespace ultraverse::state::v2 {
         
         std::cout.flush();
         
-        std::string replaceQuery = rowCluster.generateReplaceQuery(_plan.dbName(), "__INTERMEDIATE_DB__");
+        std::string replaceQuery = rowCluster.generateReplaceQuery(_plan.dbName(), "__INTERMEDIATE_DB__", cachedResolver);
         _logger->debug("TODO: execute query: \n{}", replaceQuery);
         report.setReplaceQuery(replaceQuery);
         

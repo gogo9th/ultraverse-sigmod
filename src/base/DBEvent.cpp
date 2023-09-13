@@ -83,9 +83,11 @@ namespace ultraverse::base {
     
     void QueryEventBase::buildRWSet() {
         for (const auto &table: _relatedTables) {
-            _readItems.emplace_back(StateItem::Wildcard(
-                fmt::format("_S.{}", table)
-            ));
+            if (!table.empty()) {
+                _readItems.emplace_back(StateItem::Wildcard(
+                    fmt::format("_S.{}", table)
+                ));
+            }
         }
         
         if (_queryType == SELECT) {
@@ -264,7 +266,6 @@ namespace ultraverse::base {
                 
                 parent.name = left;
                 
-                
                 switch (expr.operator_()) {
                     case ultparser::DMLQueryExpr_Operator_EQ:
                         parent.function_type = FUNCTION_EQ;
@@ -322,10 +323,18 @@ namespace ultraverse::base {
             }
         };
         
+        std::function<void(StateItem &)> flatInsertNode = [this, &flatInsertNode](StateItem &item) {
+            if (item.condition_type == EN_CONDITION_AND || item.condition_type == EN_CONDITION_OR) {
+                std::for_each(item.arg_list.begin(), item.arg_list.end(), flatInsertNode);
+            } else {
+                _whereSet.emplace_back(item);
+            }
+        };
+        
         StateItem rootItem;
         visit_node(expr, rootItem);
         
-        _whereSet.emplace_back(std::move(rootItem));
+        flatInsertNode(rootItem);
         
         return true;
     }

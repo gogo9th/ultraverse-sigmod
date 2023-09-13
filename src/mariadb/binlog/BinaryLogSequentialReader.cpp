@@ -38,12 +38,12 @@ namespace ultraverse::mariadb {
             if (!result) {
                 using namespace std::chrono_literals;
                 
-                if (_isPollDisabled) {
-                    return false;
-                }
-                
                 if (pollNext()) {
                     continue;
+                } else {
+                    if (_isPollDisabled) {
+                        return false;
+                    }
                 }
                 std::this_thread::sleep_for(5s);
             } else {
