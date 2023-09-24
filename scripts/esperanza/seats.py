@@ -58,7 +58,7 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
     logger = session.logger
 
     rollback_actions = ":".join(map(lambda gid: f"rollback={gid}", rollback_gids))
-    rollback_log_name = "rollback_" + ",".join(map(lambda x: str(x), rollback_gids))
+    rollback_log_name = f"rollback_{rollback_gids[0]}_{rollback_gids[-1]}"
 
     rollback_stdout_name = rollback_log_name + ".stdout"
     rollback_stderr_name = rollback_log_name + ".stderr"
