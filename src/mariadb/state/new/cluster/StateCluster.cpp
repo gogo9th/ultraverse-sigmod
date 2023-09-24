@@ -490,10 +490,11 @@ namespace ultraverse::state::v2 {
             bool changed = false;
             bool isWildcard = false;
             
-            std::stringstream whereStream;
+            std::vector<std::string> where;
             
             for (const auto &keyColumn: keyColumns) {
                 std::string resolvedColumn = resolver.resolveChain(keyColumn);
+                std::vector<std::string> conds;
                 
                 if (resolvedColumn.empty()) {
                     resolvedColumn = keyColumn;
@@ -501,8 +502,6 @@ namespace ultraverse::state::v2 {
                 
                 {
                     size_t j = 0;
-                    
-                    whereStream << "(";
                     
                     auto it = _rollbackTargets.begin();
                     
@@ -516,8 +515,6 @@ namespace ultraverse::state::v2 {
                         
                         if (it == _rollbackTargets.end()) {
                             break;
-                        } else if (j++ != 0) {
-                            whereStream << " OR ";
                         }
                         
                         const auto &range = it->second.read.at(resolvedColumn);
@@ -529,20 +526,14 @@ namespace ultraverse::state::v2 {
                             changed = true;
                         }
                         
-                        whereStream << "(";
-                        whereStream << range.MakeWhereQuery(keyColumn);
-                        whereStream << ")";
+                        conds.push_back(fmt::format("({})", range.MakeWhereQuery(keyColumn)));
                         
                         it++;
                     }
                     
-                    whereStream << ")";
-                    
-                    if (i++ != keyColumns.size() - 1) {
-                        whereStream << " AND ";
-                    }
-                    
                 }
+                
+                where.push_back(fmt::format("{}", fmt::join(conds, " OR ")));
                 
                 NEXT_COLUMN:
                 i++;
@@ -554,7 +545,9 @@ namespace ultraverse::state::v2 {
             if (isWildcard) {
                 query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{};\n", tableName, intermediateDB, tableName);
             } else if (changed) {
-                query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, intermediateDB, tableName, whereStream.str());
+                std::string _where = fmt::format("{}", fmt::join(where, " AND "));
+                
+                query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, intermediateDB, tableName, _where);
             }
 
             query += "\n";
