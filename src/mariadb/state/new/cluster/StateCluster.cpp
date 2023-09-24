@@ -533,20 +533,23 @@ namespace ultraverse::state::v2 {
                     
                 }
                 
-                where.push_back(fmt::format("{}", fmt::join(conds, " OR ")));
+                if (!conds.empty()) {
+                    where.push_back(fmt::format("{}", fmt::join(conds, " OR ")));
+                }
                 
                 NEXT_COLUMN:
                 i++;
             }
             
 
-            query += fmt::format("TRUNCATE {};\n", tableName);
             
             if (isWildcard) {
+                query += fmt::format("TRUNCATE {};\n", tableName);
                 query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{};\n", tableName, intermediateDB, tableName);
             } else if (changed) {
                 std::string _where = fmt::format("{}", fmt::join(where, " AND "));
                 
+                query += fmt::format("TRUNCATE {};\n", tableName);
                 query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, intermediateDB, tableName, _where);
             }
 
