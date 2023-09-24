@@ -549,9 +549,8 @@ namespace ultraverse::state::v2 {
             } else if (changed) {
                 std::string _where = fmt::format("{}", fmt::join(where, " AND "));
                 
-                query += fmt::format("TRUNCATE {};\n", tableName);
-                query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{};\n", tableName, intermediateDB, tableName);
-                // query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, intermediateDB, tableName, _where);
+                query += fmt::format("DELETE FROM {} WHERE {};\n", tableName, _where);
+                query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, intermediateDB, tableName, _where);
             }
 
             query += "\n";
