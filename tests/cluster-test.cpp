@@ -118,9 +118,9 @@ std::shared_ptr<Transaction> sampleTransaction1() {
         
         query1->setAffectedRows(1);
         
-        query1->itemSet().emplace_back(StateItem::EQ("users.id", (int64_t) 1));
-        query1->itemSet().emplace_back(StateItem::EQ("users.name", StateData { "cheesekun" }));
-        query1->itemSet().emplace_back(StateItem::EQ("users.id_str", StateData { "000001" }));
+        query1->writeSet().emplace_back(StateItem::EQ("users.id", (int64_t) 1));
+        query1->writeSet().emplace_back(StateItem::EQ("users.name", StateData { "cheesekun" }));
+        query1->writeSet().emplace_back(StateItem::EQ("users.id_str", StateData { "000001" }));
     }
     
     *transaction << query1;
@@ -138,11 +138,11 @@ std::shared_ptr<Transaction> sampleTransaction2() {
         query2->setStatement("UPDATE `users` SET `name` = 'test1234' WHERE `id` = 1");
         query2->setAffectedRows(1);
         
-        query2->itemSet().emplace_back(StateItem::EQ("users.id", (int64_t) 1));
-        query2->itemSet().emplace_back(StateItem::EQ("users.name", StateData { "test1234" }));
-        query2->itemSet().emplace_back(StateItem::EQ("users.id_str", StateData { "000001" }));
+        query2->writeSet().emplace_back(StateItem::EQ("users.id", (int64_t) 1));
+        query2->writeSet().emplace_back(StateItem::EQ("users.name", StateData { "test1234" }));
+        query2->writeSet().emplace_back(StateItem::EQ("users.id_str", StateData { "000001" }));
         
-        query2->whereSet().emplace_back(StateItem::EQ("users.id", (int64_t) 1));
+        query2->readSet().emplace_back(StateItem::EQ("users.id", (int64_t) 1));
     }
     
     *transaction << query2;
@@ -161,11 +161,11 @@ std::shared_ptr<Transaction> sampleTransaction3() {
         query->setStatement("INSERT INTO `posts` (author, author_str, uuid, content) VALUES (1, '000001', '4443d265-fb0a-4dca-8f71-e82b176118df', '집가고 싶어 ㅠㅠ')");
         query->setAffectedRows(1);
         
-        query->itemSet().emplace_back(StateItem::EQ("posts.id", (int64_t) 1));
-        query->itemSet().emplace_back(StateItem::EQ("posts.author", (int64_t) 1));
-        query->itemSet().emplace_back(StateItem::EQ("posts.author_str", StateData { "000001" }));
-        query->itemSet().emplace_back(StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" }));
-        query->itemSet().emplace_back(StateItem::EQ("posts.content", StateData { "집가고 싶어 ㅠㅠ" }));
+        query->writeSet().emplace_back(StateItem::EQ("posts.id", (int64_t) 1));
+        query->writeSet().emplace_back(StateItem::EQ("posts.author", (int64_t) 1));
+        query->writeSet().emplace_back(StateItem::EQ("posts.author_str", StateData { "000001" }));
+        query->writeSet().emplace_back(StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" }));
+        query->writeSet().emplace_back(StateItem::EQ("posts.content", StateData { "집가고 싶어 ㅠㅠ" }));
     }
     
     *transaction << query;
@@ -184,13 +184,13 @@ std::shared_ptr<Transaction> sampleTransaction4() {
         query->setStatement("UPDATE `posts` SET `content` = '이 포스트는 검열되었습니다.' WHERE `uuid` = '4443d265-fb0a-4dca-8f71-e82b176118df'");
         query->setAffectedRows(1);
         
-        query->itemSet().emplace_back(StateItem::EQ("posts.id", (int64_t) 1));
-        query->itemSet().emplace_back(StateItem::EQ("posts.author", (int64_t) 1));
-        query->itemSet().emplace_back(StateItem::EQ("posts.author_str", StateData { "000001" }));
-        query->itemSet().emplace_back(StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" }));
-        query->itemSet().emplace_back(StateItem::EQ("posts.content", StateData { "이 포스트는 검열되었습니다." }));
+        query->writeSet().emplace_back(StateItem::EQ("posts.id", (int64_t) 1));
+        query->writeSet().emplace_back(StateItem::EQ("posts.author", (int64_t) 1));
+        query->writeSet().emplace_back(StateItem::EQ("posts.author_str", StateData { "000001" }));
+        query->writeSet().emplace_back(StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" }));
+        query->writeSet().emplace_back(StateItem::EQ("posts.content", StateData { "이 포스트는 검열되었습니다." }));
         
-        query->whereSet().emplace_back(StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" }));
+        query->readSet().emplace_back(StateItem::EQ("posts.uuid", StateData { "4443d265-fb0a-4dca-8f71-e82b176118df" }));
     }
     
     *transaction << query;
