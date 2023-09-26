@@ -425,14 +425,18 @@ namespace ultraverse::state::v2 {
                     if (cacheMap.find(writeRange.value()) == cacheMap.end()) {
                         auto range = writeRange.value();
                         const auto &cluster = _clusters.at(column);
-                        auto it = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(), [this, &range](const auto &pair) {
-                            return pair.first == range || StateRange::isIntersects(pair.first, range);
-                        });
+                        auto it = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(),
+                                               [this, &range](const auto &pair) {
+                                                   return pair.first == range ||
+                                                          StateRange::isIntersects(pair.first, range);
+                                               });
                         
-                        const std::unordered_set<gid_t> &gids = it->second;
-                        cacheMap.emplace(range, std::ref(gids));
-                        
-                        cache.read[column] = it->first;
+                        if (it != cluster.read.end()) {
+                            const std::unordered_set<gid_t> &gids = it->second;
+                            cacheMap.emplace(range, std::ref(gids));
+                            
+                            cache.read[column] = it->first;
+                        }
                     }
                 }
             }
