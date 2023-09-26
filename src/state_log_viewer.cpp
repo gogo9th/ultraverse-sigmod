@@ -139,23 +139,22 @@ public:
 
                 
                 if (isVerbose) {
+                    std::stringstream readSet;
+                    std::stringstream writeSet;
+                    
+                    for (auto &item: query->readSet()) {
+                        readSet << item.MakeRange()->MakeWhereQuery(item.name) << ", ";
+                    }
+                    
+                    for (auto &item: query->writeSet()) {
+                        writeSet << item.MakeRange()->MakeWhereQuery(item.name) << ", ";
+                    }
+                    
+                    _logger->info("        - ReadSet: {}", readSet.str());
+                    _logger->info("        - WriteSet: {}", writeSet.str());
                 }
                 
                 _logger->info("            - Flags: {}", query->flags());
-                
-                
-                if (moreVerbose) {
-                    _logger->info("            - BeforeHash:");
-                    for (const auto &pair: query->beforeHash()) {
-                        _logger->info("                {}:\t{}", pair.first, pair.second.stringify());
-                    }
-                    _logger->info("            - AfterHash:");
-                    for (const auto &pair: query->afterHash()) {
-                        _logger->info("                {}:\t{}", pair.first, pair.second.stringify());
-                    }
-                }
-
-                
                 _logger->info("");
             }
             
