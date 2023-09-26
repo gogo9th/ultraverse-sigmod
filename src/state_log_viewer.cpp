@@ -141,6 +141,7 @@ public:
                 if (isVerbose) {
                     std::stringstream readSet;
                     std::stringstream writeSet;
+                    std::stringstream varMap;
                     
                     for (auto &item: query->readSet()) {
                         readSet << item.MakeRange()->MakeWhereQuery(item.name) << ", ";
@@ -150,8 +151,13 @@ public:
                         writeSet << item.MakeRange()->MakeWhereQuery(item.name) << ", ";
                     }
                     
+                    for (auto &item: query->varMap()) {
+                        varMap << item.MakeRange()->MakeWhereQuery(item.name) << ", ";
+                    }
+                    
                     _logger->info("        - ReadSet: {}", readSet.str());
                     _logger->info("        - WriteSet: {}", writeSet.str());
+                    _logger->info("        - varMap: {}", varMap.str());
                 }
                 
                 _logger->info("            - Flags: {}", query->flags());
