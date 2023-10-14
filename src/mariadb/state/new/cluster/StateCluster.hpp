@@ -159,7 +159,7 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, Cluster> _clusters;
         
         std::mutex _targetCacheLock;
-        std::unordered_map<std::string, std::unordered_map<StateRange, std::unordered_set<gid_t>>> _targetCache;
+        std::unordered_map<std::string, std::unordered_map<StateRange, std::reference_wrapper<const std::unordered_set<gid_t>>>> _targetCache;
         std::unordered_map<gid_t, TargetTransactionCache> _rollbackTargets;
         std::unordered_map<gid_t, TargetTransactionCache> _prependTargets;
     };
