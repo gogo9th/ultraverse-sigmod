@@ -56,6 +56,7 @@ namespace ultraverse::state::v2 {
         class Cluster {
         public:
             using ClusterMap = std::unordered_map<StateRange, std::unordered_set<gid_t>>;
+            using PendingClusterMap = std::vector<std::pair<StateRange, std::unordered_set<gid_t>>>;
             
             // for cereal
             Cluster();
@@ -65,6 +66,9 @@ namespace ultraverse::state::v2 {
             ClusterMap read;
             ClusterMap write;
             
+            PendingClusterMap pendingRead;
+            PendingClusterMap pendingWrite;
+            
             std::mutex readLock;
             std::mutex writeLock;
             
@@ -72,8 +76,10 @@ namespace ultraverse::state::v2 {
             void serialize(Archive &archive);
             
             decltype(read.begin()) findByRange(ClusterType type, const StateRange &range);
+            decltype(pendingRead.begin()) pending_findByRange(ClusterType type, const StateRange &range);
             
             void merge(ClusterType type);
+            void finalize();
             
             static std::optional<StateRange> match(ClusterType type,
                                                    const std::string &columnName,

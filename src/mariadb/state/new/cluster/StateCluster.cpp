@@ -36,8 +36,19 @@ namespace ultraverse::state::v2 {
         });
     }
     
+    decltype(StateCluster::Cluster::pendingRead.begin()) StateCluster::Cluster::pending_findByRange(StateCluster::ClusterType type, const StateRange &range) {
+        auto &cluster = type == READ ? pendingRead : pendingWrite;
+        auto &mutex = type == READ ? readLock : writeLock;
+        
+        std::scoped_lock _lock(mutex);
+        
+        return std::find_if(std::execution::par_unseq, cluster.begin(), cluster.end(), [&range](const auto &pair) {
+            return pair.first == range || StateRange::isIntersects(pair.first, range);
+        });
+    }
+    
     void StateCluster::Cluster::merge(StateCluster::ClusterType type) {
-        auto &cluster = type == READ ? read : write;
+        auto &cluster = type == READ ? pendingRead : pendingWrite;
         auto &mutex = type == READ ? readLock : writeLock;
         
         std::scoped_lock _lock(mutex);
@@ -63,7 +74,7 @@ namespace ultraverse::state::v2 {
         cluster.clear();
         
         for (auto &pair : merged) {
-            cluster.emplace(std::move(pair));
+            cluster.emplace_back(std::move(pair));
         }
         
         merged.clear();
@@ -77,7 +88,24 @@ namespace ultraverse::state::v2 {
             
             cluster.merge(READ);
             cluster.merge(WRITE);
+            
+            _logger->info("finalizing {}", pair.first);
+            cluster.finalize();
         }
+    }
+    
+    void StateCluster::Cluster::finalize() {
+        for (const auto &pair: pendingRead) {
+            read.emplace(pair);
+        }
+        
+        pendingRead.clear();
+        
+        for (const auto &pair: pendingWrite) {
+            write.emplace(pair);
+        }
+        
+        pendingWrite.clear();
     }
     
     
@@ -173,41 +201,24 @@ namespace ultraverse::state::v2 {
     
     void StateCluster::insert2(StateCluster::ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid) {
         auto &clusterContainer = _clusters[columnName];
-        auto &cluster = type == READ ? clusterContainer.read : clusterContainer.write;
+        auto &cluster = type == READ ? clusterContainer.pendingRead : clusterContainer.pendingWrite;
         auto &mutex = type == READ ? clusterContainer.readLock : clusterContainer.writeLock;
         
-        auto it = clusterContainer.findByRange(type, range);
+        auto it = clusterContainer.pending_findByRange(type, range);
         
         if (it != cluster.end()) {
-            auto dstRange = it->first;
+            std::scoped_lock _lock(mutex);
+            
+            StateRange dstRange(it->first);
             dstRange.OR_FAST(range);
             
-            if (dstRange == range || it->first == dstRange) {
-                std::scoped_lock _lock(mutex);
-                it->second.emplace(gid);
-            } else {
-                std::scoped_lock _lock(mutex);
-                
-                // 가능한 만큼 머지. 나머지는 마지막에 Cluster::merge()에서 처리하도록 한다.
-                const auto &mergedRange = dstRange;
-                const auto &_dstRange = it->first;
-                
-                // replace key using std::extract (see https://en.cppreference.com/w/cpp/container/map/extract)
-                
-                {
-                    auto node = cluster.extract(_dstRange);
-                    node.key() = std::move(mergedRange);
-                    node.mapped().emplace(gid);
-                    
-                    cluster.insert(std::move(node));
-                }
+            if (it->first != dstRange) {
+                it->first = dstRange;
             }
+            it->second.emplace(gid);
         } else {
             std::scoped_lock _lock(mutex);
-            auto &_cluster = cluster[range];
-            
-            // _cluster.reserve(16384);
-            _cluster.emplace(gid);
+            cluster.emplace_back(std::make_pair(range, std::unordered_set<gid_t> { gid }));
         }
     }
     
