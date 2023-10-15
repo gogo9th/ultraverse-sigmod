@@ -330,13 +330,22 @@ class BenchmarkSession:
             raise Exception("failed to load dump")
 
     def eval(self, sql: str) -> bool:
-        retval = subprocess.call([
+        handle = subprocess.Popen([
             'mysql',
             '-h127.0.0.1',
             '-uroot',
             '-ppassword',
             '-B', '--silent', '--raw',
-            '-e', sql
-        ])
+        ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+        handle.stdin.write(sql.encode('utf-8'))
+        handle.stdin.close()
+
+        stdout = handle.stdout.read()
+
+        if stdout:
+            print(stdout.decode('utf-8').strip())
+
+        retval = handle.wait()
 
         return retval == 0
