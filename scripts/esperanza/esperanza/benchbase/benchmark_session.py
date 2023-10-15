@@ -285,14 +285,23 @@ class BenchmarkSession:
                f"FROM ({base_sql}) d")
 
         # run mysql and get stdout into variable
-        retval = subprocess.call([
+        handle = subprocess.Popen([
             'mysql',
             '-h127.0.0.1',
             '-uroot',
             '-ppassword',
             '-B', '--silent', '--raw',
-            '-e', sql
-        ])
+        ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+        handle.stdin.write(sql.encode('utf-8'))
+        handle.stdin.close()
+
+        stdout = handle.stdout.read()
+
+        if stdout:
+            print(stdout.decode('utf-8').strip())
+
+        retval = handle.wait()
 
         if retval != 0:
             raise Exception("failed to compare tables")
