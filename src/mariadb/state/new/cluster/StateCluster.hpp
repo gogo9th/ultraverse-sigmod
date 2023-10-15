@@ -56,11 +56,24 @@ namespace ultraverse::state::v2 {
         class Cluster {
         public:
             using ClusterMap = std::unordered_map<StateRange, std::unordered_set<gid_t>>;
+            
+            // for cereal
+            Cluster();
+            Cluster(const Cluster &other);
+            Cluster(Cluster &&other) noexcept = default;
+            
             ClusterMap read;
             ClusterMap write;
             
+            std::mutex readLock;
+            std::mutex writeLock;
+            
             template <typename Archive>
             void serialize(Archive &archive);
+            
+            decltype(read.begin()) findByRange(ClusterType type, const StateRange &range);
+            
+            void merge(ClusterType type);
             
             static std::optional<StateRange> match(ClusterType type,
                                                    const std::string &columnName,
@@ -79,7 +92,7 @@ namespace ultraverse::state::v2 {
          */
         bool isKeyColumnItem(const RelationshipResolver &resolver, const StateItem& item) const;
         
-        void insert(ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid);
+        void insert2(ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid);
         void insert(ClusterType type, const std::vector<StateItem> &items, gid_t gid);
         
         /**
@@ -90,6 +103,8 @@ namespace ultraverse::state::v2 {
         std::optional<StateRange> match(ClusterType type, const std::string &columnName, const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver) const;
         
         void describe();
+        
+        void merge();
         
         /**
          * @brief rollback 대상 트랜잭션을 추가한다.

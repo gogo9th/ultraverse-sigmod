@@ -123,11 +123,14 @@ namespace ultraverse::state::v2 {
         }
         
         while (!tasks.empty()) {
+            _logger->info("make_cluster(): {} tasks remaining", tasks.size());
             tasks.front()->get_future().wait();
             tasks.pop();
         }
         
         taskExecutor.shutdown();
+        
+        rowCluster.merge();
         
         {
             auto phase_main_end = std::chrono::steady_clock::now();
@@ -265,7 +268,7 @@ namespace ultraverse::state::v2 {
                 continue;
             } else {
                 std::scoped_lock _lock(tasksMutex);
-                tasks.push(taskExecutor.post<gid_t>([gid, &rowCluster]() {
+                tasks.push(taskExecutor.post<gid_t>([gid, &rowCluster, &cachedResolver]() {
                     if (rowCluster.shouldReplay(gid)) {
                         return gid;
                     }
