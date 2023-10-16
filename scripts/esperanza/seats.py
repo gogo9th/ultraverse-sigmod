@@ -69,7 +69,7 @@ def decide_rollback_gids(session: BenchmarkSession, ratio: float) -> list[int]:
     session.run_db_state_change(
         DB_STATE_CHANGE_BASE_OPTIONS + [
             '-r', decision_report_name,
-            [f"auto_rollback={ratio}"]
+            f"auto_rollback={ratio}"
         ],
         stdout_name=decision_stdout_name,
         stderr_name=decision_stderr_name
