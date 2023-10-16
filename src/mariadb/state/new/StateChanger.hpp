@@ -47,7 +47,7 @@ namespace ultraverse::state::v2 {
         /**
          * @brief 벤치마크용: auto-rollback 액션.
          */
-        void benchAutoRollback();
+        void bench_prepareRollback();
         
         void replay();
         

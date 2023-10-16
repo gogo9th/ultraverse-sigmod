@@ -152,72 +152,183 @@ namespace ultraverse::state::v2 {
         }
     }
     
-    void StateChanger::benchAutoRollback() {
+    void StateChanger::bench_prepareRollback() {
         StateChangeReport report(StateChangeReport::PREPARE_AUTO, _plan);
         
-        size_t replayGidCount = 0;
-        size_t totalCount = 0;
+        TaskExecutor taskExecutor(_plan.threadNum());
+        StateCluster rowCluster(_plan.keyColumns());
         
-        size_t totalQueryCount = 0;
-        size_t replayQueryCount = 0;
+        StateRelationshipResolver relationshipResolver(_plan, *_context);
+        CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
         
-        std::vector<std::pair<gid_t, size_t>> queryCounts;
+        StateClusterWriter clusterWriter(_plan.stateLogPath(), _plan.stateLogName());
+        
+        createIntermediateDB();
+        
+        if (!_plan.dbDumpPath().empty()) {
+            auto load_backup_start = std::chrono::steady_clock::now();
+            loadBackup(_intermediateDBName, _plan.dbDumpPath());
+            
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle.get(), 0);
+            updateForeignKeys(dbHandle.get(), 0);
+            auto load_backup_end = std::chrono::steady_clock::now();
+            
+            std::chrono::duration<double> time = load_backup_end - load_backup_start;
+            _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
+            report.setSQLLoadTime(time.count());
+        }
+        
+        {
+            _logger->info("prepare(): loading cluster");
+            clusterWriter >> rowCluster;
+            _logger->info("prepare(): loading cluster end");
+        }
+        
         
         /* PHASE 0: walk state log */
+        
+        size_t rollbackTxnCount = 1;
+        
+        size_t totalTxnCount = 0;
+        size_t totalQueryCount = 0;
+        
+        std::set<gid_t> rollbackGids;
+        
+        size_t txnCount = 0;
+        std::atomic_long replayGidCount = 0;
+        std::atomic_ulong replayQueryCount = 0;
         
         _reader.open();
         _reader.seek(0);
         
         while (_reader.nextHeader()) {
-            const auto &header = _reader.txnHeader();
+            totalTxnCount++;
             
             _reader.nextTransaction();
-            const auto &body = _reader.txnBody();
+            auto transaction = _reader.txnBody();
             
-            if (!body->isRelatedToDatabase(_plan.dbName())) {
+            if (!transaction->isRelatedToDatabase(_plan.dbName())) {
                 continue;
             }
             
-            size_t queryCount = body->queries().size();
-            totalQueryCount += queryCount;
-            
-            queryCounts.emplace_back(header->gid, queryCount);
-            
-            totalCount++;
+            totalQueryCount += transaction->queries().size();
         }
         
-        std::sort(queryCounts.begin(), queryCounts.end(), [](const auto &a, const auto &b) {
-            return a.second > b.second;
-        });
         
-        /* PHASE 0-1: select transactions */
-        
-        size_t desiredQueryCount = totalQueryCount * _plan.autoRollbackRatio();
-        std::set<gid_t> selectedGids;
-        
-        for (const auto &pair: queryCounts) {
-            if (replayQueryCount >= desiredQueryCount) {
+        while (rollbackTxnCount <= totalTxnCount) {
+            txnCount = 0;
+            replayGidCount = 0;
+            replayQueryCount = 0;
+            
+            rollbackGids.clear();
+            
+            _reader.seek(0);
+            
+            std::atomic_bool isRunning = true;
+            
+            std::mutex tasksMutex;
+            std::queue<std::shared_ptr<std::promise<gid_t>>> tasks;
+            
+            
+            std::thread promiseConsumerThread([&isRunning, &tasks, &tasksMutex, &replayGidCount]() {
+                while (isRunning || !tasks.empty()) {
+                    if (tasks.empty()) {
+                        continue;
+                    }
+                    
+                    tasksMutex.lock();
+                    auto promise = std::move(tasks.front());
+                    tasks.pop();
+                    tasksMutex.unlock();
+                    
+                    gid_t gid = promise->get_future().get();
+                }
+            });
+            
+            while (_reader.nextHeader()) {
+                const auto &header = _reader.txnHeader();
+                gid_t gid = header->gid;
+                
+                txnCount++;
+                
+                _reader.nextTransaction();
+                auto transaction = _reader.txnBody();
+                
+                if (txnCount < rollbackTxnCount) {
+                    if (!transaction->isRelatedToDatabase(_plan.dbName())) {
+                        _logger->trace("skipping transaction #{} because it is not related to database {}",
+                                       transaction->gid(), _plan.dbName());
+                        continue;
+                    }
+                    
+                    if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {
+                        _logger->warn(
+                            "DDL statement found in transaction #{}, but this version of ultraverse does not support DDL statement yet",
+                            transaction->gid());
+                        _logger->warn("transaction #{} will be skipped", transaction->gid());
+                        continue;
+                    }
+                    
+                    auto nextGid = transaction->gid() + 1;
+                    bool shouldRevalidate = !_plan.isRollbackGid(nextGid) && !_plan.hasUserQuery(nextGid);
+                    
+                    if (_plan.isRollbackGid(transaction->gid())) {
+                        rowCluster.addRollbackTarget(transaction, cachedResolver, shouldRevalidate);
+                    }
+                    
+                    if (_plan.hasUserQuery(transaction->gid())) {
+                        auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transaction->gid()]));
+                        
+                        rowCluster.addPrependTarget(transaction->gid(), userQuery, cachedResolver);
+                    }
+                    
+                    rollbackGids.emplace(gid);
+                    continue;
+
+                } else {
+                    std::scoped_lock _lock(tasksMutex);
+                    size_t queryCount = transaction->queries().size();
+                    tasks.push(taskExecutor.post<gid_t>([gid, &replayGidCount, &replayQueryCount, &rowCluster, queryCount]() {
+                        if (rowCluster.shouldReplay(gid)) {
+                            replayGidCount++;
+                            replayQueryCount += queryCount;
+                            return gid;
+                        }
+                        return UINT64_MAX;
+                    }));
+                }
+            }
+            
+            isRunning = false;
+            
+            if (promiseConsumerThread.joinable()) {
+                promiseConsumerThread.join();
+            }
+            
+            if (replayQueryCount >= (size_t) (totalQueryCount * _plan.autoRollbackRatio())) {
                 break;
             }
             
-            selectedGids.emplace(pair.first);
-            replayQueryCount += pair.second;
+            rollbackTxnCount++;
         }
         
-        replayGidCount = selectedGids.size();
+        taskExecutor.shutdown();
         
+        replayGidCount = rollbackGids.size();
         
-        report.bench_setRollbackGids(selectedGids);
+        report.bench_setRollbackGids(rollbackGids);
         report.setReplayGidCount(replayGidCount);
-        report.setTotalCount(totalCount);
+        report.setTotalCount(totalTxnCount);
         report.setExecutionTime(_phase2Time);
         
         report.bench_setReplayQueryCount(replayQueryCount);
         report.bench_setTotalQueryCount(totalQueryCount);
         
-        _logger->info("benchAutoRollback(): {} / {} transactions will be replayed ({}%)", replayGidCount, totalCount, ((double) replayGidCount / totalCount) * 100);
-        _logger->info("benchAutoRollback(): {} / {} queries will be replayed ({}%)", replayQueryCount, totalQueryCount, ((double) replayQueryCount / totalQueryCount) * 100);
-        // rowCluster.describe();
+        dropIntermediateDB();
+        
+        _logger->info("bench_prepareRollback(): {} / {} transactions will be replayed ({}%)", replayGidCount, totalTxnCount, ((double) replayGidCount / totalTxnCount) * 100);
+        _logger->info("bench_prepareRollback(): {} / {} queries will be replayed ({}%)", replayQueryCount, totalQueryCount, ((double) replayQueryCount / totalQueryCount) * 100);
         
         if (!_plan.reportPath().empty()) {
             report.writeToJSON(_plan.reportPath());

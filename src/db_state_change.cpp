@@ -224,7 +224,7 @@ namespace ultraverse {
         } else if (replay) {
             stateChanger.replay();
         } else if (autoRollback) {
-            stateChanger.benchAutoRollback();
+            stateChanger.bench_prepareRollback();
         } else  {
             describeActions(actions);
             
