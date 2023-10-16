@@ -162,6 +162,7 @@ namespace ultraverse::state::v2 {
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
         
         StateClusterWriter clusterWriter(_plan.stateLogPath(), _plan.stateLogName());
+        GIDIndexReader gidIndexReader(_plan.stateLogPath(), _plan.stateLogName());
         
         createIntermediateDB();
         
@@ -221,14 +222,13 @@ namespace ultraverse::state::v2 {
             replayGidCount = 0;
             replayQueryCount = 0;
             
-            rollbackGids.clear();
-            
-            _reader.seek(0);
+            _reader.reset();
             
             std::atomic_bool isRunning = true;
             
             std::mutex tasksMutex;
             std::queue<std::shared_ptr<std::promise<gid_t>>> tasks;
+            
             
             
             std::thread promiseConsumerThread([&isRunning, &tasks, &tasksMutex, &replayGidCount]() {
@@ -250,8 +250,6 @@ namespace ultraverse::state::v2 {
                 const auto &header = _reader.txnHeader();
                 gid_t gid = header->gid;
                 
-                txnCount++;
-                
                 _reader.nextTransaction();
                 auto transaction = _reader.txnBody();
                 
@@ -270,22 +268,11 @@ namespace ultraverse::state::v2 {
                         continue;
                     }
                     
-                    auto nextGid = transaction->gid() + 1;
-                    bool shouldRevalidate = !_plan.isRollbackGid(nextGid) && !_plan.hasUserQuery(nextGid);
-                    
-                    if (_plan.isRollbackGid(transaction->gid())) {
+                    if (rollbackGids.find(gid) == rollbackGids.end()) {
+                        bool shouldRevalidate = txnCount + 1 < rollbackTxnCount;
                         rowCluster.addRollbackTarget(transaction, cachedResolver, shouldRevalidate);
+                        rollbackGids.emplace(gid);
                     }
-                    
-                    if (_plan.hasUserQuery(transaction->gid())) {
-                        auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transaction->gid()]));
-                        
-                        rowCluster.addPrependTarget(transaction->gid(), userQuery, cachedResolver);
-                    }
-                    
-                    rollbackGids.emplace(gid);
-                    continue;
-
                 } else {
                     std::scoped_lock _lock(tasksMutex);
                     size_t queryCount = transaction->queries().size();
@@ -298,6 +285,8 @@ namespace ultraverse::state::v2 {
                         return UINT64_MAX;
                     }));
                 }
+                
+                txnCount++;
             }
             
             isRunning = false;
@@ -306,11 +295,14 @@ namespace ultraverse::state::v2 {
                 promiseConsumerThread.join();
             }
             
+            _logger->info("pass #{}: {} / {} queries will be replayed ({}%)", rollbackTxnCount, replayQueryCount, totalQueryCount, ((double) replayQueryCount / totalQueryCount) * 100);
+            
             if (replayQueryCount >= (size_t) (totalQueryCount * _plan.autoRollbackRatio())) {
                 break;
             }
             
-            rollbackTxnCount++;
+            
+            rollbackTxnCount += 64;
         }
         
         taskExecutor.shutdown();
