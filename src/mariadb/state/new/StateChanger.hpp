@@ -43,6 +43,12 @@ namespace ultraverse::state::v2 {
         void makeCluster();
         
         void prepare();
+        
+        /**
+         * @brief 벤치마크용: auto-rollback 액션.
+         */
+        void benchAutoRollback();
+        
         void replay();
         
         void fullReplay();

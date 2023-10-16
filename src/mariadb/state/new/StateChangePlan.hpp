@@ -75,6 +75,9 @@ namespace ultraverse::state::v2 {
         bool dropIntermediateDB() const;
         void setDropIntermediateDB(bool dropIntermediateDB);
         
+        double autoRollbackRatio() const;
+        void setAutoRollbackRatio(double autoRollbackRatio);
+        
         std::set<std::string> &keyColumns();
         std::vector<std::pair<std::string, std::string>> &columnAliases();
         const std::vector<std::pair<std::string, std::string>> &columnAliases() const;
@@ -108,6 +111,8 @@ namespace ultraverse::state::v2 {
         std::vector<std::pair<std::string, std::string>> _columnAliases;
     
         std::vector<uint64_t> _skipGids;
+        
+        double _autoRollbackRatio;
         
         bool _isFullReplay;
         bool _isDryRun;

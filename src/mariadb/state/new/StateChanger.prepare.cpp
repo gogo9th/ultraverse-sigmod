@@ -152,6 +152,78 @@ namespace ultraverse::state::v2 {
         }
     }
     
+    void StateChanger::benchAutoRollback() {
+        StateChangeReport report(StateChangeReport::PREPARE_AUTO, _plan);
+        
+        size_t replayGidCount = 0;
+        size_t totalCount = 0;
+        
+        size_t totalQueryCount = 0;
+        size_t replayQueryCount = 0;
+        
+        std::vector<std::pair<gid_t, size_t>> queryCounts;
+        
+        /* PHASE 0: walk state log */
+        
+        _reader.open();
+        _reader.seek(0);
+        
+        while (_reader.nextHeader()) {
+            const auto &header = _reader.txnHeader();
+            
+            _reader.nextTransaction();
+            const auto &body = _reader.txnBody();
+            
+            if (!body->isRelatedToDatabase(_plan.dbName())) {
+                continue;
+            }
+            
+            size_t queryCount = body->queries().size();
+            totalQueryCount += queryCount;
+            
+            queryCounts.emplace_back(header->gid, queryCount);
+            
+            totalCount++;
+        }
+        
+        std::sort(queryCounts.begin(), queryCounts.end(), [](const auto &a, const auto &b) {
+            return a.second > b.second;
+        });
+        
+        /* PHASE 0-1: select transactions */
+        
+        size_t desiredQueryCount = totalQueryCount * _plan.autoRollbackRatio();
+        std::set<gid_t> selectedGids;
+        
+        for (const auto &pair: queryCounts) {
+            if (replayQueryCount >= desiredQueryCount) {
+                break;
+            }
+            
+            selectedGids.emplace(pair.first);
+            replayQueryCount += pair.second;
+        }
+        
+        replayGidCount = selectedGids.size();
+        
+        
+        report.bench_setRollbackGids(selectedGids);
+        report.setReplayGidCount(replayGidCount);
+        report.setTotalCount(totalCount);
+        report.setExecutionTime(_phase2Time);
+        
+        report.bench_setReplayQueryCount(replayQueryCount);
+        report.bench_setTotalQueryCount(totalQueryCount);
+        
+        _logger->info("benchAutoRollback(): {} / {} transactions will be replayed ({}%)", replayGidCount, totalCount, ((double) replayGidCount / totalCount) * 100);
+        _logger->info("benchAutoRollback(): {} / {} queries will be replayed ({}%)", replayQueryCount, totalQueryCount, ((double) replayQueryCount / totalQueryCount) * 100);
+        // rowCluster.describe();
+        
+        if (!_plan.reportPath().empty()) {
+            report.writeToJSON(_plan.reportPath());
+        }
+    }
+    
     void StateChanger::prepare() {
         StateChangeReport report(StateChangeReport::PREPARE, _plan);
         

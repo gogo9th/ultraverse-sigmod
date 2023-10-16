@@ -185,6 +185,14 @@ namespace ultraverse::state::v2 {
         _threadNum = threadNum;
     }
     
+    double StateChangePlan::autoRollbackRatio() const {
+        return _autoRollbackRatio;
+    }
+    
+    void StateChangePlan::setAutoRollbackRatio(double autoRollbackRatio) {
+        _autoRollbackRatio = autoRollbackRatio;
+    }
+    
     std::set<std::string> &StateChangePlan::keyColumns() {
         return _keyColumns;
     }

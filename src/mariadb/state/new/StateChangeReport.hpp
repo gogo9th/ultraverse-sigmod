@@ -16,6 +16,7 @@ namespace ultraverse::state::v2 {
         enum OperationType {
             MAKE_CLUSTER,
             PREPARE,
+            PREPARE_AUTO,
             EXECUTE,
         };
         
@@ -34,6 +35,10 @@ namespace ultraverse::state::v2 {
         void setSQLLoadTime(double sqlLoadTime);
         void setExecutionTime(double executionTime);
         
+        void bench_setRollbackGids(const std::set<gid_t> &rollbackGids);
+        void bench_setTotalQueryCount(size_t totalQueryCount);
+        void bench_setReplayQueryCount(size_t replayQueryCount);
+        
         std::string writeToJSON();
         void writeToJSON(const std::string &outputPath);
     private:
@@ -48,6 +53,10 @@ namespace ultraverse::state::v2 {
         
         size_t _replayGidCount;
         size_t _totalCount;
+        
+        /* PREPARE_AUTO */
+        size_t _totalQueryCount;
+        size_t _replayQueryCount;
         
         /* PREPARE / EXECUTE */
         

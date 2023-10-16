@@ -32,6 +32,20 @@ namespace ultraverse {
         return _gid;
     }
     
+    AutoRollbackAction::AutoRollbackAction(double ratio):
+        _ratio(ratio)
+    {
+    
+    }
+    
+    ActionType::Value AutoRollbackAction::type() {
+        return ActionType::AUTO_ROLLBACK;
+    }
+    
+    double AutoRollbackAction::ratio() const {
+        return _ratio;
+    }
+    
     PrependAction::PrependAction(gid_t gid, std::string sqlFile):
         _gid(gid),
         _sqlFile(sqlFile)
@@ -117,7 +131,7 @@ namespace ultraverse {
             return 0;
         }
         
-        int threadNum = std::thread::hardware_concurrency() + 1;
+        int threadNum = std::thread::hardware_concurrency() * 2;
         
         if (isArgSet('C')) {
             threadNum = std::stoi(getArg('C'));
@@ -166,6 +180,10 @@ namespace ultraverse {
             return std::dynamic_pointer_cast<ReplayAction>(action) != nullptr;
         }) != actions.end();
         
+        bool autoRollback = std::find_if(actions.begin(), actions.end(), [](auto &action) {
+            return std::dynamic_pointer_cast<AutoRollbackAction>(action) != nullptr;
+        }) != actions.end();
+        
         if (makeClusterMap && actions.size() > 1) {
             throw std::runtime_error("make_clustermap cannot be executed with other actions.");
         }
@@ -205,7 +223,9 @@ namespace ultraverse {
             stateChanger.fullReplay();
         } else if (replay) {
             stateChanger.replay();
-        } else {
+        } else if (autoRollback) {
+            stateChanger.benchAutoRollback();
+        } else  {
             describeActions(actions);
             
             /*
@@ -353,6 +373,13 @@ namespace ultraverse {
                     changePlan.setFullReplay(true);
                 }
             }
+            
+            {
+                auto autoRollbackAction = std::dynamic_pointer_cast<AutoRollbackAction>(action);
+                if (autoRollbackAction != nullptr) {
+                    changePlan.setAutoRollbackRatio(autoRollbackAction->ratio());
+                }
+            }
         }
     
         std::sort(changePlan.rollbackGids().begin(), changePlan.rollbackGids().end());
@@ -391,8 +418,14 @@ namespace ultraverse {
             if (action == "make_cluster") {
                 actions.emplace_back(std::make_shared<MakeClusterAction>());
             } else if (action == "rollback") {
-                gid_t gid = std::stoll(strArgs);
-                actions.emplace_back(std::make_shared<RollbackAction>(gid));
+                auto args = split(strArgs, ',');
+                for (auto &arg: args) {
+                    gid_t gid = std::stoll(arg);
+                    actions.emplace_back(std::make_shared<RollbackAction>(gid));
+                }
+            } else if (action == "auto-rollback") {
+                double ratio = std::stod(strArgs);
+                actions.emplace_back(std::make_shared<AutoRollbackAction>(ratio));
             } else if (action == "prepend") {
                 auto args = split(strArgs, ',');
                 if (args.size() != 2) {

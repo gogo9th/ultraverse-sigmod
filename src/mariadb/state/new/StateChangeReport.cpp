@@ -14,6 +14,8 @@ namespace ultraverse::state::v2 {
                 return "MAKE_CLUSTER";
             case PREPARE:
                 return "PREPARE";
+            case PREPARE_AUTO:
+                return "PREPARE_AUTO";
             case EXECUTE:
                 return "EXECUTE";
         }
@@ -61,6 +63,18 @@ namespace ultraverse::state::v2 {
         _executionTime = executionTime;
     }
     
+    void StateChangeReport::bench_setRollbackGids(const std::set<gid_t> &rollbackGids) {
+        _rollbackGids.insert(_rollbackGids.end(), rollbackGids.begin(), rollbackGids.end());
+    }
+    
+    void StateChangeReport::bench_setTotalQueryCount(size_t totalQueryCount) {
+        _totalQueryCount = totalQueryCount;
+    }
+    
+    void StateChangeReport::bench_setReplayQueryCount(size_t replayQueryCount) {
+        _replayQueryCount = replayQueryCount;
+    }
+    
     std::string StateChangeReport::writeToJSON() {
         using namespace nlohmann;
         json document;
@@ -76,6 +90,19 @@ namespace ultraverse::state::v2 {
             
             document.emplace("rollbackGids", rollbackGids);
             document.emplace("replaceQuery", _replaceQuery);
+            document.emplace("replayGidCount", _replayGidCount);
+            document.emplace("totalCount", _totalCount);
+        }
+        
+        if (_operationType == PREPARE_AUTO) {
+            json rollbackGids;
+            for (const auto &gid: _rollbackGids) {
+                rollbackGids.emplace_back(gid);
+            }
+            
+            document.emplace("totalQueryCount", _totalQueryCount);
+            document.emplace("replayQueryCount", _replayQueryCount);
+            document.emplace("rollbackGids", rollbackGids);
             document.emplace("replayGidCount", _replayGidCount);
             document.emplace("totalCount", _totalCount);
         }

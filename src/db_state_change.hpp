@@ -17,6 +17,7 @@ namespace ultraverse {
         enum Value {
             MAKE_CLUSTER,
             ROLLBACK,
+            AUTO_ROLLBACK,
             PREPEND,
             FULL_REPLAY,
             REPLAY
@@ -43,6 +44,17 @@ namespace ultraverse {
         
     private:
         gid_t _gid;
+    };
+    
+    class AutoRollbackAction: public Action {
+    public:
+        AutoRollbackAction(double ratio);
+        ActionType::Value type() override;
+        
+        double ratio() const;
+        
+    private:
+        double _ratio;
     };
     
     class PrependAction: public Action {
