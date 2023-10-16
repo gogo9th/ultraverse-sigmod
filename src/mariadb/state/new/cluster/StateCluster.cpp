@@ -40,8 +40,6 @@ namespace ultraverse::state::v2 {
         auto &cluster = type == READ ? pendingRead : pendingWrite;
         auto &mutex = type == READ ? readLock : writeLock;
         
-        std::scoped_lock _lock(mutex);
-        
         return std::find_if(std::execution::par_unseq, cluster.begin(), cluster.end(), [&range](const auto &pair) {
             return pair.first == range || StateRange::isIntersects(pair.first, range);
         });
@@ -204,11 +202,11 @@ namespace ultraverse::state::v2 {
         auto &cluster = type == READ ? clusterContainer.pendingRead : clusterContainer.pendingWrite;
         auto &mutex = type == READ ? clusterContainer.readLock : clusterContainer.writeLock;
         
+        std::scoped_lock _lock(mutex);
+        
         auto it = clusterContainer.pending_findByRange(type, range);
         
         if (it != cluster.end()) {
-            std::scoped_lock _lock(mutex);
-            
             StateRange dstRange(it->first);
             dstRange.OR_FAST(range);
             
@@ -217,7 +215,6 @@ namespace ultraverse::state::v2 {
             }
             it->second.emplace(gid);
         } else {
-            std::scoped_lock _lock(mutex);
             cluster.emplace_back(std::make_pair(range, std::unordered_set<gid_t> { gid }));
         }
     }
