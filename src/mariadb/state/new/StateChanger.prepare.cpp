@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <sstream>
 
+#include <execution>
+
 #include <fmt/color.h>
 
 #include "GIDIndexWriter.hpp"
@@ -158,6 +160,8 @@ namespace ultraverse::state::v2 {
         StateCluster rowCluster(_plan.keyColumns());
         StateClusterWriter clusterWriter(_plan.stateLogPath(), _plan.stateLogName());
         
+        std::mutex gidListMutex;
+        
         size_t replayGidCount = 0;
         size_t totalCount = 0;
         
@@ -217,27 +221,30 @@ namespace ultraverse::state::v2 {
                     continue;
                 }
                 
-                for (const auto &writePair: cluster.second.write) {
+                std::for_each(std::execution::par_unseq, cluster.second.write.begin(), cluster.second.write.end(), [&](const auto &writePair) {
                     const auto &range = writePair.first;
                     const auto &gids = writePair.second;
                     
                     if (gids.find(i) == gids.end()) {
-                        continue;
+                        return;
                     }
                     
                     
-                    const auto &depRangeIt = std::find_if(cluster.second.read.begin(), cluster.second.read.end(), [&range](const auto &pair) {
+                    const auto &depRangeIt = std::find_if(std::execution::par_unseq, cluster.second.read.begin(), cluster.second.read.end(), [&range](const auto &pair) {
                         return pair.first == range || StateRange::isIntersects(pair.first, range);
                     });
                     
                     if (depRangeIt == cluster.second.read.end()) {
-                        continue;
+                        return;
                     }
                     
-                    replayGids.insert(
-                        depRangeIt->second.begin(), depRangeIt->second.end()
-                    );
-                }
+                    {
+                        std::scoped_lock<std::mutex> _lock(gidListMutex);
+                        replayGids.insert(
+                            depRangeIt->second.begin(), depRangeIt->second.end()
+                        );
+                    }
+                });
             }
             
             replayGids.erase(i);
@@ -245,7 +252,11 @@ namespace ultraverse::state::v2 {
             replayQueryCount = calculateReplayQueryCount();
 
             // _logger->trace("bench_prepareRollback(): #{}: {} / {} transactions will be replayed ({}%)", i, replayGids.size(), totalCount, ((double) replayGids.size() / totalCount) * 100);
-            // _logger->trace("bench_prepareRollback(): #{}: {} / {} queries will be replayed ({}%)", i, replayQueryCount, totalQueryCount, ((double) replayQueryCount / totalQueryCount) * 100);
+            
+            if (i % 8 == 0) {
+                _logger->trace("bench_prepareRollback(): #{}: {} / {} queries will be replayed ({}%)", i, replayQueryCount, totalQueryCount, ((double) replayQueryCount / totalQueryCount) * 100);
+            }
+            
             
             if (replayQueryCount > (size_t) (totalQueryCount * _plan.autoRollbackRatio())) {
                 break;
