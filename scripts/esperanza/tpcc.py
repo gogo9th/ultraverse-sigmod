@@ -27,6 +27,40 @@ DB_TABLE_DIFF_OPTIONS = {
     'order_line': ['ol_w_id', 'ol_d_id', 'ol_o_id', 'ol_number', 'ol_i_id', 'ol_delivery_d', 'ol_amount', 'ol_supply_w_id', 'ol_quantity', 'ol_dist_info']
 }
 
+def decide_rollback_gids(session: BenchmarkSession, ratio: float) -> list[int]:
+    """
+    롤백할 gid들을 결정한다
+    :param session: session 오브젝트
+    :return: 롤백할 gid들
+    """
+
+    ratio = max(min(ratio, 1.0), 0.0)
+
+    if ratio == 0.0:
+        return [0]
+
+    logger = session.logger
+
+    rollback_log_name = f"rollback_auto_decision_{ratio}"
+
+    decision_stdout_name = rollback_log_name + ".stdout"
+    decision_stderr_name = rollback_log_name + ".stderr"
+    decision_report_name = rollback_log_name + ".report.json"
+
+    session.run_db_state_change(
+        DB_STATE_CHANGE_BASE_OPTIONS + [
+            '-r', decision_report_name,
+            [f"auto_rollback={ratio}"]
+        ],
+        stdout_name=decision_stdout_name,
+        stderr_name=decision_stderr_name
+    )
+
+
+    decision_report = read_state_change_report(f"{session.session_path}/{decision_report_name}")
+
+    return decision_report['rollbackGids']
+
 def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do_extra_replay_st: bool=False, do_table_diff: bool=False):
     """
     db_state_change를 실행한다.
@@ -93,6 +127,8 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
         )
 
         replay_st_report = read_state_change_report(f"{session.session_path}/{replay_st_report_name}")
+
+        session.mysqld.mysqldump(replay_st_report['intermediateDBName'], f"{session.session_path}/dbdump_st_latest.sql")
     else:
         replay_st_report = None
 
@@ -106,7 +142,7 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
         # 테이블 비교를 한다.
         tmp_db_name = f"{replay_report['intermediateDBName']}_tmp"
 
-        session.load_dump(tmp_db_name, f"{session.session_path}/dbdump_latest.sql")
+        session.load_dump(tmp_db_name, f"{session.session_path}/dbdump_st_latest.sql")
 
         replace_query = rollback_report['replaceQuery'] \
             .replace('__INTERMEDIATE_DB__', replay_report['intermediateDBName']) \
@@ -122,6 +158,56 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
             )
 
 
+def perform_full_replay(session: BenchmarkSession):
+    logger = session.logger
+
+    txn_count = os.path.getsize(f"{session.session_path}/benchbase.ultindex") / 8
+
+    full_replay_log_name = f"full_replay"
+
+    full_replay_mt_stdout_name = full_replay_log_name + ".mt.stdout"
+    full_replay_mt_stderr_name = full_replay_log_name + ".mt.stderr"
+    full_replay_mt_report_name = full_replay_log_name + ".mt.report.json"
+
+    full_replay_input = f"{session.session_path}/full_replay_input"
+
+    with open(full_replay_input, 'w') as f:
+        for i in range(0, txn_count):
+            f.write(f"{i}\n")
+
+    # REPLAY 실행한다.
+    session.run_db_state_change(
+        DB_STATE_CHANGE_BASE_OPTIONS + [
+            '-N',
+            '-r', full_replay_mt_report_name,
+            'full_replay'
+        ],
+        stdout_name=full_replay_mt_stdout_name,
+        stderr_name=full_replay_mt_stderr_name,
+        pipe_stdin_file=full_replay_input
+    )
+
+    replay_mt_report = read_state_change_report(f"{session.session_path}/{full_replay_mt_report_name}")
+
+
+    full_replay_st_stdout_name = full_replay_log_name + ".st.stdout"
+    full_replay_st_stderr_name = full_replay_log_name + ".st.stderr"
+    full_replay_st_report_name = full_replay_log_name + ".st.report.json"
+    # 위와 같은 조건으로 REPLAY를 한번 더 실행한다. (single-thread)
+    session.run_db_state_change(
+        DB_STATE_CHANGE_BASE_OPTIONS + [
+            '-N',
+            '-r', full_replay_st_report_name,
+            "full-replay"
+        ],
+        stdout_name=full_replay_st_stdout_name,
+        stderr_name=full_replay_st_stderr_name,
+        )
+
+    replay_st_report = read_state_change_report(f"{session.session_path}/{full_replay_st_report_name}")
+
+    logger.info(f"State Change Report: {full_replay_log_name}")
+    logger.info(f"full-replay-mt: {replay_mt_report['executionTime']}, full-replay-st: {replay_st_report['executionTime']}")
 
 if __name__ == "__main__":
     if not download_mysql():
@@ -133,7 +219,7 @@ if __name__ == "__main__":
     os.putenv("DB_USER", "admin")
     os.putenv("DB_PASS", "password")
 
-    session = BenchmarkSession("tpcc", "1m")
+    session = BenchmarkSession("tpcc", "1m", session_path=f"{os.getcwd()}/")
     logger = session.logger
     session.prepare()
 
@@ -154,6 +240,18 @@ if __name__ == "__main__":
     # state change를 행한다
     # 1. 최소 (상태전환 쿼리를 1개만 선택)
     perform_state_change(session, [0], do_extra_replay_st=True, do_table_diff=True)
+
+    # 2. 1% 정도
+    rollback_gids = decide_rollback_gids(session, 0.01)
+    perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=True)
+
+    # 3. 10% 정도
+    rollback_gids = decide_rollback_gids(session, 0.1)
+    perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=True)
+
+    # 4. 100%
+    perform_full_replay(session)
+
 
     logger.info("stopping mysqld...")
     session.mysqld.stop()
