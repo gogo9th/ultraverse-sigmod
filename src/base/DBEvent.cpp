@@ -117,6 +117,8 @@ namespace ultraverse::base {
                     }
                     
                     _writeItems.emplace_back(*it);
+                    
+                    it++;
                 }
             }
             
