@@ -148,6 +148,7 @@ namespace ultraverse::state::v2 {
         }
         
         _workerCount++;
+        std::scoped_lock<std::mutex> _lock(_mutex);
         
         auto itBeg = boost::vertices(_graph).first;
         const auto itEnd = boost::vertices(_graph).second;
@@ -193,7 +194,7 @@ namespace ultraverse::state::v2 {
             std::this_thread::sleep_for(std::chrono::milliseconds(1000/60));
         }
          */
-        
+        std::scoped_lock<std::mutex> _lock(_mutex);
         return _graph[nodeId];
     }
     
