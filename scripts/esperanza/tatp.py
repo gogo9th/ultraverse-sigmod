@@ -73,8 +73,11 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
 
     logger = session.logger
 
-    rollback_actions = ":".join(map(lambda gid: f"rollback={gid}", rollback_gids))
     rollback_log_name = f"rollback_{rollback_gids[0]}_{rollback_gids[-1]}"
+    rollback_plan_name = rollback_log_name + ".plan"
+
+    with open(f"{session.session_path}/{rollback_plan_name}", "w") as f:
+        f.write((",".join(map(lambda x: str(x), rollback_gids))))
 
     rollback_stdout_name = rollback_log_name + ".stdout"
     rollback_stderr_name = rollback_log_name + ".stderr"
@@ -89,8 +92,9 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
     session.run_db_state_change(
         DB_STATE_CHANGE_BASE_OPTIONS + [
             '-r', rollback_report_name,
-            rollback_actions
+            "rollback=-"
         ],
+        pipe_stdin_file=f"{session.session_path}/{rollback_plan_name}",
         stdout_name=rollback_stdout_name,
         stderr_name=rollback_stderr_name
     )
@@ -121,11 +125,12 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
             DB_STATE_CHANGE_BASE_OPTIONS + [
                 '-N',
                 '-r', replay_st_report_name,
-                rollback_actions + ":full-replay"
+                "rollback=-:full-replay"
             ],
+            pipe_stdin_file=f"{session.session_path}/{rollback_plan_name}",
             stdout_name=replay_st_stdout_name,
             stderr_name=replay_st_stderr_name,
-        )
+            )
 
         replay_st_report = read_state_change_report(f"{session.session_path}/{replay_st_report_name}")
 
