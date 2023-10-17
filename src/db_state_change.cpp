@@ -418,10 +418,19 @@ namespace ultraverse {
             if (action == "make_cluster") {
                 actions.emplace_back(std::make_shared<MakeClusterAction>());
             } else if (action == "rollback") {
-                auto args = split(strArgs, ',');
-                for (auto &arg: args) {
-                    gid_t gid = std::stoll(arg);
-                    actions.emplace_back(std::make_shared<RollbackAction>(gid));
+                if (strArgs == "-") {
+                    std::cin >> strArgs;
+                    auto args = split(strArgs, ',');
+                    for (auto &arg: args) {
+                        gid_t gid = std::stoll(arg);
+                        actions.emplace_back(std::make_shared<RollbackAction>(gid));
+                    }
+                } else {
+                    auto args = split(strArgs, ',');
+                    for (auto &arg: args) {
+                        gid_t gid = std::stoll(arg);
+                        actions.emplace_back(std::make_shared<RollbackAction>(gid));
+                    }
                 }
             } else if (action == "auto-rollback") {
                 double ratio = std::stod(strArgs);
