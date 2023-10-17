@@ -64,7 +64,7 @@ namespace ultraverse::state::v2 {
             // for cereal
             Cluster();
             Cluster(const Cluster &other);
-            Cluster(Cluster &&other) noexcept = default;
+            Cluster(Cluster &&other) noexcept = delete;
             
             ClusterMap read;
             ClusterMap write;

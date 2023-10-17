@@ -20,7 +20,9 @@ namespace ultraverse::state::v2 {
     
     StateCluster::Cluster::Cluster(const StateCluster::Cluster &other):
         read(other.read),
-        write(other.write)
+        write(other.write),
+        pendingRead(other.pendingRead),
+        pendingWrite(other.pendingWrite)
     {
     
     }
@@ -88,6 +90,7 @@ namespace ultraverse::state::v2 {
             cluster.merge(WRITE);
             
             _logger->info("finalizing {}", pair.first);
+            
             cluster.finalize();
         }
     }
