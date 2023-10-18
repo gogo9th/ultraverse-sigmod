@@ -94,7 +94,7 @@ namespace ultraverse::state::v2 {
         ConcurrentReadLock _lock(_graphMutex);
         auto pair = boost::vertices(_graph);
         
-        return std::all_of(pair.first, pair.second, [this](auto id) {
+        return std::all_of(std::execution::unseq, pair.first, pair.second, [this](auto id) {
             return (bool) _graph[id]->finalized;
         });
     }
@@ -105,27 +105,26 @@ namespace ultraverse::state::v2 {
         auto itBeg = boost::vertices(_graph).first;
         const auto itEnd = boost::vertices(_graph).second;
         
-        auto it = std::find_if(std::execution::unseq, itBeg, itEnd, [this, workerId](auto id) {
+        auto it = std::find_if(std::execution::par, itBeg, itEnd, [this, workerId](auto id) {
             auto &node = _graph[id];
             int expected = -1;
             
-            
-            if (node->ready && !node->finalized && node->processedBy == -1) {
-                auto pair = boost::in_edges(id, _graph);
-                auto it2Beg = pair.first;
-                const auto it2End = pair.second;
-                
-                bool result = std::all_of(it2Beg, it2End, [this](const auto &edge) {
-                    auto source = boost::source(edge, _graph);
-                    auto &_node = _graph[source];
-                    
-                    return (bool) _node->finalized;
-                });
-                
-                return result && node->processedBy.compare_exchange_strong(expected, workerId);
+            if (!node->ready || node->finalized || node->processedBy != -1) {
+                return false;
             }
             
-            return false;
+            auto pair = boost::in_edges(id, _graph);
+            auto it2Beg = pair.first;
+            const auto it2End = pair.second;
+            
+            bool result = std::all_of(it2Beg, it2End, [this](const auto &edge) {
+                auto source = boost::source(edge, _graph);
+                auto &_node = _graph[source];
+                
+                return (bool) _node->finalized;
+            });
+            
+            return result && node->processedBy.compare_exchange_strong(expected, workerId);
         });
         
         if (it != itEnd) {
@@ -145,18 +144,16 @@ namespace ultraverse::state::v2 {
         WriteLock _lock(_graphMutex);
         _logger->info("gc(): removing finalized / orphaned nodes");
         
-        std::mutex _removeRowMutex;
         std::set<RowGraphId> toRemove;
         
         {
             boost::graph_traits<RowGraphInternal>::vertex_iterator vi, vi_end;
             boost::tie(vi, vi_end) = boost::vertices(_graph);
             
-            std::for_each(std::execution::par_unseq, vi, vi_end, [this, &_removeRowMutex, &toRemove](const auto &id) {
+            std::for_each(vi, vi_end, [this, &toRemove](const auto &id) {
                 auto node = _graph[id];
                 
                 if (node->finalized && node->transaction == nullptr) {
-                    std::scoped_lock<std::mutex> _lock(_removeRowMutex);
                     toRemove.emplace(id);
                 }
             });

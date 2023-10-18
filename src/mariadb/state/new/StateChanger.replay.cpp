@@ -29,7 +29,7 @@ namespace ultraverse::state::v2 {
         report.setIntermediateDBName(_intermediateDBName);
         
         StateRelationshipResolver relationshipResolver(_plan, *_context);
-        CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
+        CachedRelationshipResolver cachedResolver(relationshipResolver, 8000);
         
         RowGraph rowGraph(_plan.keyColumns(), cachedResolver);
         GIDIndexReader gidIndexReader(_plan.stateLogPath(), _plan.stateLogName());
@@ -85,7 +85,7 @@ namespace ultraverse::state::v2 {
                         const auto header = _reader.txnHeader();
                         const auto transaction = _reader.txnBody();
                         
-                        relationshipResolver.addTransaction(*transaction);
+                        // relationshipResolver.addTransaction(*transaction);
                         
                         auto nodeId = rowGraph.addNode(transaction);
                         
