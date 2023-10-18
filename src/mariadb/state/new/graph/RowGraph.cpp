@@ -207,6 +207,8 @@ namespace ultraverse::state::v2 {
             
             
             for (auto &pair: _nodeMap) {
+                std::vector<StateRange> toRemoveRanges;
+                
                 for (auto &pair2: pair.second) {
                     auto &holder = pair2.second;
                     
@@ -219,8 +221,12 @@ namespace ultraverse::state::v2 {
                     }
                     
                     if (holder.read == nullptr && holder.write == nullptr) {
-                        pair.second.erase(pair2.first);
+                        toRemoveRanges.emplace_back(pair2.first);
                     }
+                }
+                
+                for (auto &range: toRemoveRanges) {
+                    pair.second.erase(range);
                 }
             }
             
