@@ -160,21 +160,22 @@ namespace ultraverse::state::v2 {
     }
     
     std::string CachedRelationshipResolver::resolveColumnAlias(const std::string &columnExpr) const {
-        _cacheLock.lock();
-        auto it = _aliasCache.find(columnExpr);
-        bool found = it != _aliasCache.end();
-        _cacheLock.unlock();
-        
-        if (!found) {
-            auto retval = std::move(_resolver.resolveColumnAlias(columnExpr));
-            
-            std::scoped_lock _lock(_cacheLock);
-            _aliasCache.emplace(columnExpr, retval);
-            
-            return std::move(retval);
+        {
+            std::shared_lock<std::shared_mutex> _lock(_cacheLock);
+            auto it = _aliasCache.find(columnExpr);
+            if (it != _aliasCache.end()) {
+                return std::move(it->second);
+            }
         }
         
-        return std::move(it->second);
+        auto retval = std::move(_resolver.resolveColumnAlias(columnExpr));
+        
+        {
+            std::unique_lock<std::shared_mutex> _lock(_cacheLock);
+            _aliasCache.emplace(columnExpr, retval);
+        }
+        
+        return std::move(retval);
     }
     
     std::string CachedRelationshipResolver::resolveForeignKey(const std::string &columnExpr) const {
@@ -182,21 +183,22 @@ namespace ultraverse::state::v2 {
     }
     
     std::string CachedRelationshipResolver::resolveChain(const std::string &columnExpr) const {
-        _cacheLock.lock();
-        auto it = _chainCache.find(columnExpr);
-        bool found = it != _chainCache.end();
-        _cacheLock.unlock();
-        
-        if (!found) {
-            auto retval = std::move(_resolver.resolveChain(columnExpr));
-            
-            std::scoped_lock _lock(_cacheLock);
-            _chainCache.emplace(columnExpr, retval);
-            
-            return std::move(retval);
+        {
+            std::shared_lock<std::shared_mutex> _lock(_cacheLock);
+            auto it = _chainCache.find(columnExpr);
+            if (it != _chainCache.end()) {
+                return std::move(it->second);
+            }
         }
         
-        return std::move(it->second);
+        auto retval = std::move(_resolver.resolveChain(columnExpr));
+        
+        {
+            std::unique_lock<std::shared_mutex> _lock(_cacheLock);
+            _chainCache.emplace(columnExpr, retval);
+        }
+        
+        return std::move(retval);
     }
     
     std::shared_ptr<StateItem> CachedRelationshipResolver::resolveRowAlias(const StateItem &item) const {
@@ -204,7 +206,7 @@ namespace ultraverse::state::v2 {
         auto &cacheMap = _rowAliasCache[item.name];
         
         {
-            std::scoped_lock _lock(_cacheLock);
+            std::shared_lock<std::shared_mutex> _lock(_cacheLock);
             auto it = cacheMap.find(hash);
             
             if (it == cacheMap.end()) {
@@ -219,7 +221,7 @@ namespace ultraverse::state::v2 {
         auto retval = std::move(_resolver.resolveRowAlias(item));
         
         {
-            std::scoped_lock _lock(_cacheLock);
+            std::unique_lock<std::shared_mutex> _lock(_cacheLock);
             
             if (isGCRequired(cacheMap)) {
                 gc(cacheMap);
@@ -236,7 +238,7 @@ namespace ultraverse::state::v2 {
         auto &cacheMap = _rowAliasCache[item.name];
         
         {
-            std::scoped_lock _lock(_cacheLock);
+            std::shared_lock<std::shared_mutex> _lock(_cacheLock);
             auto it = cacheMap.find(hash);
             
             if (it == cacheMap.end()) {
@@ -251,7 +253,7 @@ namespace ultraverse::state::v2 {
         auto retval = std::move(_resolver.resolveRowChain(item));
         
         {
-            std::scoped_lock _lock(_cacheLock);
+            std::unique_lock<std::shared_mutex> _lock(_cacheLock);
             
             if (isGCRequired(cacheMap)) {
                 gc(cacheMap);
@@ -264,7 +266,7 @@ namespace ultraverse::state::v2 {
     }
     
     void CachedRelationshipResolver::clearCache() {
-        std::scoped_lock _lock(_cacheLock);
+        std::unique_lock<std::shared_mutex> _lock(_cacheLock);
         _aliasCache.clear();
         _chainCache.clear();
         _rowAliasCache.clear();

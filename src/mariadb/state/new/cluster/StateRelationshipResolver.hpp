@@ -8,6 +8,7 @@
 
 #include <string>
 #include <optional>
+#include <shared_mutex>
 
 #include "../../StateItem.h"
 #include "../StateChangePlan.hpp"
@@ -198,7 +199,7 @@ namespace ultraverse::state::v2 {
         
         int _maxRowElements;
         
-        mutable std::mutex _cacheLock;
+        mutable std::shared_mutex _cacheLock;
         mutable std::unordered_map<std::string, std::string> _aliasCache;
         mutable std::unordered_map<std::string, std::string> _chainCache;
         mutable std::unordered_map<std::string, RowCacheMap> _rowAliasCache;
