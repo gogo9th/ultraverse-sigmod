@@ -32,66 +32,24 @@ namespace ultraverse::state::v2 {
         node->transaction = std::move(transaction);
         
         
-        _mutex.lock();
-        auto id = boost::add_vertex(node, _graph);
-        _mutex.unlock();
-        
-        buildEdge(id);
-        
-        return id;
-    }
-    
-    std::unordered_set<RowGraphId> RowGraph::dependenciesOf(RowGraphId nodeId) {
-        std::unordered_set<RowGraphId> result;
-        
         {
-            std::scoped_lock<std::mutex> _lock(_mutex);
-            // get all edges points to nodeId (u -> v; v is nodeId)
+            WriteLock _lock(_graphMutex);
+            auto id = boost::add_vertex(node, _graph);
             
-            auto pair = boost::in_edges(nodeId, _graph);
-            auto it = pair.first;
-            const auto itEnd = pair.second;
+            buildEdge(id);
             
-            while (it != itEnd) {
-                auto id = boost::source(*it, _graph);
-                result.insert(id);
-                
-                ++it;
-            }
+            return id;
         }
-        
-        return std::move(result);
     }
     
-    std::unordered_set<RowGraphId> RowGraph::dependentsOf(RowGraphId nodeId) {
-        std::unordered_set<RowGraphId> result;
-        
-        {
-            std::scoped_lock<std::mutex> _lock(_mutex);
-            // get all edges points from nodeId (u -> v; u is nodeId)
-            
-            auto pair = boost::out_edges(nodeId, _graph);
-            auto it = pair.first;
-            const auto itEnd = pair.second;
-            
-            while (it != itEnd) {
-                auto id = boost::target(*it, _graph);
-                result.insert(id);
-                
-                ++it;
-            }
-        }
-        
-        return std::move(result);
-    }
-    
+   
     /**
      * @copilot this function finds all entrypoints of the graph
      *  - an entrypoint is a node that has no incoming edges,
      *    or all incoming edges are marked as finalized (RowGraphNode::finalized == true)
      */
     std::unordered_set<RowGraphId> RowGraph::entrypoints() {
-        std::scoped_lock<std::mutex> _lock(_mutex);
+        ConcurrentReadLock _lock(_graphMutex);
         
         std::unordered_set<RowGraphId> result;
         
@@ -132,98 +90,70 @@ namespace ultraverse::state::v2 {
         return std::move(result);
     }
     
-    bool RowGraph::isFinalized() const {
+    bool RowGraph::isFinalized() {
+        ConcurrentReadLock _lock(_graphMutex);
         auto pair = boost::vertices(_graph);
         
-        return std::all_of(pair.first, pair.second, [this](auto id) {
+        return std::all_of(std::execution::unseq, pair.first, pair.second, [this](auto id) {
             return (bool) _graph[id]->finalized;
         });
     }
     
     RowGraphId RowGraph::entrypoint(int workerId) {
-        while (_isGCRunning) {
-            // 신나는 스핀 락~
-            // 너도 스핀 락 할래?
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000/60));
-        }
-        
-        _workerCount++;
-        std::scoped_lock<std::mutex> _lock(_mutex);
+        ConcurrentReadLock _lock(_graphMutex);
         
         auto itBeg = boost::vertices(_graph).first;
         const auto itEnd = boost::vertices(_graph).second;
         
-        auto it = std::find_if(std::execution::unseq, itBeg, itEnd, [this, workerId](auto id) {
+        auto it = std::find_if(std::execution::par, itBeg, itEnd, [this, workerId](auto id) {
             auto &node = _graph[id];
             int expected = -1;
             
-            
-            if (node->ready && !node->finalized && node->processedBy == -1) {
-                auto pair = boost::in_edges(id, _graph);
-                auto it2Beg = pair.first;
-                const auto it2End = pair.second;
-                
-                bool result = std::all_of(it2Beg, it2End, [this](const auto &edge) {
-                    auto source = boost::source(edge, _graph);
-                    auto &_node = _graph[source];
-                    
-                    return (bool) _node->finalized;
-                });
-                
-                return result && node->processedBy.compare_exchange_strong(expected, workerId);
+            if (!node->ready || node->finalized || node->processedBy != -1) {
+                return false;
             }
             
-            return false;
+            auto pair = boost::in_edges(id, _graph);
+            auto it2Beg = pair.first;
+            const auto it2End = pair.second;
+            
+            bool result = std::all_of(it2Beg, it2End, [this](const auto &edge) {
+                auto source = boost::source(edge, _graph);
+                auto &_node = _graph[source];
+                
+                return (bool) _node->finalized;
+            });
+            
+            return result && node->processedBy.compare_exchange_strong(expected, workerId);
         });
         
         if (it != itEnd) {
             auto id = *it;
-            
-            _workerCount--;
             return id;
         } else {
-            _workerCount--;
             return nullptr;
         }
     }
     
     std::shared_ptr<RowGraphNode> RowGraph::nodeFor(RowGraphId nodeId) {
-        // std::scoped_lock<std::mutex> _lock(_mutex);
-        /*
-        while (_isGCRunning) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000/60));
-        }
-         */
-        std::scoped_lock<std::mutex> _lock(_mutex);
+        ConcurrentReadLock _lock(_graphMutex);
         return _graph[nodeId];
     }
     
     void RowGraph::gc() {
-        // _logger->info("performing gc..");
-        while (_workerCount > 0) {
-            // 신나는 스핀 락~
-            // 너도 스핀 락 할래?
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000/60));
-        }
-        
-        _isGCRunning = true;
-        
+        WriteLock _lock(_graphMutex);
         _logger->info("gc(): removing finalized / orphaned nodes");
         
-        std::mutex _removeRowMutex;
         std::set<RowGraphId> toRemove;
         
         {
-            std::scoped_lock<std::mutex> _lock(_mutex);
-            
             boost::graph_traits<RowGraphInternal>::vertex_iterator vi, vi_end;
             boost::tie(vi, vi_end) = boost::vertices(_graph);
             
-            std::for_each(std::execution::par_unseq, vi, vi_end, [this, &_removeRowMutex, &toRemove](const auto &id) {
+            std::for_each(vi, vi_end, [this, &toRemove](const auto &id) {
                 auto node = _graph[id];
                 
                 if (node->finalized && node->transaction == nullptr) {
-                    std::scoped_lock<std::mutex> _lock(_removeRowMutex);
                     toRemove.emplace(id);
                 }
             });
@@ -277,6 +207,8 @@ namespace ultraverse::state::v2 {
             
             
             for (auto &pair: _nodeMap) {
+                std::vector<StateRange> toRemoveRanges;
+                
                 for (auto &pair2: pair.second) {
                     auto &holder = pair2.second;
                     
@@ -287,12 +219,18 @@ namespace ultraverse::state::v2 {
                     if (toRemove.find(holder.write) != toRemove.end()) {
                         holder.write = nullptr;
                     }
+                    
+                    if (holder.read == nullptr && holder.write == nullptr) {
+                        toRemoveRanges.emplace_back(pair2.first);
+                    }
+                }
+                
+                for (auto &range: toRemoveRanges) {
+                    pair.second.erase(range);
                 }
             }
             
         }
-        
-        _isGCRunning = false;
         
         if (!toRemove.empty()) {
             _logger->info("gc(): {} nodes removed", toRemove.size());
@@ -469,6 +407,5 @@ namespace ultraverse::state::v2 {
     }
 
     void RowGraph::dump() {
-        std::scoped_lock<std::mutex> _lock(_mutex);
     }
 }
