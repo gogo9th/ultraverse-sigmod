@@ -10,6 +10,7 @@
 #include <memory>
 #include <atomic>
 #include <mutex>
+#include <shared_mutex>
 
 #include <boost/graph/adjacency_list.hpp>
 
