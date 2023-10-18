@@ -217,6 +217,10 @@ namespace ultraverse::state::v2 {
                     if (toRemove.find(holder.write) != toRemove.end()) {
                         holder.write = nullptr;
                     }
+                    
+                    if (holder.read == nullptr && holder.write == nullptr) {
+                        pair.second.erase(pair2.first);
+                    }
                 }
             }
             

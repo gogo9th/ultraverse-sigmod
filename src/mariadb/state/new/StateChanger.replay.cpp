@@ -85,7 +85,7 @@ namespace ultraverse::state::v2 {
                         const auto header = _reader.txnHeader();
                         const auto transaction = _reader.txnBody();
                         
-                        // relationshipResolver.addTransaction(*transaction);
+                        relationshipResolver.addTransaction(*transaction);
                         
                         auto nodeId = rowGraph.addNode(transaction);
                         
