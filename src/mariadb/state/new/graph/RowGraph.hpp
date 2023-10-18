@@ -40,6 +40,15 @@ namespace ultraverse::state::v2 {
     using RowGraphId =
         boost::graph_traits<RowGraphInternal>::vertex_descriptor;
     
+    using RWMutex =
+        std::shared_mutex;
+    
+    using ConcurrentReadLock =
+        std::shared_lock<RWMutex>;
+    
+    using WriteLock =
+        std::unique_lock<RWMutex>;
+    
     /**
      * @brief 트랜잭션 동시 실행 가능 여부 판정을 위한 Rowid-level 그래프
      */
@@ -75,7 +84,7 @@ namespace ultraverse::state::v2 {
         /**
          * @brief 모든 그래프 노드가 처리되었는지 여부를 반환한다.
          */
-        bool isFinalized() const;
+        bool isFinalized();
        
         /**
          * @brief workerId가 처리할 수 있는 노드를 찾는다.
@@ -121,6 +130,8 @@ namespace ultraverse::state::v2 {
         > _nodeMap;
         
         
+        RWMutex _graphMutex;
+        /** @deprecated `_graphMutex`를 대신 사용하십시오. */
         std::mutex _mutex;
         std::mutex _nodeMapMutex;
         std::atomic_bool _isGCRunning = false;
