@@ -30,7 +30,7 @@ class AStoreBenchmarkSession(BenchmarkSession):
 
         if 'prepare' in args:
             self.load_dump("benchbase", f"{benchbase_node_home}/aStore.sql")
-        elif 'execute' in args:
+
             cwd = os.getcwd()
             os.chdir(benchbase_node_home)
 
@@ -58,6 +58,8 @@ class AStoreBenchmarkSession(BenchmarkSession):
 
             if retval != 0:
                 raise Exception("failed to run benchbase")
+        else:
+            super().run_benchbase(args)
 
 def decide_rollback_gids(session: BenchmarkSession, ratio: float) -> list[int]:
     """
