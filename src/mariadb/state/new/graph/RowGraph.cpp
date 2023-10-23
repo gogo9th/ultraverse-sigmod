@@ -22,9 +22,14 @@ namespace ultraverse::state::v2 {
     RowGraph::RowGraph(const std::set<std::string> &keyColumns, const RelationshipResolver &resolver):
         _logger(createLogger("RowGraph")),
         _keyColumns(keyColumns),
-        _resolver(resolver)
+        _resolver(resolver),
+        _taskExecutor(std::thread::hardware_concurrency() * 2)
     {
     
+    }
+    
+    RowGraph::~RowGraph() {
+        _taskExecutor.shutdown();
     }
     
     RowGraphId RowGraph::addNode(std::shared_ptr<Transaction> transaction) {
@@ -38,9 +43,12 @@ namespace ultraverse::state::v2 {
             id = boost::add_vertex(node, _graph);
         }
         
-        auto result = std::async(std::launch::async, [this, id]() {
+        
+        _taskExecutor.post<int>([this, id] {
             this->buildEdge(id);
+            return 0;
         });
+
         return id;
     }
     

@@ -18,6 +18,7 @@
 #include "../Transaction.hpp"
 
 #include "utils/log.hpp"
+#include "base/TaskExecutor.hpp"
 
 namespace ultraverse::state::v2 {
     
@@ -62,6 +63,8 @@ namespace ultraverse::state::v2 {
             std::mutex mutex;
         };
         explicit RowGraph(const std::set<std::string> &keyColumns, const RelationshipResolver &resolver);
+        
+        ~RowGraph();
         
         /**
          * @brief 트랜잭션을 그래프에 추가하고, 의존성을 해결한다.
@@ -139,6 +142,8 @@ namespace ultraverse::state::v2 {
         std::mutex _mutex;
         std::atomic_bool _isGCRunning = false;
         std::atomic_uint64_t _workerCount = 0;
+        
+        TaskExecutor _taskExecutor;
     };
 }
 
