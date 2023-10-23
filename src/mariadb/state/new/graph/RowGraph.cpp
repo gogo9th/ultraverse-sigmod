@@ -281,6 +281,19 @@ namespace ultraverse::state::v2 {
         };
         
         std::unordered_set<RowGraphId> relations;
+        std::shared_mutex relationsMutex;
+        
+        auto isInRelationship = [&relations, &relationsMutex] (RowGraphId id) {
+            std::shared_lock<std::shared_mutex> _lock(relationsMutex);
+            return relations.find(id) != relations.end();
+        };
+        
+        auto addRelationship = [&relations, &relationsMutex] (RowGraphId id) {
+            std::unique_lock<std::shared_mutex> _lock(relationsMutex);
+            relations.insert(id);
+        };
+        
+        
         // prevent reference to self
         relations.insert(nodeId);
         
@@ -289,7 +302,7 @@ namespace ultraverse::state::v2 {
             auto it = transaction->readSet_begin();
             const auto itEnd = transaction->readSet_end();
             
-            std::for_each(std::execution::par, it, itEnd, [this, &relations, &getRWStateHolder, nodeId] (const auto &item) {
+            std::for_each(std::execution::par, it, itEnd, [this, &relations, &getRWStateHolder, &isInRelationship, &addRelationship, nodeId] (const auto &item) {
                 auto holderRef = getRWStateHolder(item);
                 if (holderRef == std::nullopt) {
                     return;
@@ -300,11 +313,11 @@ namespace ultraverse::state::v2 {
                 {
                     std::scoped_lock<std::mutex> _lock(holder.mutex);
                     
-                    if (holder.write != nullptr && relations.find(holder.write) == relations.end()) {
+                    if (holder.write != nullptr && isInRelationship(holder.write)) {
                         // WRITE - READ
                         std::unique_lock<std::shared_mutex> _lock2(_nodeMapMutex);
                         boost::add_edge(holder.write, nodeId, _graph);
-                        relations.insert(holder.write);
+                        addRelationship(holder.write);
                     }
                 
                     holder.read = nodeId;
@@ -317,7 +330,7 @@ namespace ultraverse::state::v2 {
             auto it = transaction->writeSet_begin();
             const auto itEnd = transaction->writeSet_end();
             
-            std::for_each(std::execution::par, it, itEnd, [this, &relations, &getRWStateHolder, nodeId] (const auto &item) {
+            std::for_each(std::execution::par, it, itEnd, [this, &relations, &getRWStateHolder, &isInRelationship, &addRelationship, nodeId] (const auto &item) {
                 auto holderRef = getRWStateHolder(item);
                 if (holderRef == std::nullopt) {
                     return;
@@ -330,27 +343,28 @@ namespace ultraverse::state::v2 {
                     std::scoped_lock<std::mutex> _lock(holder.mutex);
                     
                     if (name != item.name) {
-                        if (holder.write != nullptr && relations.find(holder.write) == relations.end()) {
+                        if (holder.write != nullptr && isInRelationship(holder.write)) {
                             // WRITE - READ
                             std::unique_lock<std::shared_mutex> _lock2(_nodeMapMutex);
                             boost::add_edge(holder.write, nodeId, _graph);
-                            relations.insert(holder.write);
+                            addRelationship(holder.write);
                         }
                         
                         holder.read = nodeId;
                     } else {
-                        if (holder.read != nullptr && relations.find(holder.read) == relations.end()) {
+                        if (holder.read != nullptr && isInRelationship(holder.read)) {
                             // READ - WRITE
                             std::unique_lock<std::shared_mutex> _lock2(_nodeMapMutex);
                             boost::add_edge(holder.read, nodeId, _graph);
-                            relations.insert(holder.read);
+                            addRelationship(holder.read);
                         }
                         
-                        if (holder.write != nullptr && relations.find(holder.write) == relations.end()) {
+                        if (holder.write != nullptr && isInRelationship(holder.write)) {
                             // WRITE - WRITE
                             std::unique_lock<std::shared_mutex> _lock2(_nodeMapMutex);
                             boost::add_edge(holder.write, nodeId, _graph);
                             relations.insert(holder.write);
+                            addRelationship(holder.write);
                         }
                         
                         holder.write = nodeId;
