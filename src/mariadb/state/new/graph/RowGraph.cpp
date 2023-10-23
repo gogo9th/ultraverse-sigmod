@@ -38,8 +38,9 @@ namespace ultraverse::state::v2 {
             id = boost::add_vertex(node, _graph);
         }
         
-        
-        buildEdge(id);
+        auto result = std::async(std::launch::async, [this, id]() {
+            this->buildEdge(id);
+        });
         return id;
     }
     
@@ -289,8 +290,12 @@ namespace ultraverse::state::v2 {
             const auto itEnd = transaction->readSet_end();
             
             std::for_each(std::execution::par, it, itEnd, [this, &relations, &getRWStateHolder, nodeId] (const auto &item) {
-                auto &holder = getRWStateHolder(item)->get();
+                auto holderRef = getRWStateHolder(item);
+                if (holderRef == std::nullopt) {
+                    return;
+                }
                 
+                auto &holder = holderRef->get();
                 
                 {
                     std::scoped_lock<std::mutex> _lock(holder.mutex);
@@ -313,8 +318,13 @@ namespace ultraverse::state::v2 {
             const auto itEnd = transaction->writeSet_end();
             
             std::for_each(std::execution::par, it, itEnd, [this, &relations, &getRWStateHolder, nodeId] (const auto &item) {
+                auto holderRef = getRWStateHolder(item);
+                if (holderRef == std::nullopt) {
+                    return;
+                }
+                
+                auto &holder = holderRef->get();
                 std::string name = std::move(_resolver.resolveChain(item.name));
-                auto &holder = getRWStateHolder(item)->get();
                 
                 {
                     std::scoped_lock<std::mutex> _lock(holder.mutex);
