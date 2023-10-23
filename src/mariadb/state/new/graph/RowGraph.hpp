@@ -58,6 +58,8 @@ namespace ultraverse::state::v2 {
         struct RWStateHolder {
             RowGraphId read  = RowGraphId(-1);
             RowGraphId write = RowGraphId(-1);
+            
+            std::mutex mutex;
         };
         explicit RowGraph(const std::set<std::string> &keyColumns, const RelationshipResolver &resolver);
         
@@ -129,12 +131,12 @@ namespace ultraverse::state::v2 {
             std::string,
             std::unordered_map<StateRange, RWStateHolder>
         > _nodeMap;
+        std::shared_mutex _nodeMapMutex;
         
         
         RWMutex _graphMutex;
         /** @deprecated `_graphMutex`를 대신 사용하십시오. */
         std::mutex _mutex;
-        std::mutex _nodeMapMutex;
         std::atomic_bool _isGCRunning = false;
         std::atomic_uint64_t _workerCount = 0;
     };
