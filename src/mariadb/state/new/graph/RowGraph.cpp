@@ -250,6 +250,7 @@ namespace ultraverse::state::v2 {
     void RowGraph::buildEdge(RowGraphId nodeId) {
         auto node = nodeFor(nodeId);
         const auto transaction = node->transaction;
+        const auto gid = transaction->gid();
         
         const auto getRWStateHolder = [this](const StateItem &item) {
             std::optional<std::reference_wrapper<RWStateHolder>> holderRef = std::nullopt;
@@ -291,7 +292,11 @@ namespace ultraverse::state::v2 {
         std::unordered_set<RowGraphId> relations;
         std::shared_mutex relationsMutex;
         
-        auto isInRelationship = [&relations, &relationsMutex] (RowGraphId id) {
+        auto isInRelationship = [this, gid, &relations, &relationsMutex] (RowGraphId id) {
+            if (gid < _graph[id]->transaction->gid()) {
+                return true;
+            }
+            
             std::shared_lock<std::shared_mutex> _lock(relationsMutex);
             return relations.find(id) != relations.end();
         };
@@ -321,7 +326,8 @@ namespace ultraverse::state::v2 {
                 {
                     std::scoped_lock<std::mutex> _lock(holder.mutex);
                     
-                    if (holder.write != nullptr && isInRelationship(holder.write)) {
+                    
+                    if (holder.write != nullptr && !isInRelationship(holder.write)) {
                         // WRITE - READ
                         std::unique_lock<std::shared_mutex> _lock2(_nodeMapMutex);
                         boost::add_edge(holder.write, nodeId, _graph);
@@ -350,33 +356,22 @@ namespace ultraverse::state::v2 {
                 {
                     std::scoped_lock<std::mutex> _lock(holder.mutex);
                     
-                    if (name != item.name) {
-                        if (holder.write != nullptr && isInRelationship(holder.write)) {
-                            // WRITE - READ
-                            std::unique_lock<std::shared_mutex> _lock2(_nodeMapMutex);
-                            boost::add_edge(holder.write, nodeId, _graph);
-                            addRelationship(holder.write);
-                        }
-                        
-                        holder.read = nodeId;
-                    } else {
-                        if (holder.read != nullptr && isInRelationship(holder.read)) {
-                            // READ - WRITE
-                            std::unique_lock<std::shared_mutex> _lock2(_nodeMapMutex);
-                            boost::add_edge(holder.read, nodeId, _graph);
-                            addRelationship(holder.read);
-                        }
-                        
-                        if (holder.write != nullptr && isInRelationship(holder.write)) {
-                            // WRITE - WRITE
-                            std::unique_lock<std::shared_mutex> _lock2(_nodeMapMutex);
-                            boost::add_edge(holder.write, nodeId, _graph);
-                            relations.insert(holder.write);
-                            addRelationship(holder.write);
-                        }
-                        
-                        holder.write = nodeId;
+                    if (holder.read != nullptr && !isInRelationship(holder.read)) {
+                        // READ - WRITE
+                        std::unique_lock<std::shared_mutex> _lock2(_nodeMapMutex);
+                        boost::add_edge(holder.read, nodeId, _graph);
+                        addRelationship(holder.read);
                     }
+                    
+                    if (holder.write != nullptr && !isInRelationship(holder.write)) {
+                        // WRITE - WRITE
+                        std::unique_lock<std::shared_mutex> _lock2(_nodeMapMutex);
+                        boost::add_edge(holder.write, nodeId, _graph);
+                        relations.insert(holder.write);
+                        addRelationship(holder.write);
+                    }
+                    
+                    holder.write = nodeId;
                 }
             });
         }

@@ -57,8 +57,8 @@ namespace ultraverse::state::v2 {
     class RowGraph {
     public:
         struct RWStateHolder {
-            RowGraphId read  = RowGraphId(-1);
-            RowGraphId write = RowGraphId(-1);
+            RowGraphId read  = nullptr;
+            RowGraphId write = nullptr;
             
             std::mutex mutex;
         };
