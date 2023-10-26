@@ -70,7 +70,6 @@ namespace ultraverse::state::v2 {
         _isRunning = true;
         
         auto phase_main_start = std::chrono::steady_clock::now();
-        auto dbHandle = _dbHandlePool.take();
         
         while (_reader.nextHeader()) {
             auto transactionHeader = _reader.txnHeader();
@@ -85,12 +84,13 @@ namespace ultraverse::state::v2 {
                 _logger->info("skipping rollback transaction #{}", gid);
                 continue;
             }
- 
+            
+            auto dbHandle = _dbHandlePool.take();
  
             // _logger->info("replaying transaction #{}", gid);
             
             dbHandle.get().executeQuery("USE " + _intermediateDBName);
-            dbHandle.get().executeQuery("BEGIN");
+            dbHandle.get().executeQuery("START TRANSACTION");
             
             bool isProcedureCall = transaction->flags() & Transaction::FLAG_IS_PROCEDURE_CALL;
             

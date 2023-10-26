@@ -254,7 +254,7 @@ namespace ultraverse::state::v2 {
         
         const auto getRWStateHolder = [this](const StateItem &item) {
             std::optional<std::reference_wrapper<RWStateHolder>> holderRef = std::nullopt;
-            std::string name = std::move(_resolver.resolveChain(item.name));
+            std::string name = item.name;
             
             if (name.empty()) {
                 name = item.name;
@@ -351,7 +351,6 @@ namespace ultraverse::state::v2 {
                 }
                 
                 auto &holder = holderRef->get();
-                std::string name = std::move(_resolver.resolveChain(item.name));
                 
                 {
                     std::scoped_lock<std::mutex> _lock(holder.mutex);
