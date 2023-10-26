@@ -293,7 +293,13 @@ namespace ultraverse::state::v2 {
         std::shared_mutex relationsMutex;
         
         auto isInRelationship = [this, gid, &relations, &relationsMutex] (RowGraphId id) {
-            if (gid < _graph[id]->transaction->gid()) {
+            const auto &targetNode = _graph[id];
+            
+            if (targetNode->transaction == nullptr) {
+                return true;
+            }
+            
+            if (gid < targetNode->transaction->gid()) {
                 return true;
             }
             
