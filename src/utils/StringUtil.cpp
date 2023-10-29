@@ -41,8 +41,9 @@ namespace ultraverse::utility {
     std::string replaceAll(const std::string &source, const std::string from, const std::string to) {
         auto value = source;
         
+        auto pos = 0;
         while (true) {
-            auto pos = value.find(from);
+            pos = value.find(from, pos + 1);
             
             if (pos == std::string::npos) {
                 break;
