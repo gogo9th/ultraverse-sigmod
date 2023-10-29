@@ -645,9 +645,13 @@ public:
             const auto &elem = jsonObj.at(i);
             
             switch (elem.type()) {
-                case json::value_t::string:
-                    args.push_back(fmt::format("\"{}\"", elem.get<std::string>()));
+                case json::value_t::string: {
+                    auto strval = elem.get<std::string>();
+                    strval = utility::replaceAll(strval, "\"", "\\\"");
+                    
+                    args.push_back(fmt::format("\"{}\"", strval));
                     args2.emplace_back(elem.get<std::string>());
+                }
                     break;
                 case json::value_t::number_integer:
                     args.push_back(std::to_string(elem.get<int64_t>()));
