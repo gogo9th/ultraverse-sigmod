@@ -647,9 +647,9 @@ public:
             switch (elem.type()) {
                 case json::value_t::string: {
                     auto strval = elem.get<std::string>();
-                    strval = utility::replaceAll(strval, "\"", "\\\"");
+                    // strval = utility::replaceAll(strval, "\"", "\\\"");
                     
-                    args.push_back(fmt::format("\"{}\"", strval));
+                    args.push_back(fmt::format("'{}'", strval));
                     args2.emplace_back(elem.get<std::string>());
                 }
                     break;
