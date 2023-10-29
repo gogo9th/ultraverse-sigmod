@@ -217,7 +217,7 @@ namespace ultraverse::state::v2 {
             selectedGids.emplace(i);
             
             for (const auto &cluster: rowCluster.clusters()) {
-                if (_plan.keyColumns().find(cluster.first) == _plan.keyColumns().end()) {
+                if (_plan.keyColumns().find(utility::toLower(cluster.first)) == _plan.keyColumns().end()) {
                     continue;
                 }
                 
