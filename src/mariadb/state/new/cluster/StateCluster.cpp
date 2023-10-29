@@ -233,13 +233,15 @@ namespace ultraverse::state::v2 {
         
         auto processFn = [this, &resolver, &readKeyItems, &writeKeyItems](bool isWrite) {
             return [this, &resolver, &readKeyItems, &writeKeyItems, isWrite](const StateItem &item) {
+                std::string itemName = utility::toLower(item.name);
                 const auto &real = resolver.resolveRowChain(item);
                 
                 if (real != nullptr) {
-                    auto &_item = isWrite ? writeKeyItems[real->name] : readKeyItems[real->name];
+                    std::string realName = utility::toLower(real->name);
+                    auto &_item = isWrite ? writeKeyItems[realName] : readKeyItems[realName];
                     
                     if (_item.name.empty()) {
-                        _item.name = real->name;
+                        _item.name = realName;
                         _item.function_type = FUNCTION_IN_INTERNAL;
                     }
                     
@@ -248,11 +250,11 @@ namespace ultraverse::state::v2 {
                         item.data_list.begin(), item.data_list.end()
                         );
                 } else {
-                    const auto &realColumn = resolver.resolveChain(item.name);
+                    const auto &realColumn = utility::toLower(resolver.resolveChain(item.name));
                     
                     if (!realColumn.empty()) {
                         // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
-                        auto &_item = isWrite ? writeKeyItems[item.name] : readKeyItems[realColumn];
+                        auto &_item = isWrite ? writeKeyItems[itemName] : readKeyItems[realColumn];
                         
                         if (_item.name.empty()) {
                             _item.name = realColumn;
@@ -263,12 +265,12 @@ namespace ultraverse::state::v2 {
                             _item.data_list.end(),
                             item.data_list.begin(), item.data_list.end()
                         );
-                    } else if (_keyColumns.find(item.name) != _keyColumns.end()) {
+                    } else if (_keyColumns.find(itemName) != _keyColumns.end()) {
                         // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
-                        auto &_item = isWrite ? writeKeyItems[item.name] : readKeyItems[item.name];
+                        auto &_item = isWrite ? writeKeyItems[itemName] : readKeyItems[itemName];
                         
                         if (_item.name.empty()) {
-                            _item.name = item.name;
+                            _item.name = itemName;
                             _item.function_type = FUNCTION_IN_INTERNAL;
                         }
                         
@@ -294,6 +296,7 @@ namespace ultraverse::state::v2 {
             
             std::for_each(it, end, processFn(true));
         }
+        
         
         for (const auto &pair: _keyColumnsMap) {
             const auto &table = pair.first;
