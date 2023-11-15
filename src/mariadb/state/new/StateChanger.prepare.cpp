@@ -263,7 +263,7 @@ namespace ultraverse::state::v2 {
             }
             
             
-            if (replayQueryCount > (size_t) (totalQueryCount * _plan.autoRollbackRatio())) {
+            if (replayQueryCount < (size_t) (totalQueryCount * _plan.autoRollbackRatio())) {
                 break;
             }
             
