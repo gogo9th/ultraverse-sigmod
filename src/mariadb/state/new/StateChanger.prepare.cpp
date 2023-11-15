@@ -205,10 +205,15 @@ namespace ultraverse::state::v2 {
         
         const auto calculateReplayQueryCount = [&]() {
             size_t count = 0;
-            for (const auto &replayGid: replayGids) {
-                count += queryCounts[replayGid];
+
+            for (const auto &pair: queryCounts) {
+                if (replayGids.find(pair.first) != replayGids.end()) {
+                    continue;
+                }
+
+                count += pair.second;
             }
-            
+
             return count;
         };
         
