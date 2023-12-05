@@ -11,8 +11,8 @@ $ sudo rm -rf /var/lib/mysql /var/lib/mysql.* /var/log/mysql /etc/mysql
 
 ## Install Required Software
 ```console
-$ sudo apt install build-essential cmake mariadb-client libmariadb-dev libmariadb-dev-compat pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev doxygen libjemalloc-dev libmozjs-102-0 libmozjs-102-dev protoc-gen-go python3-dev default-libmysqlclient-dev build-essential
-$ pip3 install sqlparse mysqlclient
+$ sudo apt install build-essential cmake mariadb-client libmariadb-dev libmariadb-dev-compat pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev doxygen libjemalloc-dev libmozjs-102-0 libmozjs-102-dev protoc-gen-go python3-dev libmysqlclient-dev build-essential 
+$ pip3 install sqlparse 
 ```
 
 ## Option 1: Install and Setup MariaDB
