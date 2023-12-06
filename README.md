@@ -11,8 +11,9 @@ $ sudo rm -rf /var/lib/mysql /var/lib/mysql.* /var/log/mysql /etc/mysql
 
 ## Install Required Software
 ```console
-$ sudo apt install build-essential cmake mariadb-client libmariadb-dev libmariadb-dev-compat pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev doxygen libjemalloc-dev libmozjs-102-0 libmozjs-102-dev protoc-gen-go python3-dev libmysqlclient-dev build-essential 
+$ sudo apt install build-essential cmake mariadb-client libmariadb-dev libmariadb-dev-compat pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev doxygen libjemalloc-dev libmozjs-102-0 libmozjs-102-dev protoc-gen-go python3-dev libmysqlclient-dev build-essential wget python3 g++-12 clang-15 libc++-15-dev cmake libtbb-dev graphviz libgraphviz-dev libboost-all-dev libmysqlclient-dev libprotobuf-dev protobuf-compiler libfmt-dev libspdlog-dev golang-go
 $ pip3 install sqlparse 
+$ go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28
 ```
 
 ## Option 1: Install and Setup MariaDB
@@ -126,7 +127,7 @@ $ git submodule init
 $ git submodule update
 $ mkdir build && cd build
 $ sed -i "s/python3$/python3.$(echo "$(python3 --version)" | awk '{print $2}' | awk -F . '{print $2}')/g" ../src/CMakeLists.txt
-$ cmake ..
+$ CC=clang-15 CXX=clang++-15 cmake ..
 $ make -j8
 ```
 
