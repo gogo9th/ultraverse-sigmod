@@ -403,7 +403,16 @@ namespace ultraverse::state::v2 {
                     
                     rowCluster.addPrependTarget(transaction->gid(), userQuery, cachedResolver);
                 }
-                
+
+                if (_plan.performBenchInsert()) {
+                    std::scoped_lock _lock(tasksMutex);
+                    tasks.push(taskExecutor.post<gid_t>([gid, &rowCluster, &cachedResolver]() {
+                        if (rowCluster.shouldReplay(gid)) {
+                            return gid;
+                        }
+                        return UINT64_MAX;
+                    }));
+
                
                 continue;
             } else {

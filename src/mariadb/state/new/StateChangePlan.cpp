@@ -192,7 +192,15 @@ namespace ultraverse::state::v2 {
     void StateChangePlan::setAutoRollbackRatio(double autoRollbackRatio) {
         _autoRollbackRatio = autoRollbackRatio;
     }
-    
+
+    bool StateChangePlan::performBenchInsert() const {
+        return _performBenchInsert;
+    }
+
+    void StateChangePlan::setPerformBenchInsert(bool performBenchInsert) {
+        _performBenchInsert = performBenchInsert;
+    }
+
     std::set<std::string> &StateChangePlan::keyColumns() {
         return _keyColumns;
     }

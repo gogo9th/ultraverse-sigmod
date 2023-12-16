@@ -77,6 +77,9 @@ namespace ultraverse::state::v2 {
         
         double autoRollbackRatio() const;
         void setAutoRollbackRatio(double autoRollbackRatio);
+
+        bool performBenchInsert() const;
+        void setPerformBenchInsert(bool performBenchInsert);
         
         std::set<std::string> &keyColumns();
         std::vector<std::pair<std::string, std::string>> &columnAliases();
@@ -117,6 +120,8 @@ namespace ultraverse::state::v2 {
         bool _isFullReplay;
         bool _isDryRun;
         bool _dropIntermediateDB;
+
+        bool _performBenchInsert;
         
         int _threadNum;
     };

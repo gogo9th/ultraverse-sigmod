@@ -342,6 +342,12 @@ namespace ultraverse {
                 changePlan.setWriteStateLog(true);
             }
         } // @end(writeStateLog)
+
+        {
+            if (isArgSet('Z')) {
+                changePlan.setPerformBenchInsert(true);
+            }
+        }
     
         { // @start(BINLOG_PATH)
             std::string binlogPath = getEnv("BINLOG_PATH");
