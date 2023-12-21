@@ -51,7 +51,6 @@ namespace ultraverse::state::v2 {
             }
         );
         
-        /*
         for (auto &event: queryEvents) {
             auto query = std::make_shared<Query>();
             
@@ -89,10 +88,7 @@ namespace ultraverse::state::v2 {
             
             *transaction << query;
         }
-         */
-        
-        throw std::runtime_error("TODO: reimplement this");
-        
+
         return std::move(transaction);
     }
     
