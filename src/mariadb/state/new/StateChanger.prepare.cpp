@@ -412,6 +412,7 @@ namespace ultraverse::state::v2 {
                         }
                         return UINT64_MAX;
                     }));
+		}
 
                
                 continue;
