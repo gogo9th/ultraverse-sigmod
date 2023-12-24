@@ -456,7 +456,7 @@ namespace ultraverse::state::v2 {
             {}, {}
         }));
         
-        // invalidateTargetCache(_prependTargets, resolver);
+        invalidateTargetCache(_prependTargets, resolver);
     }
     
     void StateCluster::invalidateTargetCache(std::unordered_map<gid_t, TargetTransactionCache> &targets, const RelationshipResolver &resolver) {
