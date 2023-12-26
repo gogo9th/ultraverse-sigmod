@@ -93,7 +93,7 @@ class MySQLDaemon:
             [
                 "-h127.0.0.1",
                 f"--port={self.port}",
-                "-uadmin",
+                "-uroot",
                 "-ppassword",
                 "-R",
                 "--skip-opt",
@@ -143,28 +143,28 @@ class MySQLDaemon:
 
         time.sleep(5)
 
-        print(self.port)
-        #retval = self.__exec__(self.bin_for("mysql"), [
-        #    "-h127.0.0.1",
-        #    f"--port={self.port}",
-        #    "-uroot",
-        #    "--skip-password",
-        #    "-e", "ALTER USER 'root'@'localhost' IDENTIFIED BY 'password';"
-        #          "CREATE DATABASE benchbase;"
-        #          "CREATE USER 'admin'@'localhost' IDENTIFIED BY 'password';"
-        #          "GRANT ALL PRIVILEGES ON *.* TO 'admin'@'localhost';"
-        #          "FLUSH PRIVILEGES;"
-        #])
 
-        #if retval != 0:
-        #    handle.send_signal(9)
+        retval = self.__exec__(self.bin_for("mysql"), [
+            "-h127.0.0.1",
+            f"--port={self.port}",
+            "-uroot",
+            "--skip-password",
+            "-e", "ALTER USER 'root'@'localhost' IDENTIFIED BY 'password';"
+                  "CREATE DATABASE benchbase;"
+                  "CREATE USER 'admin'@'localhost' IDENTIFIED BY 'password';"
+                  "GRANT ALL PRIVILEGES ON *.* TO 'admin'@'localhost';"
+                  "FLUSH PRIVILEGES;"
+        ])
 
-        #    self.logger.error("failed to set root password")
-        #    raise Exception("failed to set root password")
+        if retval != 0:
+            handle.send_signal(9)
+
+            self.logger.error("failed to set root password")
+            raise Exception("failed to set root password")
 
         # send SIGTERM to the daemon
-        #handle.send_signal(15)
-        #handle.wait()
+        handle.send_signal(15)
+        handle.wait()
 
         self.logger.info("MySQL data directory is ready")
 

@@ -1,5 +1,6 @@
 import os
 import time
+import math
 
 from esperanza.benchbase.benchmark_session import BenchmarkSession
 from esperanza.utils.download_mysql import download_mysql
@@ -161,7 +162,7 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
 def perform_full_replay(session: BenchmarkSession):
     logger = session.logger
 
-    txn_count = os.path.getsize(f"{session.session_path}/benchbase.ultindex") / 8
+    txn_count = math.ceil((os.path.getsize(f"{session.session_path}/benchbase.ultindex") / 8)
 
     full_replay_log_name = f"full_replay"
 
@@ -239,15 +240,15 @@ if __name__ == "__main__":
 
     # state change를 행한다
     # 1. 최소 (상태전환 쿼리를 1개만 선택)
-    perform_state_change(session, [0], do_extra_replay_st=True, do_table_diff=True)
+    perform_state_change(session, [0], do_extra_replay_st=True, do_table_diff=False)
 
     # 2. 1% 정도
     rollback_gids = decide_rollback_gids(session, 0.01)
-    perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=True)
+    perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=False)
 
     # 3. 10% 정도
     rollback_gids = decide_rollback_gids(session, 0.1)
-    perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=True)
+    perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=False)
 
     # 4. 100%
     perform_full_replay(session)
