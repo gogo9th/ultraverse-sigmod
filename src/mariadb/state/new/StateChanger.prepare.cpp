@@ -263,7 +263,7 @@ namespace ultraverse::state::v2 {
             }
             
             
-            if (replayQueryCount < (size_t) (totalQueryCount * _plan.autoRollbackRatio())) {
+            if (replayQueryCount < (size_t) (totalQueryCount * (1.0 - _plan.autoRollbackRatio()))) {
                 break;
             }
             
@@ -407,11 +407,9 @@ namespace ultraverse::state::v2 {
                 if (_plan.performBenchInsert()) {
                     std::scoped_lock _lock(tasksMutex);
                     tasks.push(taskExecutor.post<gid_t>([gid, &rowCluster, &cachedResolver]() {
-                        if (rowCluster.shouldReplay(gid)) {
-                            return gid;
-                        }
-                        return UINT64_MAX;
+                        return gid;
                     }));
+                }
 
                
                 continue;
