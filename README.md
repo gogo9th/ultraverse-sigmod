@@ -131,6 +131,17 @@ $ CC=clang-15 CXX=clang++-15 cmake ..
 $ make -j8
 ```
 
+## Run BechBase
+```
+$ cd script/esperanza
+$ vim envfile
+   export ULTRAVERSE_HOME=/root/ultraverse/build/src # EDIT
+   export BENCHBASE_HOME=/root/ultraverse-benchbase  # EDIT
+   export BENCHBASE_NODE_HOME=/root/benchbase-nodejs # EDIT
+$ source .envfile
+$ rm -rf runs cache
+$ python3 tatp.py # tpcc.py, seats.py, epnions.py, astore.py
+
 ## Example: Retroactive Operation on BenchBase's Epinions
 
 
