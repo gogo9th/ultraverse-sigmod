@@ -407,9 +407,12 @@ namespace ultraverse::state::v2 {
                 if (_plan.performBenchInsert()) {
                     std::scoped_lock _lock(tasksMutex);
                     tasks.push(taskExecutor.post<gid_t>([gid, &rowCluster, &cachedResolver]() {
-                        return gid;
+                        if (rowCluster.shouldReplay(gid)) {
+                            return gid;
+                        }
+                        return UINT64_MAX;
                     }));
-                }
+		}
 
                
                 continue;
