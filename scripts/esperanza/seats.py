@@ -204,7 +204,7 @@ def perform_full_replay(session: BenchmarkSession):
         DB_STATE_CHANGE_BASE_OPTIONS + [
             '-N',
             '-r', full_replay_mt_report_name,
-            'full-replay'
+            'replay'
         ],
         stdout_name=full_replay_mt_stdout_name,
         stderr_name=full_replay_mt_stderr_name,
