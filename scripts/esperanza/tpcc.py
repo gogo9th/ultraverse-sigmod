@@ -224,7 +224,7 @@ if __name__ == "__main__":
     os.putenv("DB_USER", "admin")
     os.putenv("DB_PASS", "password")
 
-    session = BenchmarkSession("tpcc", "1m", session_path=f"{os.getcwd()}/")
+    session = BenchmarkSession("tpcc", "1m")
     logger = session.logger
     session.prepare()
 
