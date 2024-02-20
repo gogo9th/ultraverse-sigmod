@@ -162,7 +162,7 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
 def perform_full_replay(session: BenchmarkSession):
     logger = session.logger
 
-    txn_count = math.ceil((os.path.getsize(f"{session.session_path}/benchbase.ultindex") / 8)
+    txn_count = math.ceil((os.path.getsize(f"{session.session_path}/benchbase.ultindex") / 8))
 
     full_replay_log_name = f"full_replay"
 
