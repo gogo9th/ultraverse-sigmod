@@ -132,7 +132,7 @@ public:
             int i = 0;
             for (auto &query: transaction->queries()) {
                 _logger->info("        [#{}] {}", i++, query->statement());
-                _logger->info("            - Type: {}", query->type());
+                _logger->info("            - Type: {}", (int) query->type());
                 _logger->info("            - Database: {}", query->database());
                 _logger->info("            - Timestamp: {}", query->timestamp());
                 _logger->info("            - AffectedRows: {}", query->affectedRows());
