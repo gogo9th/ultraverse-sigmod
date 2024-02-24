@@ -101,25 +101,10 @@ namespace ultraverse::base {
                 _itemSet.begin(), _itemSet.end()
             );
         } else if (_queryType == UPDATE) {
-            {
-                auto it = _itemSet.begin();
-                
-                while (true) {
-                    it = std::find_if(it, _itemSet.end(), [this](const StateItem &item) {
-                        return std::any_of(_writeColumns.begin(), _writeColumns.end(), [&item](const std::string &colName) {
-                            return item.name == colName;
-                        });
-                    });
-                    
-                    if (it == _itemSet.end()) {
-                        break;
-                    }
-                    
-                    _writeItems.emplace_back(*it);
-                    
-                    it++;
-                }
-            }
+            _writeItems.insert(
+                _writeItems.end(),
+                _itemSet.begin(), _itemSet.end()
+            );
             
             _readItems.insert(
                 _readItems.end(),
