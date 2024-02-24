@@ -142,7 +142,7 @@ namespace ultraverse::state::v2 {
        
         _logger->info(queryBuilder.str());
         
-        _logger->info("total {} queries replayed", _replayedQueries);
+        _logger->info("total {} queries replayed", (int) _replayedQueries);
         _logger->info("main phase {}s", _phase2Time);
         
         report.setExecutionTime(_phase2Time);
