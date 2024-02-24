@@ -197,8 +197,10 @@ namespace ultraverse::state::v2 {
             
             size_t queryCount = body->queries().size();
             totalQueryCount += queryCount;
+
+            auto gid = header->gid;
             
-            queryCounts.emplace(header->gid, queryCount);
+            queryCounts.emplace(gid, queryCount);
             
             totalCount++;
         }
