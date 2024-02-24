@@ -92,7 +92,7 @@ namespace ultraverse::state::v2 {
                         // replayedGids.emplace(gid);
                         
                         if (i++ % 1000 == 0) {
-                            _logger->info("replay(): transaction #{} added as node #{}; {} / {} executed", gid, nodeId, _replayedTxns, i);
+                            _logger->info("replay(): transaction #{} added as node #{}; {} / {} executed", gid, nodeId, (int) _replayedTxns, i);
                         }
                     }
                     
