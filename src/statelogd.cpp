@@ -82,6 +82,7 @@ public:
             "    -b file        specify MariaDB-variant binlog.index file\n"
             "    -o file        specify log output name\n"
             "    -p file        use procedure log to append additional queries (SELECT ...)\n"
+            "    -k columns     key columns (eg. user.id,article.id)\n"
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -r file        restore state and resume from given .ultchkpoint file\n"
             "    -d             force discard previous log and start over\n"
@@ -100,6 +101,15 @@ public:
         if (isArgSet('V')) {
             setLogLevel(spdlog::level::trace);
         }
+        
+        { // @start(keyColumns)
+            if (!isArgSet('k')) {
+                _logger->error("key column(s) must be specified");
+                return 1;
+            }
+            
+            _keyColumns = buildKeyColumnList(getArg('k'));
+        } // @end (keyColumns)
 
         
         if (!isArgSet('b')) {
@@ -378,7 +388,7 @@ public:
                 }
                 
                 for (int i = prevIndex; i < index; i++) {
-                    auto queries = procMatcher->asQuery(i, *procCall);
+                    auto queries = procMatcher->asQuery(i, *procCall, _keyColumns);
                     for (auto &query : queries) {
                         query->setDatabase(pendingQuery->database());
                         query->setTimestamp(pendingQuery->timestamp());
@@ -430,7 +440,7 @@ public:
         if (event->isDDL()) {
             event->parse();
             event->parseDDL();
-            event->buildRWSet();
+            event->buildRWSet(_keyColumns);
 
             pendingQuery->setFlags(
                 pendingQuery->flags() |
@@ -460,7 +470,7 @@ public:
                 event->parseDDL(1);
             }
             
-            event->buildRWSet();
+            event->buildRWSet(_keyColumns);
             
             pendingQuery->readSet().insert(
                 pendingQuery->readSet().end(),
@@ -574,7 +584,7 @@ public:
         if (!dummyEvent.parse()) {
             dummyEvent.parseDDL(1);
         }
-        dummyEvent.buildRWSet();
+        dummyEvent.buildRWSet(_keyColumns);
         
         pendingQuery->readSet().insert(
             pendingQuery->readSet().end(),
@@ -729,6 +739,19 @@ public:
         
         return matcher;
     }
+    
+    std::vector<std::string> buildKeyColumnList(std::string expression) {
+        std::vector<std::string> keyColumns;
+        
+        std::stringstream sstream(expression);
+        std::string column;
+        
+        while (std::getline(sstream, column, ',')) {
+            keyColumns.push_back(column);
+        }
+        
+        return keyColumns;
+    }
 
 private:
     LoggerPtr _logger;
@@ -765,6 +788,8 @@ private:
     std::mutex _procDefMutex;
     
     std::mutex _txnMutex;
+    
+    std::vector<std::string> _keyColumns;
 
     bool terminateStatus = false;
 };

@@ -135,7 +135,7 @@ namespace ultraverse::base {
         /**
          * @brief _itemSet, _whereSet으로부터 _readSet, _writeSet을 채운다.
          */
-        void buildRWSet();
+        void buildRWSet(const std::vector<std::string> &keyColumns);
         
         /**
          * @deprecated 더 이상 사용되지 않는다.

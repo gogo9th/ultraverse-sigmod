@@ -280,7 +280,7 @@ namespace ultraverse::state::v2 {
         return std::move(_variableSet);
     }
     
-    std::vector<std::shared_ptr<Query>> ProcMatcher::asQuery(int index, const ProcCall &procCall) const {
+    std::vector<std::shared_ptr<Query>> ProcMatcher::asQuery(int index, const ProcCall &procCall, const std::vector<std::string> &keyColumns) const {
         std::vector<std::shared_ptr<Query>> queries;
         
         auto &code = codes().at(index);
@@ -331,7 +331,7 @@ namespace ultraverse::state::v2 {
             std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->variableSet()));
             
             event->parse();
-            event->buildRWSet();
+            event->buildRWSet(keyColumns);
             
             query->setStatement(statement);
             query->setFlags(Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);

@@ -81,7 +81,7 @@ namespace ultraverse::base {
         return false;
     }
     
-    void QueryEventBase::buildRWSet() {
+    void QueryEventBase::buildRWSet(const std::vector<std::string> &keyColumns) {
         for (const auto &table: _relatedTables) {
             if (!table.empty()) {
                 _readItems.emplace_back(StateItem::Wildcard(
@@ -101,10 +101,26 @@ namespace ultraverse::base {
                 _itemSet.begin(), _itemSet.end()
             );
         } else if (_queryType == UPDATE) {
-            _writeItems.insert(
-                _writeItems.end(),
-                _itemSet.begin(), _itemSet.end()
-            );
+            {
+                auto it = _itemSet.begin();
+                
+                while (true) {
+                    it = std::find_if(it, _itemSet.end(), [this, &keyColumns](const StateItem &item) {
+                        return std::find(keyColumns.begin(), keyColumns.end(), item.name) != keyColumns.end() ||
+                               std::any_of(_writeColumns.begin(), _writeColumns.end(), [&item](const std::string &colName) {
+                                   return item.name == colName;
+                               });
+                    });
+                    
+                    if (it == _itemSet.end()) {
+                        break;
+                    }
+                    
+                    _writeItems.emplace_back(*it);
+                    
+                    it++;
+                }
+            }
             
             _readItems.insert(
                 _readItems.end(),
