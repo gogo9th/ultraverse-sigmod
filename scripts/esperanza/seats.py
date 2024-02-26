@@ -1,10 +1,11 @@
 import os
 import time
+
 import math
+
 from esperanza.benchbase.benchmark_session import BenchmarkSession
 from esperanza.utils.download_mysql import download_mysql
-
-from esperanza.utils.state_change_report import StateChangeReport, read_state_change_report
+from esperanza.utils.state_change_report import read_state_change_report
 
 DB_STATE_CHANGE_BASE_OPTIONS = [
     '-b', 'dbdump.sql',
@@ -252,7 +253,7 @@ if __name__ == "__main__":
 
     # db_state_change를 실행하기 위해 mysqld를 실행한다.
     logger.info("starting mysqld...")
-    session.mysqld.start()
+    session.mysqld.start(['-k', 'customer2.c_id,flight.f_id,frequent_flyer.ff_c_id,reservation.r_c_id,reservation.r_f_id,airport.ap_id',])
 
     # mysqld 기동이 끝날 때까지 기다린다.
     time.sleep(10)

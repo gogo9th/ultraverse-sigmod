@@ -70,7 +70,7 @@ public:
     }
     
     std::string optString() override {
-        return "b:o:c:r:p:dnvVh";
+        return "b:o:c:r:p:k:dnvVh";
     }
     
     int main() override {

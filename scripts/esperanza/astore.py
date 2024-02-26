@@ -1,13 +1,13 @@
 import os
-import time
-import sys
-import math
 import subprocess
+import sys
+import time
+
+import math
 
 from esperanza.benchbase.benchmark_session import BenchmarkSession
 from esperanza.utils.download_mysql import download_mysql
-
-from esperanza.utils.state_change_report import StateChangeReport, read_state_change_report
+from esperanza.utils.state_change_report import read_state_change_report
 
 DB_STATE_CHANGE_BASE_OPTIONS = [
     '-b', 'dbdump.sql',
@@ -262,7 +262,7 @@ if __name__ == "__main__":
     session.prepare()
 
     # statelogd를 실행해서 binary log에서 statelog를 생성한다.
-    session.run_statelogd()
+    session.run_statelogd(['-k', 'Addresses.AddressID,Users.UserID,Categories.CategoryID,Products.ProductID,Orders.OrderID,OrderDetails,OrderID,Messages.MessageID,Subscribers.Email'])
 
     # db_state_change를 실행하기 위해 mysqld를 실행한다.
     logger.info("starting mysqld...")

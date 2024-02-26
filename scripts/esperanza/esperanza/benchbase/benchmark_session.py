@@ -1,15 +1,15 @@
-import sys
-import os
-import subprocess
-import time
-import signal
 import logging
-import fcntl
-
+import os
+import signal
+import subprocess
+import sys
+import time
 from datetime import datetime
 
+import fcntl
 from esperanza.mysql.mysqld import MySQLDaemon
 from esperanza.utils.logger import get_logger
+
 
 class BenchmarkSession:
 
@@ -88,7 +88,7 @@ class BenchmarkSession:
         if retval != 0:
             raise Exception("failed to run benchbase")
 
-    def run_statelogd(self):
+    def run_statelogd(self, args: list[str] = []):
         """
         runs statelogd.
         """
@@ -106,7 +106,7 @@ class BenchmarkSession:
             '-o', 'benchbase',
 
             '-n'
-        ], stderr=subprocess.PIPE)
+        ] + args, stderr=subprocess.PIPE)
 
         with open(f"{self.session_path}/statelogd.log", 'w') as f:
             while True:
