@@ -249,11 +249,11 @@ if __name__ == "__main__":
     session.prepare()
 
     # statelogd를 실행해서 binary log에서 statelog를 생성한다.
-    session.run_statelogd()
+    session.run_statelogd(['-k', 'customer2.c_id,flight.f_id,frequent_flyer.ff_c_id,reservation.r_c_id,reservation.r_f_id,airport.ap_id',])
 
     # db_state_change를 실행하기 위해 mysqld를 실행한다.
     logger.info("starting mysqld...")
-    session.mysqld.start(['-k', 'customer2.c_id,flight.f_id,frequent_flyer.ff_c_id,reservation.r_c_id,reservation.r_f_id,airport.ap_id',])
+    session.mysqld.start()
 
     # mysqld 기동이 끝날 때까지 기다린다.
     time.sleep(10)
