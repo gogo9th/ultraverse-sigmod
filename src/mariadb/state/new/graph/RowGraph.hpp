@@ -17,8 +17,11 @@
 #include "../../StateItem.h"
 #include "../Transaction.hpp"
 
+#include "../RangeComparisonMethod.hpp"
+
 #include "utils/log.hpp"
 #include "base/TaskExecutor.hpp"
+
 
 namespace ultraverse::state::v2 {
     
@@ -113,6 +116,9 @@ namespace ultraverse::state::v2 {
          */
         void dump();
         
+        RangeComparisonMethod rangeComparisonMethod() const;
+        void setRangeComparisonMethod(RangeComparisonMethod rangeComparisonMethod);
+        
     private:
         /**
          * @brief 의존성을 해결하여 노드와 노드간 간선 (edge)를 추가한다.
@@ -144,6 +150,8 @@ namespace ultraverse::state::v2 {
         std::atomic_uint64_t _workerCount = 0;
         
         TaskExecutor _taskExecutor;
+        
+        RangeComparisonMethod _rangeComparisonMethod;
     };
 }
 

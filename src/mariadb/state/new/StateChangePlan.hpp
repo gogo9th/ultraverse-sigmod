@@ -8,6 +8,7 @@
 #include <string>
 
 #include "Transaction.hpp"
+#include "RangeComparisonMethod.hpp"
 
 namespace ultraverse::state::v2 {
 
@@ -81,6 +82,9 @@ namespace ultraverse::state::v2 {
         bool performBenchInsert() const;
         void setPerformBenchInsert(bool performBenchInsert);
         
+        RangeComparisonMethod rangeComparisonMethod() const;
+        void setRangeComparisonMethod(RangeComparisonMethod rangeComparisonMethod);
+        
         std::set<std::string> &keyColumns();
         std::vector<std::pair<std::string, std::string>> &columnAliases();
         const std::vector<std::pair<std::string, std::string>> &columnAliases() const;
@@ -124,6 +128,8 @@ namespace ultraverse::state::v2 {
         bool _performBenchInsert;
         
         int _threadNum;
+        
+        RangeComparisonMethod _rangeComparisonMethod;
     };
     
 }

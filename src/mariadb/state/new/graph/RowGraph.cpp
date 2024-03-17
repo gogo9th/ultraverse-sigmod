@@ -23,7 +23,8 @@ namespace ultraverse::state::v2 {
         _logger(createLogger("RowGraph")),
         _keyColumns(keyColumns),
         _resolver(resolver),
-        _taskExecutor(std::thread::hardware_concurrency() * 2)
+        _taskExecutor(std::thread::hardware_concurrency() * 2),
+        _rangeComparisonMethod(RangeComparisonMethod::EQ_ONLY)
     {
     
     }
@@ -265,13 +266,20 @@ namespace ultraverse::state::v2 {
             }
             
             const auto &range = item.MakeRange2();
+            const auto comparisonMethod = rangeComparisonMethod();
             
             {
                 std::shared_lock<std::shared_mutex> _lock(_nodeMapMutex);
                 auto &map = _nodeMap[name];
                 
-                auto it = std::find_if(map.begin(), map.end(), [&range](const auto &pair) {
-                    return pair.first == range || StateRange::isIntersects(range, pair.first);
+                auto it = std::find_if(map.begin(), map.end(), [comparisonMethod, &range](const auto &pair) {
+                    if (comparisonMethod == RangeComparisonMethod::EQ_ONLY) {
+                        return pair.first == range;
+                    } else if (comparisonMethod == RangeComparisonMethod::INTERSECT) {
+                        return pair.first == range || StateRange::isIntersects(range, pair.first);
+                    } else {
+                        return false;
+                    }
                 });
                 
                 if (it != map.end()) {
@@ -321,7 +329,7 @@ namespace ultraverse::state::v2 {
             auto it = transaction->readSet_begin();
             const auto itEnd = transaction->readSet_end();
             
-            std::for_each(std::execution::par, it, itEnd, [this, &relations, &getRWStateHolder, &isInRelationship, &addRelationship, nodeId] (const auto &item) {
+            std::for_each(it, itEnd, [this, &relations, &getRWStateHolder, &isInRelationship, &addRelationship, nodeId] (const auto &item) {
                 auto holderRef = getRWStateHolder(item);
                 if (holderRef == std::nullopt) {
                     return;
@@ -350,7 +358,7 @@ namespace ultraverse::state::v2 {
             auto it = transaction->writeSet_begin();
             const auto itEnd = transaction->writeSet_end();
             
-            std::for_each(std::execution::par, it, itEnd, [this, &relations, &getRWStateHolder, &isInRelationship, &addRelationship, nodeId] (const auto &item) {
+            std::for_each(it, itEnd, [this, &relations, &getRWStateHolder, &isInRelationship, &addRelationship, nodeId] (const auto &item) {
                 auto holderRef = getRWStateHolder(item);
                 if (holderRef == std::nullopt) {
                     return;
@@ -382,9 +390,16 @@ namespace ultraverse::state::v2 {
         }
  
         node->ready = true;
-        
     }
 
     void RowGraph::dump() {
+    }
+    
+    RangeComparisonMethod RowGraph::rangeComparisonMethod() const {
+        return _rangeComparisonMethod;
+    }
+    
+    void RowGraph::setRangeComparisonMethod(RangeComparisonMethod rangeComparisonMethod) {
+        _rangeComparisonMethod = rangeComparisonMethod;
     }
 }

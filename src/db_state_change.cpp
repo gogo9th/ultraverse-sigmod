@@ -122,11 +122,12 @@ namespace ultraverse {
             "    -h             print this help and exit application\n"
             "\n"
             "Environment Variables: \n"
-            "    DB_HOST        Database Host\n"
-            "    DB_PORT        Database Port\n"
-            "    DB_USER        Database User\n"
-            "    DB_PASS        Database Password\n"
-            "    BINLOG_PATH    Path to MySQL-variant binlog (default = /var/lib/mysql)\n";
+            "    DB_HOST           Database Host\n"
+            "    DB_PORT           Database Port\n"
+            "    DB_USER           Database User\n"
+            "    DB_PASS           Database Password\n"
+            "    BINLOG_PATH       Path to MySQL-variant binlog (default = /var/lib/mysql)\n"
+            "    RANGE_COMP_METHOD Range comparison method (intersect,eqonly; default=eqonly)\n";
             
             return 0;
         }
@@ -354,6 +355,22 @@ namespace ultraverse {
             
             changePlan.setBinlogPath(binlogPath.empty() ? "/var/lib/mysql" : binlogPath);
         } // @end(BINLOG_PATH)
+        
+        { // @start(RANGE_COMP_METHOD)
+            std::string rangeComparisonMethodStr = getEnv("RANGE_COMP_METHOD");
+            
+            if (rangeComparisonMethodStr.empty()) {
+                changePlan.setRangeComparisonMethod(RangeComparisonMethod::EQ_ONLY);
+            } else {
+                if (rangeComparisonMethodStr == "intersect") {
+                    changePlan.setRangeComparisonMethod(RangeComparisonMethod::INTERSECT);
+                } else if (rangeComparisonMethodStr == "eqonly") {
+                    changePlan.setRangeComparisonMethod(RangeComparisonMethod::EQ_ONLY);
+                } else {
+                    fail("invalid range comparison method");
+                }
+            }
+        } // @end(RANGE_COMP_METHOD)
         
         // FIXME
         changePlan.setStateLogPath(".");

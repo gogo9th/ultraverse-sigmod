@@ -9,7 +9,8 @@ namespace ultraverse::state::v2 {
         _startGid(0),
         _endGid(0),
         _threadNum(4),
-        _writeStateLog(false)
+        _writeStateLog(false),
+        _rangeComparisonMethod(RangeComparisonMethod::EQ_ONLY),
     {
     
     }
@@ -219,5 +220,13 @@ namespace ultraverse::state::v2 {
     
     const std::vector<uint64_t> &StateChangePlan::skipGids() const {
         return _skipGids;
+    }
+    
+    RangeComparisonMethod StateChangePlan::rangeComparisonMethod() const {
+        return _rangeComparisonMethod;
+    }
+    
+    void StateChangePlan::setRangeComparisonMethod(RangeComparisonMethod rangeComparisonMethod) {
+        _rangeComparisonMethod = rangeComparisonMethod;
     }
 }
