@@ -10,7 +10,7 @@ namespace ultraverse::state::v2 {
         _endGid(0),
         _threadNum(4),
         _writeStateLog(false),
-        _rangeComparisonMethod(RangeComparisonMethod::EQ_ONLY),
+        _rangeComparisonMethod(RangeComparisonMethod::EQ_ONLY)
     {
     
     }
