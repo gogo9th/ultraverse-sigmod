@@ -1,6 +1,6 @@
 # Ultraverse Tutorial
 
-## Purge Existing MySQL & MariaDB (optional)
+## Purge Existing MySQL 
 ```console
 $ sudo apt purge mysql-server mysql-common mariadb-server mariadb-common
 $ sudo apt autoremove
@@ -16,58 +16,9 @@ $ pip3 install sqlparse
 $ go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28
 ```
 
-## Option 1: Install and Setup MariaDB
-```console
-$ sudo apt install mariadb-server mariadb-client
-```
 
- Enable binary logging (check the actual including directory name specified in `/etc/mysql/my.cnf`).
 
-```console
-$ sudo vim /etc/mysql/mariadb.conf.d/server.cnf
----------------
-   [mariadb]
-   log-bin=myserver-binlog
-   binlog_format=ROW
-   binlog_row_image=FULL
-   binlog_row_metadata=FULL
-   binlog-checksum=NONE
-   max_binlog_size=300M
-   plugin_load_add = ha_blackhole
-   log_bin_trust_function_creators = 1
----------------
-```
-
-Enable efficient large memory allocation
-
-```console
-$ sudo vim /etc/systemd/system/multi-user.target.wants/mariadb.service
---------------- 
-   Environment="LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2"
----------------
-```
-
-Activate jemalloc & binary logging
-
-```console
-$ sudo systemctl daemon-reload 
-$ systemctl restart mariadb 
-```
-
-Check that the value is not `system`, but `jemalloc`.
-```console
-$ sudo mariadb -u root -p
-> SHOW VARIABLES LIKE 'version_malloc_library'; 
-```
-
-Add the default 'admin' user for Benchbase
-```bash
-sudo mariadb
-> CREATE USER 'admin'@'localhost' IDENTIFIED BY 'password';
-> GRANT ALL PRIVILEGES ON *.* TO 'admin'@'localhost';
-```
-
-## Option 2: Install and Setup MySQL (MUST install only either MySQL or MariaDB)
+## Install and Setup MySQL (MUST install only either MySQL or MariaDB)
 
 ```console
 $ sudo apt install mysql-server mysql-client
@@ -227,24 +178,7 @@ $ DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=admin DB_PASS=password \
 - libmariadb-dev
 
 
-## NOTE
 
-- 다량의 데이터 처리 시 기본 malloc 대신 jemalloc를 사용하면 메모리 할당 관련된 시간을 단축할 수 있습니다.
-
-```shell
-$ sudo apt install libjemalloc-dev
-$ LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2 ./db_state_change ... 
-```
-
-    - 기본 malloc 사용 시: 226.48s user 27.56s system 192% cpu 2:12.18 total
-
-    - jemalloc 사용 시: 123.35s user 30.00s system 127% cpu 1:59.86 total
-
-
-- 문제 파악을 위해 의도적으로 intermediate database를 드랍하지 않도록 했습니다.
-- 상기와 같은 이유로, 상태 전환 이후에 REPLACE 쿼리문을 표시하지만 실제로 실행하지는 않습니다.
-
-- 문제 발생시 이 레포지토리에 이슈로 남겨주시면 빠르게 처리해 드리겠습니다.
 
 
 ## MySQL/MariaDB Useful Commands
