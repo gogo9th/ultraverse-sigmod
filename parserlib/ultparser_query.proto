@@ -1,0 +1,224 @@
+syntax = "proto3";
+
+package ultparser;
+
+/*
+  SELECT * FROM table WHERE id = 1;
+  SELECT * FROM table WHERE id = 1 AND name = 'name';
+
+  INSERT INTO table (id, name) VALUES (1, 'name');
+  UPDATE table SET name = 'name' WHERE id = 1;
+  DELETE FROM table WHERE id = 1;
+ */
+
+message DMLQueryExpr {
+  enum Operator {
+    UNKNOWN = 0;
+
+    EQ = 1;
+    NEQ = 2;
+    GT = 3;
+    GTE = 4;
+    LT = 5;
+    LTE = 6;
+    IN = 7;
+    NOT_IN = 8;
+    LIKE = 9;
+    NOT_LIKE = 10;
+    IS_NULL = 11;
+    IS_NOT_NULL = 12;
+    BETWEEN = 13;
+    NOT_BETWEEN = 14;
+
+    AND = 15;
+    OR = 16;
+
+    PLUS = 17;
+    MINUS = 18;
+    MUL = 19;
+    DIV = 20;
+    MOD = 21;
+
+    VALUE = 32;
+  };
+
+  enum ValueType {
+    UNKNOWN_VALUE = 0;
+    IDENTIFIER = 1;
+    STRING = 2;
+    INTEGER = 3;
+    DOUBLE = 4;
+    BOOL = 5;
+    NULL = 6;
+    LIST = 7;
+    MAP = 8;
+    FUNCTION = 9;
+  }
+
+  Operator operator = 1;
+
+  /* AND, OR이 아닌 비교 연산자면 left, right에 값이 들어감 */
+  DMLQueryExpr left = 2;
+  DMLQueryExpr right = 3;
+
+  /* AND, OR이면 expressions에 값이 들어감 */
+  repeated DMLQueryExpr expressions = 4;
+
+  /* VALUES */
+  ValueType value_type = 5;
+
+  string identifier = 6;
+  string string = 7;
+  int64 integer = 8;
+  double double = 9;
+  bool bool = 10;
+  bool null = 11;
+
+  repeated DMLQueryExpr value_list = 12;
+  map<string, DMLQueryExpr> map = 13;
+
+  string function = 14;
+}
+
+message AliasedIdentifier {
+  /* 여기 들어가는 expr은 반드시 IDENTIFIER를 담고 있어야 한다 */
+  DMLQueryExpr real = 1;
+  string alias = 2;
+}
+
+/*
+  파서 결과를 최대한 간결히 표현한 것
+  - Expression을 추출하는 것을 위주로 함
+ */
+message DMLQuery {
+  enum QueryType {
+    UNKNOWN  = 0;
+    SELECT   = 1;
+    INSERT   = 2;
+    UPDATE   = 3;
+    DELETE   = 4;
+
+    // MySQL-specific
+    REPLACE  = 5;
+  };
+
+  QueryType type = 1;
+
+  string statement = 2;
+
+  /*
+    SELECT .. FROM table ...
+    INSERT INTO table ...
+    UPDATE table ...
+    DELETE FROM table ...
+   */
+  AliasedIdentifier table = 3;
+  repeated AliasedIdentifier join = 4;
+
+  repeated DMLQuery subqueries = 5;
+  map<string, DMLQueryExpr> sqlvars = 6;
+
+  /* READSET: SELECT `real` AS `alias` */
+  /* SUBSELECT 또한 여기에 포함되어야 함 */
+  repeated AliasedIdentifier select = 10;
+
+  /*
+    WRITESET: UPDATE table SET x = 1, y = 2, ...
+    WRITESET: UPDATE INTO table (x, y, ...) VALUES (1, 2, ...)
+
+    NOTE: INSERT INTO table VALUES(1, 2,) 와 같이 column 정보가 omit된 경우 Expr의 lvalue는 UNKNOWN으로 설정된다.
+          table def 들고 와서 ult_map_insert()를 호출할 것.
+  */
+  repeated DMLQueryExpr update_or_write = 11;
+
+  /* READSET | WRITESET: WHERE a = 42 */
+  DMLQueryExpr where = 12;
+}
+
+message DDLQuery {
+  enum QueryType {
+    UNKNOWN  = 0;
+    CREATE   = 1;
+    DROP     = 2;
+    ALTER    = 3;
+    TRUNCATE = 4;
+    RENAME   = 5;
+  };
+
+  QueryType type = 1;
+
+  string statement = 2;
+}
+
+message ProcedureIfBlock {
+  DMLQueryExpr condition = 1;
+  repeated Query then_block = 2;
+  repeated Query else_block = 3;
+}
+
+message ProcedureWhileBlock {
+  DMLQueryExpr condition = 1;
+  repeated Query block = 2;
+}
+
+message ProcedureVariable {
+  string name = 1;
+  string type = 2;
+  optional DMLQueryExpr default_value = 3;
+}
+
+message Query {
+  enum QueryType {
+    UNKNOWN = 0;
+    DML     = 1;
+    DDL     = 2;
+
+    PROCEDURE = 3;
+
+    IF      = 4;
+    WHILE   = 5;
+  };
+
+  QueryType type = 1;
+
+  DMLQuery dml = 2;
+  DDLQuery ddl = 3;
+
+  optional Procedure procedure = 4;
+
+  optional ProcedureIfBlock if_block = 5;
+  optional ProcedureWhileBlock while_block = 6;
+}
+
+message Procedure {
+  string name = 1;
+
+  repeated ProcedureVariable parameters = 2;
+  repeated ProcedureVariable variables = 3;
+
+  repeated Query statements = 4;
+}
+
+message ParseResult {
+  enum ResultType {
+    UNKNOWN = 0;
+    SUCCESS = 1;
+    ERROR   = 2;
+  };
+
+  ResultType result = 1;
+  string error = 2;
+  repeated string warnings = 3;
+
+  repeated Query statements = 4;
+}
+
+message SelectIntoAssignmentMap {
+  map<string, string> assignments = 1;
+}
+
+message SelectIntoExtractionResult {
+  repeated SelectIntoAssignmentMap results = 1;
+}
+
+option go_package = ".";

@@ -1,0 +1,3 @@
+[mariadb]
+plugin_maturity=experimental
+plugin_load_add = ultraverse_procassist
