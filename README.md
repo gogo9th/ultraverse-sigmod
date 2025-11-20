@@ -11,9 +11,10 @@ $ sudo rm -rf /var/lib/mysql /var/lib/mysql.* /var/log/mysql /etc/mysql
 
 ## Install Required Software
 ```console
-$ sudo apt install build-essential cmake mariadb-client libmariadb-dev libmariadb-dev-compat pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev doxygen libjemalloc-dev libmozjs-102-0 libmozjs-102-dev protoc-gen-go python3-dev libmysqlclient-dev build-essential wget python3 g++-12 clang-15 libc++-15-dev cmake libtbb-dev graphviz libgraphviz-dev libboost-all-dev libmysqlclient-dev libprotobuf-dev protobuf-compiler libfmt-dev libspdlog-dev golang-go
+$ sudo apt install build-essential cmake pkg-config bison flex libboost-all-dev libfmt-dev libspdlog-dev libgvc6 graphviz-dev doxygen libjemalloc-dev libmozjs-102-0 libmozjs-102-dev protoc-gen-go python3-dev libmysqlclient-dev build-essential wget python3 g++-12 clang-15 libc++-15-dev cmake libtbb-dev graphviz libgraphviz-dev libboost-all-dev libmysqlclient-dev libprotobuf-dev protobuf-compiler libfmt-dev libspdlog-dev golang-go
 $ pip3 install sqlparse 
 $ go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28
+$ sudo ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1    # if libasio.so.1 does not exist
 ```
 
 
@@ -72,7 +73,7 @@ sudo mysql
 
 ## Install Ultraverse
 ```console
-$ git clone https://github.com/team-unstablers/ultraverse
+$ git clone https://github.com/gogo9th/ultraverse-sigmod
 $ cd ultraverse
 $ git submodule init
 $ git submodule update
@@ -82,18 +83,22 @@ $ CC=clang-15 CXX=clang++-15 cmake ..
 $ make -j8
 ```
 
-## Run BechBase
+## Run BechBase Automatically
+When running this automatic test, `/etc/mysql/mysql.conf.d/server.cnf` and `/etc/mysql/mysql.conf.d/server.cnf` should be empty, because the test runs fresh mysql binary and the existing configuration files cause a conflict.
+
 ```
 $ cd script/esperanza
 $ vim envfile
-   export ULTRAVERSE_HOME=/root/ultraverse/build/src # EDIT
-   export BENCHBASE_HOME=/root/ultraverse-benchbase  # EDIT
-   export BENCHBASE_NODE_HOME=/root/benchbase-nodejs # EDIT
-$ source .envfile
+   export ULTRAVERSE_HOME=/root/ultraverse-sigmod/build/src # EDIT THE PATH
+   export BENCHBASE_HOME=/root/ultraverse-benchbase  # EDIT THE PATH
+   export BENCHBASE_NODE_HOME=/root/benchbase-nodejs # EDIT THE PATH
+$ source envfile
 $ rm -rf runs cache
-$ python3 tatp.py # tpcc.py, seats.py, epnions.py, astore.py
+$ python3 epinions.py # tpcc.py, tatp.py, seats.py, astore.py
+```
 
-## Example: Retroactive Operation on BenchBase's Epinions
+
+### Example: Retroactive Operation on BenchBase's Epinions
 
 
 **<u>Step 1.</u>** Create the initial database.
@@ -109,13 +114,16 @@ $ cd <BenchBase directory>
 $ ./run-mariadb epinions mariadb 1m prepare
 $ sudo mysqldump benchbase > checkpoint-epinions.backup
 ```
+ 
+Note that although the scrpt name includes mariadb, it actually runs mysql, not mariadb. 
+
 
 <u>**Step 3.**</u> Reset the binary log and run transactions (SQL procedures).
 
 ```console
-$ sudo systemctl stop mariadb
+$ sudo systemctl stop mysql
 $ sudo sh -c "rm -rf /var/lib/mysql/myserver-binlog*"
-$ sudo systemctl start mariadb
+$ sudo systemctl start mysql
 $ ./run-mariadb epinions mariadb 1m execute
 ```
 
@@ -169,19 +177,9 @@ $ DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=admin DB_PASS=password \
 ```
 
 
-## REQUIREMENTS
-
-- build-essential
-- cmake (3.0+; tested on 3.23.2)
-- mariadb (tested on 15.1)
-  - requires FULL ROW IMAGE/METADATA in binary log (see synopsis section)
-- libmariadb-dev
 
 
-
-
-
-## MySQL/MariaDB Useful Commands
+## MySQL Useful Commands
 
 
 #### Create a User
@@ -231,10 +229,10 @@ $ mysql -uroot -p123456 -e "set global general_log=0; set global general_log=1; 
 ```console
 $ vim /etc/mysql/my.cnf
 > comment out 'bind-address = 182.162.21.181' or set it to the listening (allowed) IP address
-$ sudo service mariadb restart # or 'mysql' in case of MySQL
+$ sudo service mysql restart # or 'mysql' in case of MySQL
 
  # check that the deoman is listening to all IPs (or only the bound IP)
-$ sudo netstat -alpn | grep mariadbd # or 'mysqld' in case of MySQL 
+$ sudo netstat -alpn | grep mysqld # or 'mysqld' in case of MySQL 
 ```
 
 
