@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 
 #include "../src/mariadb/state/new/Query.hpp"
 #include "../src/mariadb/state/new/Transaction.hpp"

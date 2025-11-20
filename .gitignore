@@ -111,3 +111,6 @@ __pycache__
 !go.mod
 
 /docs
+
+build/
+*.un~
