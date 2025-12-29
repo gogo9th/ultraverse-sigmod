@@ -70,7 +70,7 @@ public:
     }
     
     std::string optString() override {
-        return "b:o:c:r:p:k:dnvVh";
+        return "b:o:c:r:p:k:dGnQvVh";
     }
     
     int main() override {
@@ -86,6 +86,8 @@ public:
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -r file        restore state and resume from given .ultchkpoint file\n"
             "    -d             force discard previous log and start over\n"
+            "    -G             print processed transactions with GIDs\n"
+            "    -Q             print query statements for processed transactions\n"
             "    -n             do not read binlog.index continuously (quit after reaching EOF)\n"
             "    -v             set logger level to DEBUG\n"
             "    -V             set logger level to TRACE\n"
@@ -134,6 +136,14 @@ public:
             _checkpointPath = getArg('r');
         }
         
+        if (isArgSet('G')) {
+            _printTransactions = true;
+        }
+
+        if (isArgSet('Q')) {
+            _printQueries = true;
+        }
+
         writerMain();
         return 0;
     }
@@ -175,6 +185,23 @@ public:
                 
                 auto transaction = std::move(promise->get_future().get());
                 
+                if (transaction != nullptr) {
+                    if (_printTransactions) {
+                        _logger->info("writing transaction gid {} (queries: {})",
+                                      transaction->gid(),
+                                      transaction->queries().size());
+                    }
+
+                    if (_printQueries) {
+                        size_t queryIndex = 0;
+                        for (const auto &query: transaction->queries()) {
+                            _logger->info("gid {} query[{}]: {}",
+                                          transaction->gid(),
+                                          queryIndex++,
+                                          query->statement());
+                        }
+                    }
+					}
                 *_stateLogWriter << *transaction;
             }
         });
@@ -510,11 +537,27 @@ public:
         if (transaction->procCall != nullptr) {
             auto transactionObj = finalizeTransaction(transaction, transaction->procCall);
             transactionObj->setGid(gid);
+
+            if (_printTransactions) {
+                if (transaction->tidEvent == nullptr) {
+                    _logger->info("processed transaction gid {}", gid);
+                } else {
+                    _logger->info("processed transaction gid {} (xid {})", gid, transaction->tidEvent->transactionId());
+                }
+            }
             
             return transactionObj;
         } else {
             auto transactionObj = finalizeTransaction(transaction);
             transactionObj->setGid(gid);
+
+            if (_printTransactions) {
+                if (transaction->tidEvent == nullptr) {
+                    _logger->info("processed transaction gid {}", gid);
+                } else {
+                    _logger->info("processed transaction gid {} (xid {})", gid, transaction->tidEvent->transactionId());
+                }
+            }
             
             return transactionObj;
         }
@@ -766,6 +809,8 @@ private:
     int _threadNum = 1;
     
     int _gid = 0;
+    bool _printTransactions = false;
+    bool _printQueries = false;
     
     std::thread _writerThread;
     std::mutex _txnQueueMutex;

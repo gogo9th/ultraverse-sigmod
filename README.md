@@ -43,7 +43,7 @@ $ sudo vim /etc/mysql/mysql.conf.d/server.cnf
 -------------------
 ```
 
-Enable efficient large memory allocation
+Enable efficient large memory allocation.
 ```console
 $ sudo vim /etc/systemd/system/multi-user.target.wants/mysql.service
 ---------------
@@ -51,15 +51,29 @@ $ sudo vim /etc/systemd/system/multi-user.target.wants/mysql.service
 ---------------
 ```
 
-Activate jemalloc & binary logging
+Activate jemalloc & binary logging.
 ```console
 $ sudo systemctl daemon-reload
 $ sudo service mysql restart
 ```
 
-Check that the value is not 'system', but 'jemalloc ...'
+Check that the binlog setup is alright.
 ```console
 $ sudo mysql -u root -p
+mysql> SHOW VARIABLES LIKE 'log_bin';
++---------------+-------+
+| Variable_name | Value |
++---------------+-------+
+| log_bin       | ON    |
++---------------+-------+
+
+mysql> SHOW VARIABLES LIKE 'log_bin_basename';
++------------------+-----------------------+
+| Variable_name    | Value                 |
++------------------+-----------------------+
+| log_bin_basename | /var/lib/mysql/binlog |
++------------------+-----------------------+
+
 > SHOW VARIABLES LIKE 'version_malloc_library'; 
 ```
 
@@ -95,6 +109,85 @@ $ vim envfile
 $ source envfile
 $ rm -rf runs cache
 $ python3 epinions.py # tpcc.py, tatp.py, seats.py, astore.py
+```
+
+
+### Example: Retroactive Operation on BenchBase's Epinions
+
+
+**<u>Step 1.</u>** Create the initial database.
+
+```console
+$ echo 'CREATE DATABASE benchbase' | sudo mysql
+```
+
+**<u>Step 2.</u>** Create Epinion's table schema, the initial database state, and the checkpoint backup DB.
+
+```console
+$ cd <BenchBase directory>
+$ ./run-mariadb epinions mariadb 1m prepare
+$ sudo mysqldump benchbase > checkpoint-epinions.backup
+```
+ 
+Note that although the scrpt name includes mariadb, it actually runs mysql, not mariadb. 
+
+
+<u>**Step 3.**</u> Reset the binary log and run transactions (SQL procedures).
+
+```console
+$ sudo systemctl stop mysql
+$ sudo sh -c "rm -rf /var/lib/mysql/myserver-binlog*"
+$ sudo systemctl start mysql
+$ ./run-mariadb epinions mariadb 1m execute
+```
+
+<u>**Step 4.**</u> Copy the binary log and Ultraverse's binary log into the new working directory.
+
+```console
+$ cd <Ultraverse's Directory>/build
+$ rm -rf test && mkdir test && cd test
+$ sudo cp /var/lib/mysql/myserver-binlog* .
+$ sudo chown mysql:mysql myserver-binlog*
+$ sudo chmod 777 myserver-binlog*
+$ cp <BenchBase Directory> checkpoint-epinions.backup .
+```
+
+
+<u>**Step 5.**</u> Read Ultraverse's binary log and write (or oppend) the state log into `benchbase.ultstatelog` (see `./statelogd -h` for more information).
+
+```console
+$ ../src/statelogd -G -Q -b myserver-binlog.index -o benchbase -n -k "item2.i_id,useracct.u_id,review.i_id,review.u_id,trust.source_u_id,trust.target_u_id"
+ # Manually terminate the daemon after there is no more new logs to parse
+```
+
+The output files are as follows: `benchbase.ultstatelog` and `benchbase.ultchpoint`.
+
+(Alternatively, use -M flag if you're running MySQL)
+
+```console
+$ ../src/statelogd -M -b myserver-binlog.index -o benchbase
+```
+
+<u>**Step 6.**</u> Make a cluster map & table map before performing a state change. 
+
+```console
+$ DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=admin DB_PASS=password \
+    ../src/db_state_change -i benchbase -d benchbase -k "item2.i_id,useracct.u_id" make_cluster
+```
+The output files are as follows: `benchbase.ulttables`, `benchbase.ultindex`, `benchbase.ultcolumns`, and `benchbase.ultcluster`. 
+
+<u>**Step 7.**</u> Perform the change state. (see `./db_state_change -h` for more information)
+
+```console
+$ echo "UPDATE useracct SET name = 'HELOWRLD' WHERE u_id = 512;" > prepend1.sql 
+$ echo "UPDATE item2 SET title = 'HELOWRLD' WHERE i_id = 224;" > prepend2.sql 
+$ DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=admin DB_PASS=password \
+    ../src/db_state_change \
+       -i benchbase \
+       -b checkpoint-epinions.backup \
+       -d benchbase \
+       -k "item2.i_id,useracct.u_id" \
+       rollback=2:rollback=32
 ```
 
 
