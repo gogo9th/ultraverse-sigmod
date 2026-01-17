@@ -8,6 +8,8 @@
 
 #include <fmt/format.h>
 
+#include "darwincompat.hpp"
+
 #include "GIDIndexReader.hpp"
 
 namespace ultraverse::state::v2 {
@@ -18,9 +20,9 @@ namespace ultraverse::state::v2 {
         if (_fd < 0) {
             throw std::runtime_error(fmt::format("failed to open {}", path));
         }
-    
+
         _fsize = lseek64(_fd, 0, SEEK_END);
-        
+
         _addr = mmap(nullptr, _fsize, PROT_READ, MAP_PRIVATE, _fd, 0);
         if (_addr == MAP_FAILED) {
             throw std::runtime_error(fmt::format("mmap() failed: {} (errno {})", strerror(errno), errno));
