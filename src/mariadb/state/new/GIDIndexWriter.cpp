@@ -7,6 +7,8 @@
 
 #include <fmt/format.h>
 
+#include "darwincompat.hpp"
+
 #include "GIDIndexWriter.hpp"
 
 namespace ultraverse::state::v2 {
