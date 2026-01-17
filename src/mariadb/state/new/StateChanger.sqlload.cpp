@@ -51,7 +51,11 @@ namespace ultraverse::state::v2 {
             }
         );
         
-        /*
+        std::vector<std::string> keyColsVec(
+            _plan.keyColumns().begin(),
+            _plan.keyColumns().end()
+        );
+        
         for (auto &event: queryEvents) {
             auto query = std::make_shared<Query>();
             
@@ -62,7 +66,7 @@ namespace ultraverse::state::v2 {
             event.tokenize();
             
             if (!event.isDML()) {
-                _logger->error("DDL statement is not supported yet");
+                _logger->error("DDL statement is not supported yet: {}", event.statement());
                 continue;
             }
             
@@ -71,27 +75,19 @@ namespace ultraverse::state::v2 {
                 event.parseDDL(1);
             }
             
+            event.buildRWSet(keyColsVec);
+            
             query->readSet().insert(
+                query->readSet().end(),
                 event.readSet().begin(), event.readSet().end()
             );
             query->writeSet().insert(
+                query->writeSet().end(),
                 event.writeSet().begin(), event.writeSet().end()
-            );
-            
-            query->itemSet().insert(
-                query->itemSet().begin(),
-                event.itemSet().begin(), event.itemSet().end()
-            );
-            query->whereSet().insert(
-                query->whereSet().begin(),
-                event.whereSet().begin(), event.whereSet().end()
             );
             
             *transaction << query;
         }
-         */
-        
-        throw std::runtime_error("TODO: reimplement this");
         
         return std::move(transaction);
     }
