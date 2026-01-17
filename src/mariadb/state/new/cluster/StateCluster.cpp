@@ -8,6 +8,7 @@
 #include <utility>
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include "utils/StringUtil.hpp"
 #include "StateCluster.hpp"
