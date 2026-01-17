@@ -1,7 +1,11 @@
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
+
+if (APPLE)
+    set(BISON_EXECUTABLE "/opt/homebrew/opt/bison/bin/bison" CACHE PATH "Bison executable")
+endif()
 
 find_package(PkgConfig REQUIRED)
-find_package(BISON REQUIRED)
+find_package(BISON 3.0.0 REQUIRED)
 find_package(FLEX REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
@@ -22,6 +26,11 @@ endif()
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 add_compile_options(-march=native -O2)
+
+if (APPLE)
+    add_compile_options(-fexperimental-library "-I/opt/homebrew/opt/llvm/include")
+endif()
+
 # add_link_options(-fsanitize=leak)
 
 set(ULTRAVERSE_DEPENDENCIES
@@ -177,6 +186,13 @@ set(DB_STATE_CHANGE_SRCS
 add_executable(state_log_viewer ${STATE_LOG_VIEWER_SRCS})
 add_executable(statelogd ${STATELOGD_SRCS})
 add_executable(db_state_change ${DB_STATE_CHANGE_SRCS})
+
+if (APPLE)
+    target_link_options(ultraverse PRIVATE -fexperimental-library "-L/opt/homebrew/lib")
+    target_link_options(state_log_viewer PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
+    target_link_options(statelogd PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
+    target_link_options(db_state_change PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
+endif()
 
 target_link_libraries(state_log_viewer ultraverse ${ULTRAVERSE_DEPENDENCIES})
 target_link_libraries(statelogd ultraverse ${ULTRAVERSE_DEPENDENCIES})
