@@ -248,7 +248,7 @@ namespace ultraverse::state::v2 {
                     
                     _item.data_list.insert(
                         _item.data_list.end(),
-                        item.data_list.begin(), item.data_list.end()
+                        real->data_list.begin(), real->data_list.end()
                         );
                 } else {
                     const auto &realColumn = utility::toLower(resolver.resolveChain(item.name));
