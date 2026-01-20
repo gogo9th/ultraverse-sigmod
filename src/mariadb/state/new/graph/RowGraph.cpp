@@ -6,6 +6,7 @@
 #include <cmath>
 #include <execution>
 #include <fstream>
+#include <optional>
 #include <unordered_set>
 
 #include <boost/graph/graphviz.hpp>
@@ -20,10 +21,39 @@
 #include "../cluster/StateRelationshipResolver.hpp"
 
 namespace ultraverse::state::v2 {
+    namespace {
+        std::set<std::string> normalizeKeyColumns(const std::set<std::string> &keyColumns) {
+            std::set<std::string> normalized;
+
+            for (const auto &keyColumn : keyColumns) {
+                normalized.insert(utility::toLower(keyColumn));
+            }
+
+            return normalized;
+        }
+
+        std::map<std::string, std::set<std::string>>
+        buildKeyColumnsMap(const std::set<std::string> &keyColumns) {
+            std::map<std::string, std::set<std::string>> keyColumnsMap;
+
+            for (const auto &keyColumn : keyColumns) {
+                const auto pair = utility::splitTableName(keyColumn);
+                const auto &tableName = pair.first;
+
+                if (!tableName.empty()) {
+                    keyColumnsMap[tableName].insert(keyColumn);
+                }
+            }
+
+            return keyColumnsMap;
+        }
+    }
+
     RowGraph::RowGraph(const std::set<std::string> &keyColumns, const RelationshipResolver &resolver):
         _logger(createLogger("RowGraph")),
-        _keyColumns(keyColumns),
         _resolver(resolver),
+        _keyColumns(normalizeKeyColumns(keyColumns)),
+        _keyColumnsMap(buildKeyColumnsMap(_keyColumns)),
         _rangeComparisonMethod(RangeComparisonMethod::EQ_ONLY)
     {
         for (const auto &column : _keyColumns) {
@@ -65,25 +95,188 @@ namespace ultraverse::state::v2 {
         
         std::unordered_map<std::string, ColumnTask> tasksByColumn;
         tasksByColumn.reserve(_keyColumns.size());
-        
+
+        std::set<std::string> tablesWithKeyItems;
+        std::set<std::string> tablesTouchedRead;
+        std::set<std::string> tablesTouchedWrite;
+        std::unordered_set<std::string> wildcardReadColumns;
+        std::unordered_set<std::string> wildcardWriteColumns;
+        bool globalReadWildcard = false;
+        bool globalWriteWildcard = false;
+
+        auto addResolvedItem = [&](StateItem resolved, bool isWrite) {
+            resolved.name = utility::toLower(resolved.name);
+            const auto columnName = resolved.name;
+            auto &task = tasksByColumn[columnName];
+            task.nodeId = id;
+            if (isWrite) {
+                task.writeItems.push_back(std::move(resolved));
+            } else {
+                task.readItems.push_back(std::move(resolved));
+            }
+
+            const auto tablePair = utility::splitTableName(columnName);
+            if (!tablePair.first.empty()) {
+                tablesWithKeyItems.insert(tablePair.first);
+            }
+        };
+
+        auto markTableTouched = [&](const std::string &columnExpr, bool isWrite) {
+            if (columnExpr.empty()) {
+                if (isWrite) {
+                    globalWriteWildcard = true;
+                } else {
+                    globalReadWildcard = true;
+                }
+                return;
+            }
+
+            const auto normalized = utility::toLower(columnExpr);
+            const auto tablePair = utility::splitTableName(normalized);
+
+            if (tablePair.first.empty()) {
+                if (isWrite) {
+                    globalWriteWildcard = true;
+                } else {
+                    globalReadWildcard = true;
+                }
+                return;
+            }
+
+            if (_keyColumnsMap.find(tablePair.first) == _keyColumnsMap.end()) {
+                if (isWrite) {
+                    globalWriteWildcard = true;
+                } else {
+                    globalReadWildcard = true;
+                }
+                return;
+            }
+
+            if (isWrite) {
+                tablesTouchedWrite.insert(tablePair.first);
+            } else {
+                tablesTouchedRead.insert(tablePair.first);
+            }
+        };
+
+        auto resolveKeyItem = [&](const StateItem &item) -> std::optional<StateItem> {
+            if (item.name.empty()) {
+                return std::nullopt;
+            }
+
+            auto resolvedRow = _resolver.resolveRowChain(item);
+            if (resolvedRow != nullptr) {
+                StateItem resolved = *resolvedRow;
+                resolved.name = utility::toLower(resolved.name);
+
+                if (_keyColumns.find(resolved.name) != _keyColumns.end()) {
+                    return resolved;
+                }
+
+                const auto chained = utility::toLower(_resolver.resolveChain(resolved.name));
+                if (!chained.empty() && _keyColumns.find(chained) != _keyColumns.end()) {
+                    resolved.name = chained;
+                    return resolved;
+                }
+            }
+
+            const auto chained = utility::toLower(_resolver.resolveChain(item.name));
+            if (!chained.empty() && _keyColumns.find(chained) != _keyColumns.end()) {
+                StateItem resolved = item;
+                resolved.name = chained;
+                return resolved;
+            }
+
+            const auto itemName = utility::toLower(item.name);
+            if (_keyColumns.find(itemName) != _keyColumns.end()) {
+                StateItem resolved = item;
+                resolved.name = itemName;
+                return resolved;
+            }
+
+            return std::nullopt;
+        };
+
+        auto addWildcardForColumn = [&](const std::string &columnName, bool isWrite) {
+            const auto normalized = utility::toLower(columnName);
+            if (_keyColumns.find(normalized) == _keyColumns.end()) {
+                return;
+            }
+
+            auto &targetSet = isWrite ? wildcardWriteColumns : wildcardReadColumns;
+            if (!targetSet.insert(normalized).second) {
+                return;
+            }
+
+            auto &task = tasksByColumn[normalized];
+            task.nodeId = id;
+            if (isWrite) {
+                task.writeItems.push_back(StateItem::Wildcard(normalized));
+            } else {
+                task.readItems.push_back(StateItem::Wildcard(normalized));
+            }
+        };
+
+        auto addWildcardForTable = [&](const std::string &tableName, bool isWrite) {
+            const auto it = _keyColumnsMap.find(tableName);
+            if (it == _keyColumnsMap.end()) {
+                if (isWrite) {
+                    globalWriteWildcard = true;
+                } else {
+                    globalReadWildcard = true;
+                }
+                return;
+            }
+
+            for (const auto &keyColumn : it->second) {
+                addWildcardForColumn(keyColumn, isWrite);
+            }
+        };
+
         for (auto it = node->transaction->readSet_begin(); it != node->transaction->readSet_end(); ++it) {
             const auto &item = *it;
-            if (_keyColumns.find(item.name) == _keyColumns.end()) {
-                continue;
+            auto resolved = resolveKeyItem(item);
+            if (resolved.has_value()) {
+                addResolvedItem(std::move(*resolved), false);
+            } else {
+                markTableTouched(item.name, false);
             }
-            auto &task = tasksByColumn[item.name];
-            task.nodeId = id;
-            task.readItems.push_back(item);
         }
-        
+
         for (auto it = node->transaction->writeSet_begin(); it != node->transaction->writeSet_end(); ++it) {
             const auto &item = *it;
-            if (_keyColumns.find(item.name) == _keyColumns.end()) {
+            auto resolved = resolveKeyItem(item);
+            if (resolved.has_value()) {
+                addResolvedItem(std::move(*resolved), true);
+            } else {
+                markTableTouched(item.name, true);
+            }
+        }
+
+        for (const auto &tableName : tablesTouchedRead) {
+            if (tablesWithKeyItems.find(tableName) != tablesWithKeyItems.end()) {
                 continue;
             }
-            auto &task = tasksByColumn[item.name];
-            task.nodeId = id;
-            task.writeItems.push_back(item);
+            addWildcardForTable(tableName, false);
+        }
+
+        for (const auto &tableName : tablesTouchedWrite) {
+            if (tablesWithKeyItems.find(tableName) != tablesWithKeyItems.end()) {
+                continue;
+            }
+            addWildcardForTable(tableName, true);
+        }
+
+        if (globalReadWildcard) {
+            for (const auto &keyColumn : _keyColumns) {
+                addWildcardForColumn(keyColumn, false);
+            }
+        }
+
+        if (globalWriteWildcard) {
+            for (const auto &keyColumn : _keyColumns) {
+                addWildcardForColumn(keyColumn, true);
+            }
         }
         
         node->pendingColumns = static_cast<uint32_t>(tasksByColumn.size());
@@ -302,6 +495,25 @@ namespace ultraverse::state::v2 {
                         toRemoveRanges.emplace_back(pair2.first);
                     }
                 }
+
+                if (worker->hasWildcard) {
+                    auto &holder = worker->wildcardHolder;
+                    std::scoped_lock<std::mutex> holderLock(holder.mutex);
+
+                    if (toRemove.find(holder.read) != toRemove.end()) {
+                        holder.read = nullptr;
+                        holder.readGid = 0;
+                    }
+
+                    if (toRemove.find(holder.write) != toRemove.end()) {
+                        holder.write = nullptr;
+                        holder.writeGid = 0;
+                    }
+
+                    if (holder.read == nullptr && holder.write == nullptr) {
+                        worker->hasWildcard = false;
+                    }
+                }
                 
                 for (auto &range: toRemoveRanges) {
                     worker->nodeMap.erase(range);
@@ -371,6 +583,63 @@ namespace ultraverse::state::v2 {
                 edgeSources.insert(source);
             }
         };
+
+        auto addEdgesFromWildcardHolder = [&](bool isWrite) {
+            std::unique_lock<std::mutex> mapLock(worker.mapMutex);
+            if (!worker.hasWildcard) {
+                return;
+            }
+
+            RWStateHolder &holder = worker.wildcardHolder;
+            std::unique_lock<std::mutex> holderLock(holder.mutex);
+            mapLock.unlock();
+
+            if (isWrite) {
+                addEdgeSource(holder.read, holder.readGid);
+                addEdgeSource(holder.write, holder.writeGid);
+            } else {
+                addEdgeSource(holder.write, holder.writeGid);
+            }
+        };
+
+        auto processWildcardItem = [&](bool isWrite) {
+            std::unique_lock<std::mutex> mapLock(worker.mapMutex);
+
+            for (auto &pair : worker.nodeMap) {
+                auto &holder = pair.second;
+                std::unique_lock<std::mutex> holderLock(holder.mutex);
+                if (isWrite) {
+                    addEdgeSource(holder.read, holder.readGid);
+                    addEdgeSource(holder.write, holder.writeGid);
+                } else {
+                    addEdgeSource(holder.write, holder.writeGid);
+                }
+            }
+
+            if (worker.hasWildcard) {
+                auto &holder = worker.wildcardHolder;
+                std::unique_lock<std::mutex> holderLock(holder.mutex);
+                if (isWrite) {
+                    addEdgeSource(holder.read, holder.readGid);
+                    addEdgeSource(holder.write, holder.writeGid);
+                } else {
+                    addEdgeSource(holder.write, holder.writeGid);
+                }
+            }
+
+            worker.hasWildcard = true;
+            {
+                auto &holder = worker.wildcardHolder;
+                std::unique_lock<std::mutex> holderLock(holder.mutex);
+                if (isWrite) {
+                    holder.write = task.nodeId;
+                    holder.writeGid = gid;
+                } else {
+                    holder.read = task.nodeId;
+                    holder.readGid = gid;
+                }
+            }
+        };
         
         auto withHolder = [&](const StateItem &item, auto &&fn) {
             const auto &range = item.MakeRange2();
@@ -395,22 +664,36 @@ namespace ultraverse::state::v2 {
             mapLock.unlock();
             fn(holder);
         };
-        
+
+        auto processItem = [&](const StateItem &item, bool isWrite) {
+            const auto &range = item.MakeRange2();
+            if (item.function_type == FUNCTION_WILDCARD || range.wildcard()) {
+                processWildcardItem(isWrite);
+                return;
+            }
+
+            addEdgesFromWildcardHolder(isWrite);
+
+            withHolder(item, [&](RWStateHolder &holder) {
+                if (isWrite) {
+                    addEdgeSource(holder.read, holder.readGid);
+                    addEdgeSource(holder.write, holder.writeGid);
+                    holder.write = task.nodeId;
+                    holder.writeGid = gid;
+                } else {
+                    addEdgeSource(holder.write, holder.writeGid);
+                    holder.read = task.nodeId;
+                    holder.readGid = gid;
+                }
+            });
+        };
+
         for (const auto &item : task.readItems) {
-            withHolder(item, [&](RWStateHolder &holder) {
-                addEdgeSource(holder.write, holder.writeGid);
-                holder.read = task.nodeId;
-                holder.readGid = gid;
-            });
+            processItem(item, false);
         }
-        
+
         for (const auto &item : task.writeItems) {
-            withHolder(item, [&](RWStateHolder &holder) {
-                addEdgeSource(holder.read, holder.readGid);
-                addEdgeSource(holder.write, holder.writeGid);
-                holder.write = task.nodeId;
-                holder.writeGid = gid;
-            });
+            processItem(item, true);
         }
         
         if (!edgeSources.empty()) {

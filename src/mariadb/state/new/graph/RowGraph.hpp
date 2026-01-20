@@ -8,9 +8,11 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -81,6 +83,8 @@ namespace ultraverse::state::v2 {
             std::string column;
             std::unordered_map<StateRange, RWStateHolder> nodeMap;
             std::mutex mapMutex;
+            RWStateHolder wildcardHolder;
+            bool hasWildcard = false;
 
             std::mutex queueMutex;
             std::condition_variable queueCv;
@@ -170,6 +174,7 @@ namespace ultraverse::state::v2 {
         const RelationshipResolver &_resolver;
         
         std::set<std::string> _keyColumns;
+        std::map<std::string, std::set<std::string>> _keyColumnsMap;
         
         RowGraphInternal _graph;
         

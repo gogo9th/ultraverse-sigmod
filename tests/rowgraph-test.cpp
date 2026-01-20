@@ -106,7 +106,7 @@ TEST_CASE("RowGraph entrypoints are deterministic under parallel build") {
     }
 }
 
-TEST_CASE("RowGraph ignores non-key columns") {
+TEST_CASE("RowGraph serializes when key columns are missing") {
     NoopRelationshipResolver resolver;
     RowGraph graph({"users.id"}, resolver);
 
@@ -120,7 +120,60 @@ TEST_CASE("RowGraph ignores non-key columns") {
 
     auto entryGids = entrypointGids(graph);
     REQUIRE(entryGids.find(1) != entryGids.end());
-    REQUIRE(entryGids.find(2) != entryGids.end());
+    REQUIRE(entryGids.find(2) == entryGids.end());
+}
+
+TEST_CASE("RowGraph resolves foreign key dependencies") {
+    MockedRelationshipResolver resolver;
+    resolver.addForeignKey("posts.author_id", "users.id");
+    RowGraph graph({"users.id"}, resolver);
+
+    auto txn1 = makeTxn(1, "test", {}, {makeEq("users.id", 1)});
+    auto txn2 = makeTxn(2, "test", {makeEq("posts.author_id", 1)}, {});
+
+    auto n1 = graph.addNode(txn1);
+    auto n2 = graph.addNode(txn2);
+
+    REQUIRE(waitUntilAllReady(graph, {n1, n2}, std::chrono::milliseconds(5000)));
+
+    auto entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(1) != entryGids.end());
+    REQUIRE(entryGids.find(2) == entryGids.end());
+}
+
+TEST_CASE("RowGraph resolves row aliases to key columns") {
+    MockedRelationshipResolver resolver;
+    resolver.addRowAlias(makeEqStr("users.handle", "alice"), makeEq("users.id", 1));
+    RowGraph graph({"users.id"}, resolver);
+
+    auto txn1 = makeTxn(1, "test", {}, {makeEq("users.id", 1)});
+    auto txn2 = makeTxn(2, "test", {makeEqStr("users.handle", "alice")}, {});
+
+    auto n1 = graph.addNode(txn1);
+    auto n2 = graph.addNode(txn2);
+
+    REQUIRE(waitUntilAllReady(graph, {n1, n2}, std::chrono::milliseconds(5000)));
+
+    auto entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(1) != entryGids.end());
+    REQUIRE(entryGids.find(2) == entryGids.end());
+}
+
+TEST_CASE("RowGraph applies wildcard for keyless table access") {
+    NoopRelationshipResolver resolver;
+    RowGraph graph({"users.id"}, resolver);
+
+    auto txn1 = makeTxn(1, "test", {}, {makeEq("users.name", 1)});
+    auto txn2 = makeTxn(2, "test", {makeEq("users.id", 1)}, {});
+
+    auto n1 = graph.addNode(txn1);
+    auto n2 = graph.addNode(txn2);
+
+    REQUIRE(waitUntilAllReady(graph, {n1, n2}, std::chrono::milliseconds(5000)));
+
+    auto entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(1) != entryGids.end());
+    REQUIRE(entryGids.find(2) == entryGids.end());
 }
 
 TEST_CASE("RowGraph separates dependencies by key column") {
