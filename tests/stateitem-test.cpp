@@ -89,17 +89,17 @@ TEST_CASE("StateData decimal normalization and comparison", "[stateitem]") {
 
 TEST_CASE("StateRange builds simple where clauses", "[stateitem]") {
     StateRange eq;
-    eq.SetValue(StateData{1}, true);
+    eq.SetValue(StateData { (int64_t) 1 }, true);
     REQUIRE(eq.MakeWhereQuery("id") == "id=1");
 
     StateRange ne;
-    ne.SetValue(StateData{1}, false);
+    ne.SetValue(StateData { (int64_t) 1 }, false);
     REQUIRE(ne.MakeWhereQuery("id") == "id<1 OR id>1");
 }
 
 TEST_CASE("StateRange between ordering and intersection", "[stateitem]") {
     StateRange between;
-    between.SetBetween(StateData{10}, StateData{5});
+    between.SetBetween(StateData { (int64_t) 10 }, StateData { (int64_t) 5 });
     auto ranges = between.GetRange();
     REQUIRE(ranges->size() == 1);
 
@@ -110,17 +110,17 @@ TEST_CASE("StateRange between ordering and intersection", "[stateitem]") {
     REQUIRE(range.end.IsEqual());
 
     StateRange a;
-    a.SetBetween(StateData{1}, StateData{2});
+    a.SetBetween(StateData { (int64_t) 1 }, StateData { (int64_t) 2 });
     StateRange b;
-    b.SetBetween(StateData{2}, StateData{3});
+    b.SetBetween(StateData { (int64_t) 2 }, StateData { (int64_t) 3 });
     REQUIRE(StateRange::isIntersects(a, b));
 }
 
 TEST_CASE("StateRange AND/OR and arrangeSelf", "[stateitem]") {
     StateRange a;
-    a.SetBetween(StateData{1}, StateData{5});
+    a.SetBetween(StateData { (int64_t) 1 }, StateData { (int64_t) 5 });
     StateRange b;
-    b.SetBetween(StateData{3}, StateData{7});
+    b.SetBetween(StateData { (int64_t) 3 }, StateData { (int64_t) 7 });
 
     auto inter = StateRange::AND(a, b);
     REQUIRE(inter->GetRange()->size() == 1);
@@ -135,16 +135,16 @@ TEST_CASE("StateRange AND/OR and arrangeSelf", "[stateitem]") {
     REQUIRE(readInt(ur.end) == 7);
 
     StateRange disA;
-    disA.SetBetween(StateData{1}, StateData{2});
+    disA.SetBetween(StateData { (int64_t) 1 }, StateData { (int64_t) 2 });
     StateRange disB;
-    disB.SetBetween(StateData{4}, StateData{5});
+    disB.SetBetween(StateData { (int64_t) 4 }, StateData { (int64_t) 5 });
     REQUIRE_FALSE(StateRange::isIntersects(disA, disB));
     auto dis = StateRange::OR(disA, disB);
     REQUIRE(dis->GetRange()->size() == 2);
 
     StateRange merge;
-    merge.SetBetween(StateData{1}, StateData{3});
-    merge.SetBetween(StateData{2}, StateData{4});
+    merge.SetBetween(StateData { (int64_t) 1 }, StateData { (int64_t) 3 });
+    merge.SetBetween(StateData { (int64_t) 2 }, StateData { (int64_t) 4 });
     REQUIRE(merge.GetRange()->size() == 2);
     merge.arrangeSelf();
     REQUIRE(merge.GetRange()->size() == 1);
@@ -171,52 +171,52 @@ TEST_CASE("StateItem MakeRange2 handles function types", "[stateitem]") {
     };
 
     SECTION("EQ") {
-        StateItem item = StateItem::EQ("col", StateData{1});
+        StateItem item = StateItem::EQ("col", StateData { (int64_t) 1 });
         REQUIRE(query(item.MakeRange2()) == "col=1");
     }
 
     SECTION("NE") {
         StateItem item;
         item.function_type = FUNCTION_NE;
-        item.data_list.emplace_back(StateData{1});
+        item.data_list.emplace_back(StateData { (int64_t) 1 });
         REQUIRE(query(item.MakeRange2()) == "col<1 OR col>1");
     }
 
     SECTION("LT/LE/GT/GE") {
         StateItem lt;
         lt.function_type = FUNCTION_LT;
-        lt.data_list.emplace_back(StateData{1});
+        lt.data_list.emplace_back(StateData{(int64_t) 1 });
         REQUIRE(query(lt.MakeRange2()) == "col<1");
 
         StateItem le;
         le.function_type = FUNCTION_LE;
-        le.data_list.emplace_back(StateData{1});
+        le.data_list.emplace_back(StateData { (int64_t) 1 });
         REQUIRE(query(le.MakeRange2()) == "col<=1");
 
         StateItem gt;
         gt.function_type = FUNCTION_GT;
-        gt.data_list.emplace_back(StateData{1});
+        gt.data_list.emplace_back(StateData { (int64_t) 1 });
         REQUIRE(query(gt.MakeRange2()) == "col>1");
 
         StateItem ge;
         ge.function_type = FUNCTION_GE;
-        ge.data_list.emplace_back(StateData{1});
+        ge.data_list.emplace_back(StateData { (int64_t) 1 });
         REQUIRE(query(ge.MakeRange2()) == "col>=1");
     }
 
     SECTION("BETWEEN") {
         StateItem item;
         item.function_type = FUNCTION_BETWEEN;
-        item.data_list.emplace_back(StateData{1});
-        item.data_list.emplace_back(StateData{3});
+        item.data_list.emplace_back(StateData { (int64_t) 1 });
+        item.data_list.emplace_back(StateData { (int64_t) 3 });
         REQUIRE(query(item.MakeRange2()) == "(col>=1 AND col<=3)");
     }
 
     SECTION("IN") {
         StateItem item;
         item.function_type = FUNCTION_IN_INTERNAL;
-        item.data_list.emplace_back(StateData{1});
-        item.data_list.emplace_back(StateData{2});
+        item.data_list.emplace_back(StateData { (int64_t) 1 });
+        item.data_list.emplace_back(StateData { (int64_t) 2 });
         REQUIRE(query(item.MakeRange2()) == "col=1 OR col=2");
     }
 
@@ -234,11 +234,11 @@ TEST_CASE("StateItem MakeRange2 handles function types", "[stateitem]") {
 TEST_CASE("StateItem MakeRange2 handles AND/OR conditions", "[stateitem]") {
     StateItem gt;
     gt.function_type = FUNCTION_GT;
-    gt.data_list.emplace_back(StateData{1});
+    gt.data_list.emplace_back(StateData { (int64_t) 1 });
 
     StateItem lt;
     lt.function_type = FUNCTION_LT;
-    lt.data_list.emplace_back(StateData{5});
+    lt.data_list.emplace_back(StateData { (int64_t) 5 });
 
     StateItem andItem;
     andItem.condition_type = EN_CONDITION_AND;
@@ -246,8 +246,8 @@ TEST_CASE("StateItem MakeRange2 handles AND/OR conditions", "[stateitem]") {
 
     REQUIRE(andItem.MakeRange2().MakeWhereQuery("col") == "(col>1 AND col<5)");
 
-    StateItem eq1 = StateItem::EQ("col", StateData{1});
-    StateItem eq2 = StateItem::EQ("col", StateData{2});
+    StateItem eq1 = StateItem::EQ("col", StateData { (int64_t) 1 });
+    StateItem eq2 = StateItem::EQ("col", StateData { (int64_t) 2 });
 
     StateItem orItem;
     orItem.condition_type = EN_CONDITION_OR;
@@ -257,7 +257,7 @@ TEST_CASE("StateItem MakeRange2 handles AND/OR conditions", "[stateitem]") {
 }
 
 TEST_CASE("StateItem MakeRange2 caches results", "[stateitem]") {
-    StateItem item = StateItem::EQ("col", StateData{7});
+    StateItem item = StateItem::EQ("col", StateData { (int64_t) 7 });
     const StateRange &first = item.MakeRange2();
     const StateRange &second = item.MakeRange2();
 
@@ -266,18 +266,18 @@ TEST_CASE("StateItem MakeRange2 caches results", "[stateitem]") {
 }
 
 TEST_CASE("StateItem MakeRange matches MakeRange2 for basics", "[stateitem]") {
-    StateItem eq = StateItem::EQ("col", StateData{9});
+    StateItem eq = StateItem::EQ("col", StateData { (int64_t) 9 });
     auto legacy = StateItem::MakeRange(eq);
     REQUIRE(legacy != nullptr);
     REQUIRE(legacy->MakeWhereQuery("col") == eq.MakeRange2().MakeWhereQuery("col"));
 
     StateItem gt;
     gt.function_type = FUNCTION_GT;
-    gt.data_list.emplace_back(StateData{1});
+    gt.data_list.emplace_back(StateData { (int64_t) 1 });
 
     StateItem lt;
     lt.function_type = FUNCTION_LT;
-    lt.data_list.emplace_back(StateData{5});
+    lt.data_list.emplace_back(StateData { (int64_t) 5 });
 
     StateItem andItem;
     andItem.condition_type = EN_CONDITION_AND;

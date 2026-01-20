@@ -1598,15 +1598,15 @@ const StateRange &StateItem::MakeRange2() const {
         );
         
         if (condition_type == EN_CONDITION_AND) {
-            output = ranges.back();
-            ranges.pop_back();
+            output = ranges.front();
+            ranges.erase(ranges.begin());
             
             for (auto &range : ranges) {
                 output = *StateRange::AND(output, range);
             }
         } else if (condition_type == EN_CONDITION_OR) {
-            output = ranges.back();
-            ranges.pop_back();
+            output = ranges.front();
+            ranges.erase(ranges.begin());
             
             for (auto &range : ranges) {
                 output = *StateRange::OR(output, range);

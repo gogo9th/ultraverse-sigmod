@@ -145,7 +145,32 @@ public:
      * @copilot this function checks if two ranges are intersected.
      */
     bool isIntersection(const ST_RANGE &other) const {
-        return (this->begin <= other.end) && (other.begin <= this->end);
+        // Treat NULL as unbounded on that side.
+        if (!this->end.IsNone() && !other.begin.IsNone() &&
+            this->end.Type() != other.begin.Type()) {
+            return false;
+        }
+        if (!this->end.IsNone() && !other.begin.IsNone()) {
+            if (this->end < other.begin) {
+                return false;
+            }
+            if (this->end == other.begin && !(this->end.IsEqual() && other.begin.IsEqual())) {
+                return false;
+            }
+        }
+        if (!other.end.IsNone() && !this->begin.IsNone() &&
+            other.end.Type() != this->begin.Type()) {
+            return false;
+        }
+        if (!other.end.IsNone() && !this->begin.IsNone()) {
+            if (other.end < this->begin) {
+                return false;
+            }
+            if (other.end == this->begin && !(other.end.IsEqual() && this->begin.IsEqual())) {
+                return false;
+            }
+        }
+        return true;
     }
     
     [[nodiscard]]
@@ -162,11 +187,56 @@ public:
      */
     ST_RANGE operator& (const ST_RANGE &other) const {
         ST_RANGE range;
-        if (isIntersection(other))
-        {
-            range.begin = std::max(this->begin, other.begin);
-            range.end = std::min(this->end, other.end);
+        if (!isIntersection(other)) {
+            return range;
         }
+
+        auto pick_begin = [](const StateData &a, const StateData &b) -> const StateData& {
+            if (a.IsNone()) {
+                return b;
+            }
+            if (b.IsNone()) {
+                return a;
+            }
+            if (a < b) {
+                return b;
+            }
+            if (b < a) {
+                return a;
+            }
+            if (!a.IsEqual()) {
+                return a;
+            }
+            if (!b.IsEqual()) {
+                return b;
+            }
+            return a;
+        };
+
+        auto pick_end = [](const StateData &a, const StateData &b) -> const StateData& {
+            if (a.IsNone()) {
+                return b;
+            }
+            if (b.IsNone()) {
+                return a;
+            }
+            if (a < b) {
+                return a;
+            }
+            if (b < a) {
+                return b;
+            }
+            if (!a.IsEqual()) {
+                return a;
+            }
+            if (!b.IsEqual()) {
+                return b;
+            }
+            return a;
+        };
+
+        range.begin = pick_begin(this->begin, other.begin);
+        range.end = pick_end(this->end, other.end);
         return std::move(range);
     }
     
