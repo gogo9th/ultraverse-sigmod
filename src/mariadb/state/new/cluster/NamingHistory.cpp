@@ -38,9 +38,9 @@ namespace ultraverse::state::v2 {
         return _initialName;
     }
     
-    std::string NamingHistory::getCurrentName() const {
-        return _namingHistory.begin()->second;
-    }
+std::string NamingHistory::getCurrentName() const {
+        return _namingHistory.back().second;
+}
     
     bool NamingHistory::match(const std::string &name, uint64_t when) const {
         return getName(when) == name;
