@@ -4,14 +4,21 @@
 
 #include "StateRelationshipResolver.hpp"
 
+#include <unordered_set>
+
 #include "utils/StringUtil.hpp"
 
 namespace ultraverse::state::v2 {
     
     std::string RelationshipResolver::resolveChain(const std::string &columnExpr) const {
         std::string _columnExpr = columnExpr;
+        std::unordered_set<std::string> visited;
         
         while (true) {
+            if (!visited.insert(_columnExpr).second) {
+                return std::string();
+            }
+            
             auto alias = std::move(resolveColumnAlias(_columnExpr));
             auto foreignKey = std::move(resolveForeignKey(!alias.empty() ? alias : _columnExpr));
             
@@ -32,8 +39,13 @@ namespace ultraverse::state::v2 {
     
     std::shared_ptr<StateItem> RelationshipResolver::resolveRowChain(const StateItem &item) const {
         std::shared_ptr<StateItem> _item = std::make_shared<StateItem>(item);
+        std::unordered_set<std::string> visited;
         
         while (true) {
+            if (!visited.insert(_item->name).second) {
+                return nullptr;
+            }
+            
             auto alias = std::move(resolveRowAlias(*_item));
             auto foreignKey = std::move(resolveForeignKey(alias != nullptr ? alias->name : _item->name));
             
@@ -67,8 +79,13 @@ namespace ultraverse::state::v2 {
     std::string StateRelationshipResolver::resolveColumnAlias(const std::string &exprName) const {
         bool found = false;
         std::string _exprName = utility::toLower(exprName);
+        std::unordered_set<std::string> visited;
         
         while (true) {
+            if (!visited.insert(_exprName).second) {
+                return std::string();
+            }
+            
             auto it = std::find_if(
                 _plan.columnAliases().begin(), _plan.columnAliases().end(),
                 [&_exprName](const auto &pair) { return std::move(utility::toLower(pair.first)) == _exprName; }
@@ -86,8 +103,13 @@ namespace ultraverse::state::v2 {
     std::string StateRelationshipResolver::resolveForeignKey(const std::string &exprName) const {
         bool found = false;
         std::string _exprName = utility::toLower(exprName);
+        std::unordered_set<std::string> visited;
         
         while (true) {
+            if (!visited.insert(_exprName).second) {
+                return std::string();
+            }
+            
             auto vec = std::move(utility::splitTableName(_exprName));
             auto tableName  = std::move(vec.first);
             auto columnName = std::move(vec.second);

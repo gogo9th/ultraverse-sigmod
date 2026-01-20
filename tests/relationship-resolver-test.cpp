@@ -57,6 +57,18 @@ TEST_CASE("RelationshipResolver resolveRowChain maps row alias and FK chain") {
     REQUIRE(missing == nullptr);
 }
 
+TEST_CASE("RelationshipResolver guards against alias/FK cycles") {
+    MockedRelationshipResolver resolver;
+    resolver.addColumnAlias("a", "b");
+    resolver.addForeignKey("b", "a");
+
+    REQUIRE(resolver.resolveChain("a").empty());
+
+    resolver.addRowAlias(makeEq("a", 1), makeEq("b", 1));
+    auto resolved = resolver.resolveRowChain(makeEq("a", 1));
+    REQUIRE(resolved == nullptr);
+}
+
 TEST_CASE("StateRelationshipResolver resolves alias chains and FK mapping") {
     StateChangePlan plan;
     plan.columnAliases().push_back({"posts.author_name", "posts.author"});
@@ -75,6 +87,32 @@ TEST_CASE("StateRelationshipResolver resolves alias chains and FK mapping") {
     REQUIRE(resolver.resolveColumnAlias("A") == "c");
     REQUIRE(resolver.resolveChain("posts.author_name") == "users.id");
     REQUIRE(resolver.resolveChain("unknown.col").empty());
+}
+
+TEST_CASE("StateRelationshipResolver detects alias cycles") {
+    StateChangePlan plan;
+    plan.columnAliases().push_back({"a", "b"});
+    plan.columnAliases().push_back({"b", "a"});
+
+    StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+
+    REQUIRE(resolver.resolveColumnAlias("a").empty());
+}
+
+TEST_CASE("StateRelationshipResolver detects foreign key cycles") {
+    StateChangePlan plan;
+    StateChangeContext context;
+
+    auto t1 = std::make_shared<NamingHistory>("t1");
+    auto t2 = std::make_shared<NamingHistory>("t2");
+    context.tables = {t1, t2};
+    context.foreignKeys.push_back(ForeignKey{t1, "id", t2, "id"});
+    context.foreignKeys.push_back(ForeignKey{t2, "id", t1, "id"});
+
+    StateRelationshipResolver resolver(plan, context);
+
+    REQUIRE(resolver.resolveForeignKey("t1.id").empty());
 }
 
 TEST_CASE("StateRelationshipResolver addTransaction builds row alias mapping") {
