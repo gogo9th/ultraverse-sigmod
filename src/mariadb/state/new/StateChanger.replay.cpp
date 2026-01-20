@@ -137,14 +137,30 @@ namespace ultraverse::state::v2 {
         
         
         std::string line;
+        gid_t lastGid = 0;
+        bool hasLastGid = false;
+        bool nonMonotonicInput = false;
         while (std::getline(std::cin, line)) {
+            if (line.empty()) {
+                continue;
+            }
             uint64_t gid = std::stoull(line);
+            if (hasLastGid && gid < lastGid) {
+                nonMonotonicInput = true;
+                _logger->warn("replay(): non-monotonic GID input detected: {} after {}", gid, lastGid);
+            }
+            lastGid = gid;
+            hasLastGid = true;
             // _logger->info("replay(): transaction #{} enqueued", gid);
             
             {
                 std::scoped_lock<std::mutex> _lock(replayTargetsLock);
                 replayTargets.emplace(gid);
             }
+        }
+        
+        if (nonMonotonicInput) {
+            _logger->warn("replay(): GID input order is not monotonic; dependency analysis may be incomplete");
         }
         
         isEOF = true;

@@ -4,7 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
+#include <future>
 #include <sstream>
 
 #include <execution>
@@ -334,40 +334,20 @@ namespace ultraverse::state::v2 {
         
         auto phase_main_start = std::chrono::steady_clock::now();
         
-        std::atomic_bool isRunning = true;
+        std::vector<std::future<gid_t>> replayTasks;
+        replayTasks.reserve(1024);
+        constexpr size_t kReplayFutureFlushSize = 10000;
         
-        std::mutex tasksMutex;
-        std::condition_variable tasksCv;
-        std::queue<std::shared_ptr<std::promise<gid_t>>> tasks;
-        std::set<gid_t> replayGids;
-        
-        std::thread promiseConsumerThread([&isRunning, &tasks, &tasksMutex, &tasksCv, &replayGidCount]() {
-            for (;;) {
-                std::shared_ptr<std::promise<gid_t>> promise;
-                {
-                    std::unique_lock lock(tasksMutex);
-                    tasksCv.wait(lock, [&tasks, &isRunning]() {
-                        return !tasks.empty() || !isRunning.load();
-                    });
-
-                    if (tasks.empty()) {
-                        if (!isRunning.load()) {
-                            break;
-                        }
-                        continue;
-                    }
-
-                    promise = std::move(tasks.front());
-                    tasks.pop();
-                }
-                
-                gid_t gid = promise->get_future().get();
+        auto flushReplayTasks = [&replayTasks, &replayGidCount]() {
+            for (auto &future : replayTasks) {
+                gid_t gid = future.get();
                 if (gid != UINT64_MAX) {
                     std::cout << gid << std::endl;
                     replayGidCount.fetch_add(1, std::memory_order_relaxed);
                 }
             }
-        });
+            replayTasks.clear();
+        };
         
         while (_reader->nextHeader()) {
             auto header = _reader->txnHeader();
@@ -410,41 +390,41 @@ namespace ultraverse::state::v2 {
                 }
 
                 if (_plan.performBenchInsert()) {
-                    std::scoped_lock _lock(tasksMutex);
-                    tasks.push(taskExecutor.post<gid_t>([gid, &rowCluster, &cachedResolver]() {
+                    auto promise = taskExecutor.post<gid_t>([gid, &rowCluster, &cachedResolver]() {
                         if (rowCluster.shouldReplay(gid)) {
                             return gid;
                         }
                         return UINT64_MAX;
-                    }));
-                    tasksCv.notify_one();
+                    });
+                    replayTasks.emplace_back(promise->get_future());
+                    if (replayTasks.size() >= kReplayFutureFlushSize) {
+                        flushReplayTasks();
+                    }
                 }
 
                
                 continue;
             } else {
-                std::scoped_lock _lock(tasksMutex);
-                tasks.push(taskExecutor.post<gid_t>([gid, &rowCluster, &cachedResolver]() {
+                auto promise = taskExecutor.post<gid_t>([gid, &rowCluster, &cachedResolver]() {
                     if (rowCluster.shouldReplay(gid)) {
                         return gid;
                     }
                     return UINT64_MAX;
-                }));
-                tasksCv.notify_one();
+                });
+                replayTasks.emplace_back(promise->get_future());
+                if (replayTasks.size() >= kReplayFutureFlushSize) {
+                    flushReplayTasks();
+                }
             }
             
             _reader->skipTransaction();
         }
         
         
-        isRunning = false;
-        tasksCv.notify_all();
-        
-        if (promiseConsumerThread.joinable()) {
-            promiseConsumerThread.join();
+        if (!replayTasks.empty()) {
+            flushReplayTasks();
         }
 
-        
         taskExecutor.shutdown();
         
         
