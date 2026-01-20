@@ -2,22 +2,13 @@
 // Created by cheesekun on 7/12/23.
 //
 
-#include <algorithm>
-#include <sstream>
-
 #include <fmt/color.h>
-
-#include "cluster/RowCluster.hpp"
-
-#include "cluster/StateCluster.hpp"
-
-#include "base/TaskExecutor.hpp"
-#include "utils/StringUtil.hpp"
 
 #include "graph/RowGraph.hpp"
 
 #include "StateChanger.hpp"
 #include "StateChangeReport.hpp"
+#include "StateChangeReplayPlan.hpp"
 
 namespace ultraverse::state::v2 {
     void StateChanger::replay() {
@@ -30,11 +21,12 @@ namespace ultraverse::state::v2 {
         CachedRelationshipResolver cachedResolver(relationshipResolver, 8000);
         
         RowGraph rowGraph(_plan.keyColumns(), cachedResolver);
-        
-        std::atomic_bool isEOF = false;
-        
-        std::mutex replayTargetsLock;
-        std::queue<gid_t> replayTargets;
+        rowGraph.setRangeComparisonMethod(_plan.rangeComparisonMethod());
+
+        const std::string replayPlanPath = _plan.stateLogPath() + "/" + _plan.stateLogName() + ".ultreplayplan";
+        auto replayPlan = StateChangeReplayPlan::load(replayPlanPath);
+        _logger->info("replay(): loaded replay plan from {} ({} gids, {} user queries)",
+                      replayPlanPath, replayPlan.gids.size(), replayPlan.userQueries.size());
         
         this->_isRunning = true;
         this->_replayedTxns = 0;
@@ -48,60 +40,82 @@ namespace ultraverse::state::v2 {
         }
         
         std::thread replayThread([&]() {
-            std::set<gid_t> replayedGids;
             int i = 0;
             
             _reader->open();
-            
-            
-            while (!isEOF || !replayTargets.empty()) {
-                if (replayTargets.empty()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 60));
-                    
-                    goto NEXT_LOOP;
-                }
-                {
-                    std::vector<gid_t> gids;
-                    replayTargetsLock.lock();
-                    while (!replayTargets.empty()) {
-                        gids.push_back(replayTargets.front());
-                        replayTargets.pop();
-                    }
-                    replayTargetsLock.unlock();
-                    
-                    for (gid_t gid: gids) {
-                        while (i - _replayedTxns > 4000) {
-                            std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 60));
-                        }
-                        
-                        if (!_reader->seekGid(gid)) {
-                            _logger->warn("replay(): gid #{} not found in state log", gid);
-                            continue;
-                        }
 
-                        _reader->nextHeader();
-                        _reader->nextTransaction();
-                        
-                        const auto header = _reader->txnHeader();
-                        const auto transaction = _reader->txnBody();
-                        
-                        if (relationshipResolver.addTransaction(*transaction)) {
-                            cachedResolver.clearCache();
-                        }
-                        
-                        auto nodeId = rowGraph.addNode(transaction);
-                        
-                        // replayedGids.emplace(gid);
-                        
-                        if (i++ % 1000 == 0) {
-                            _logger->info("replay(): transaction #{} added as node #{}; {} / {} executed", gid, nodeId, (int) _replayedTxns, i);
-                        }
-                    }
-                    
+            auto userIt = replayPlan.userQueries.begin();
+            auto userEnd = replayPlan.userQueries.end();
+
+            auto addUserQueryNode = [&](gid_t userGid, const Transaction &userTxn) -> RowGraphId {
+                auto txnPtr = std::make_shared<Transaction>(userTxn);
+                txnPtr->setGid(userGid);
+                if (relationshipResolver.addTransaction(*txnPtr)) {
+                    cachedResolver.clearCache();
                 }
-                
-                NEXT_LOOP:
-                continue;
+                auto nodeId = rowGraph.addNode(txnPtr);
+                if (i++ % 1000 == 0) {
+                    _logger->info("replay(): user query for gid #{} added as node #{}; {} / {} executed",
+                                  userGid, nodeId, (int) _replayedTxns, i);
+                }
+                return nodeId;
+            };
+
+            for (gid_t gid : replayPlan.gids) {
+                while (userIt != userEnd && userIt->first < gid) {
+                    while (i - _replayedTxns > 4000) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 60));
+                    }
+                    addUserQueryNode(userIt->first, userIt->second);
+                    ++userIt;
+                }
+
+                RowGraphId prependNodeId = nullptr;
+                if (userIt != userEnd && userIt->first == gid) {
+                    while (i - _replayedTxns > 4000) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 60));
+                    }
+                    prependNodeId = addUserQueryNode(userIt->first, userIt->second);
+                    ++userIt;
+                }
+
+                while (i - _replayedTxns > 4000) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 60));
+                }
+
+                if (!_reader->seekGid(gid)) {
+                    _logger->warn("replay(): gid #{} not found in state log", gid);
+                    continue;
+                }
+
+                _reader->nextHeader();
+                _reader->nextTransaction();
+
+                const auto transaction = _reader->txnBody();
+
+                if (relationshipResolver.addTransaction(*transaction)) {
+                    cachedResolver.clearCache();
+                }
+
+                const bool holdTarget = (prependNodeId != nullptr);
+                auto nodeId = rowGraph.addNode(transaction, holdTarget);
+                if (prependNodeId != nullptr) {
+                    rowGraph.addEdge(prependNodeId, nodeId);
+                    rowGraph.releaseNode(nodeId);
+                }
+
+                if (i++ % 1000 == 0) {
+                    _logger->info("replay(): transaction #{} added as node #{}; {} / {} executed",
+                                  gid, nodeId, (int) _replayedTxns, i);
+                }
+            }
+
+            while (userIt != userEnd) {
+                while (i - _replayedTxns > 4000) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 60));
+                }
+                addUserQueryNode(userIt->first, userIt->second);
+                ++userIt;
             }
         });
         
@@ -139,37 +153,7 @@ namespace ultraverse::state::v2 {
         }
         
         auto phase_main_start = std::chrono::steady_clock::now();
-        _logger->info("replay(): waiting for replay targets via STDIN...");
-        
-        
-        std::string line;
-        gid_t lastGid = 0;
-        bool hasLastGid = false;
-        bool nonMonotonicInput = false;
-        while (std::getline(std::cin, line)) {
-            if (line.empty()) {
-                continue;
-            }
-            uint64_t gid = std::stoull(line);
-            if (hasLastGid && gid < lastGid) {
-                nonMonotonicInput = true;
-                _logger->warn("replay(): non-monotonic GID input detected: {} after {}", gid, lastGid);
-            }
-            lastGid = gid;
-            hasLastGid = true;
-            // _logger->info("replay(): transaction #{} enqueued", gid);
-            
-            {
-                std::scoped_lock<std::mutex> _lock(replayTargetsLock);
-                replayTargets.emplace(gid);
-            }
-        }
-        
-        if (nonMonotonicInput) {
-            _logger->warn("replay(): GID input order is not monotonic; dependency analysis may be incomplete");
-        }
-        
-        isEOF = true;
+        _logger->info("replay(): executing replay plan...");
         
         if (replayThread.joinable()) {
             replayThread.join();

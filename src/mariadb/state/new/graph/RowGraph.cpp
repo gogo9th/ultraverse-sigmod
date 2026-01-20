@@ -52,9 +52,10 @@ namespace ultraverse::state::v2 {
         }
     }
     
-    RowGraphId RowGraph::addNode(std::shared_ptr<Transaction> transaction) {
+    RowGraphId RowGraph::addNode(std::shared_ptr<Transaction> transaction, bool hold) {
         auto node = std::make_shared<RowGraphNode>();
         node->transaction = std::move(transaction);
+        node->hold = hold;
         
         RowGraphId id = nullptr;
         {
@@ -120,7 +121,7 @@ namespace ultraverse::state::v2 {
             auto it2 = pair.first;
             const auto it2End = pair.second;
             
-            bool isEntrypoint = !_graph[id]->finalized;
+            bool isEntrypoint = !_graph[id]->finalized && !_graph[id]->hold;
             
             while (isEntrypoint && it2 != it2End) {
                 auto edge = *it2;
@@ -165,7 +166,7 @@ namespace ultraverse::state::v2 {
             auto &node = _graph[id];
             int expected = -1;
             
-            if (!node->ready || node->finalized || node->processedBy != -1) {
+            if (!node->ready || node->hold || node->finalized || node->processedBy != -1) {
                 return false;
             }
             
@@ -194,6 +195,22 @@ namespace ultraverse::state::v2 {
     std::shared_ptr<RowGraphNode> RowGraph::nodeFor(RowGraphId nodeId) {
         ConcurrentReadLock _lock(_graphMutex);
         return _graph[nodeId];
+    }
+
+    void RowGraph::addEdge(RowGraphId from, RowGraphId to) {
+        if (from == nullptr || to == nullptr || from == to) {
+            return;
+        }
+        WriteLock lock(_graphMutex);
+        boost::add_edge(from, to, _graph);
+    }
+
+    void RowGraph::releaseNode(RowGraphId nodeId) {
+        auto node = nodeFor(nodeId);
+        if (node == nullptr) {
+            return;
+        }
+        node->hold = false;
     }
     
     void RowGraph::gc() {

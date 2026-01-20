@@ -1,8 +1,6 @@
 import os
 import time
 
-import math
-
 from esperanza.benchbase.benchmark_session import BenchmarkSession
 from esperanza.utils.download_mysql import download_mysql
 from esperanza.utils.state_change_report import read_state_change_report
@@ -74,11 +72,6 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
     logger = session.logger
 
     rollback_log_name = f"rollback_{rollback_gids[0]}_{rollback_gids[-1]}"
-    rollback_plan_name = rollback_log_name + ".plan"
-
-    with open(f"{session.session_path}/{rollback_plan_name}", "w") as f:
-        f.write((",".join(map(lambda x: str(x), rollback_gids))))
-
     rollback_stdout_name = rollback_log_name + ".stdout"
     rollback_stderr_name = rollback_log_name + ".stderr"
     rollback_report_name = rollback_log_name + ".report.json"
@@ -89,12 +82,12 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
     replay_report_name = replay_log_name + ".report.json"
 
     # # PREPARE 실행한다.
+    rollback_action = f"rollback={','.join(map(str, rollback_gids))}"
     session.run_db_state_change(
         DB_STATE_CHANGE_BASE_OPTIONS + [
             '-r', rollback_report_name,
-            "rollback=-"
+            rollback_action
         ],
-        pipe_stdin_file=f"{session.session_path}/{rollback_plan_name}",
         stdout_name=rollback_stdout_name,
         stderr_name=rollback_stderr_name
     )
@@ -109,8 +102,7 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
             'replay'
         ],
         stdout_name=replay_stdout_name,
-        stderr_name=replay_stderr_name,
-        pipe_stdin_file=rollback_stdout_name
+        stderr_name=replay_stderr_name
     )
 
     replay_report = read_state_change_report(f"{session.session_path}/{replay_report_name}")
@@ -125,9 +117,8 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
             DB_STATE_CHANGE_BASE_OPTIONS + [
                 '-N',
                 '-r', replay_st_report_name,
-                "rollback=-:full-replay"
+                f"{rollback_action}:full-replay"
             ],
-            pipe_stdin_file=f"{session.session_path}/{rollback_plan_name}",
             stdout_name=replay_st_stdout_name,
             stderr_name=replay_st_stderr_name,
             )
@@ -167,53 +158,25 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
 def perform_full_replay(session: BenchmarkSession):
     logger = session.logger
 
-    txn_count = math.ceil(os.path.getsize(f"{session.session_path}/benchbase.ultindex") / 8)
-
     full_replay_log_name = f"full_replay"
-
-    full_replay_mt_stdout_name = full_replay_log_name + ".mt.stdout"
-    full_replay_mt_stderr_name = full_replay_log_name + ".mt.stderr"
-    full_replay_mt_report_name = full_replay_log_name + ".mt.report.json"
-
-    full_replay_input = f"{session.session_path}/full_replay_input"
-
-    with open(full_replay_input, 'w') as f:
-        for i in range(0, txn_count):
-            f.write(f"{i}\n")
-
-    # REPLAY 실행한다.
+    full_replay_stdout_name = full_replay_log_name + ".stdout"
+    full_replay_stderr_name = full_replay_log_name + ".stderr"
+    full_replay_report_name = full_replay_log_name + ".report.json"
+    # full replay 실행한다. (single-thread)
     session.run_db_state_change(
         DB_STATE_CHANGE_BASE_OPTIONS + [
             '-N',
-            '-r', full_replay_mt_report_name,
-            'replay'
-        ],
-        stdout_name=full_replay_mt_stdout_name,
-        stderr_name=full_replay_mt_stderr_name,
-        pipe_stdin_file=full_replay_input
-    )
-
-    replay_mt_report = read_state_change_report(f"{session.session_path}/{full_replay_mt_report_name}")
-
-
-    full_replay_st_stdout_name = full_replay_log_name + ".st.stdout"
-    full_replay_st_stderr_name = full_replay_log_name + ".st.stderr"
-    full_replay_st_report_name = full_replay_log_name + ".st.report.json"
-    # 위와 같은 조건으로 REPLAY를 한번 더 실행한다. (single-thread)
-    session.run_db_state_change(
-        DB_STATE_CHANGE_BASE_OPTIONS + [
-            '-N',
-            '-r', full_replay_st_report_name,
+            '-r', full_replay_report_name,
             "full-replay"
         ],
-        stdout_name=full_replay_st_stdout_name,
-        stderr_name=full_replay_st_stderr_name,
+        stdout_name=full_replay_stdout_name,
+        stderr_name=full_replay_stderr_name,
         )
 
-    replay_st_report = read_state_change_report(f"{session.session_path}/{full_replay_st_report_name}")
+    replay_report = read_state_change_report(f"{session.session_path}/{full_replay_report_name}")
 
     logger.info(f"State Change Report: {full_replay_log_name}")
-    logger.info(f"full-replay-mt: {replay_mt_report['executionTime']}, full-replay-st: {replay_st_report['executionTime']}")
+    logger.info(f"full-replay: {replay_report['executionTime']}")
 
 if __name__ == "__main__":
     if not download_mysql():

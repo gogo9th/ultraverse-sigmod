@@ -23,6 +23,7 @@
 #include "StateChanger.hpp"
 
 #include "StateChangeReport.hpp"
+#include "StateChangeReplayPlan.hpp"
 
 
 namespace {
@@ -489,7 +490,9 @@ namespace ultraverse::state::v2 {
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
         
-        std::atomic<size_t> replayGidCount = 0;
+        std::vector<gid_t> replayGids;
+        replayGids.reserve(1024);
+        StateChangeReplayPlan replayPlan;
         size_t totalCount = 0;
         
         createIntermediateDB();
@@ -531,12 +534,11 @@ namespace ultraverse::state::v2 {
 
         ColumnSet columnTaint;
         
-        auto flushReplayTasks = [&replayTasks, &replayGidCount]() {
+        auto flushReplayTasks = [&replayTasks, &replayGids]() {
             for (auto &future : replayTasks) {
                 gid_t gid = future.get();
                 if (gid != UINT64_MAX) {
-                    std::cout << gid << std::endl;
-                    replayGidCount.fetch_add(1, std::memory_order_relaxed);
+                    replayGids.push_back(gid);
                 }
             }
             replayTasks.clear();
@@ -578,7 +580,10 @@ namespace ultraverse::state::v2 {
 
                 if (_plan.hasUserQuery(transaction->gid())) {
                     auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transaction->gid()]));
+                    userQuery->setGid(transaction->gid());
+                    userQuery->setTimestamp(transaction->timestamp());
                     rowCluster.addPrependTarget(transaction->gid(), userQuery, cachedResolver);
+                    replayPlan.userQueries.emplace(transaction->gid(), *userQuery);
 
                     ColumnRW prependColumns = collectColumnRW(userQuery);
                     columnTaint.insert(prependColumns.write.begin(), prependColumns.write.end());
@@ -647,11 +652,15 @@ namespace ultraverse::state::v2 {
             _phase2Time = time.count();
         }
         
-        report.setReplayGidCount(replayGidCount.load());
+        std::sort(replayGids.begin(), replayGids.end());
+        replayGids.erase(std::unique(replayGids.begin(), replayGids.end()), replayGids.end());
+        replayPlan.gids = replayGids;
+
+        report.setReplayGidCount(replayGids.size());
         report.setTotalCount(totalCount);
         report.setExecutionTime(_phase2Time);
         
-        auto replayCountValue = replayGidCount.load();
+        auto replayCountValue = replayGids.size();
         _logger->info("prepare(): {} / {} transactions will be replayed ({}%)", replayCountValue, totalCount, ((double) replayCountValue / totalCount) * 100);
         // rowCluster.describe();
         
@@ -661,11 +670,13 @@ namespace ultraverse::state::v2 {
             dropIntermediateDB();
         }
         
-        std::cout.flush();
-        
         std::string replaceQuery = rowCluster.generateReplaceQuery(_plan.dbName(), "__INTERMEDIATE_DB__", cachedResolver);
         _logger->debug("TODO: execute query: \n{}", replaceQuery);
         report.setReplaceQuery(replaceQuery);
+
+        const std::string replayPlanPath = _plan.stateLogPath() + "/" + _plan.stateLogName() + ".ultreplayplan";
+        _logger->info("prepare(): writing replay plan to {}", replayPlanPath);
+        replayPlan.save(replayPlanPath);
 
         if (_closeStandardFds) {
             close(STDIN_FILENO);

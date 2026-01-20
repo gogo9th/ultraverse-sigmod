@@ -101,6 +101,7 @@ namespace ultraverse {
             "    make_cluster           creates row cluster file\n"
             "    rollback=gid           rollbacks specified transaction\n"
             "    prepend=gid,sqlfile    appends query before specified transaction\n"
+            "    replay                replays transactions from replay plan\n"
             "    full_replay            full replay (replay all transactions)\n"
             "\n"
             "Options: \n"
@@ -127,7 +128,11 @@ namespace ultraverse {
             "    DB_USER           Database User\n"
             "    DB_PASS           Database Password\n"
             "    BINLOG_PATH       Path to MySQL-variant binlog (default = /var/lib/mysql)\n"
-            "    RANGE_COMP_METHOD Range comparison method (intersect,eqonly; default=eqonly)\n";
+            "    RANGE_COMP_METHOD Range comparison method (intersect,eqonly; default=eqonly)\n"
+            "\n"
+            "Notes:\n"
+            "    prepare phase writes <stateLogName>.ultreplayplan in state log path\n"
+            "    replay action reads the same .ultreplayplan file\n";
             
             return 0;
         }

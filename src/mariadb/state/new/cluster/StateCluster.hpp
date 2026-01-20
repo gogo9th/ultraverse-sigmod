@@ -183,7 +183,7 @@ namespace ultraverse::state::v2 {
         /**
          * rollback / append 대상 트랜잭션의 캐시를 갱신한다.
          */
-        void invalidateTargetCache(std::unordered_map<gid_t, TargetTransactionCache> &targets, const RelationshipResolver &resolver);
+        void invalidateTargetCache(const RelationshipResolver &resolver);
         
         /**
          * @brief 주어진 gid를 가진 트랜잭션이 재실행 대상인지 확인한다 (internal)

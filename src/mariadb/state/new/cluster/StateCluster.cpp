@@ -460,7 +460,7 @@ namespace ultraverse::state::v2 {
         }));
         
         if (revalidate) {
-            invalidateTargetCache(_rollbackTargets, resolver);
+            invalidateTargetCache(resolver);
         }
     }
     
@@ -474,113 +474,130 @@ namespace ultraverse::state::v2 {
             {}, {}
         }));
         
-        invalidateTargetCache(_prependTargets, resolver);
+        invalidateTargetCache(resolver);
     }
     
-    void StateCluster::invalidateTargetCache(std::unordered_map<gid_t, TargetTransactionCache> &targets, const RelationshipResolver &resolver) {
+    void StateCluster::invalidateTargetCache(const RelationshipResolver &resolver) {
     
 #ifdef STATECLUSTER_USE_NEW_APPROACH
         _logger->debug("invalidateTargetCache() called");
         _replayTargets.clear();
-        
-        for (auto &pair: targets) {
-            gid_t gid = pair.first;
-            
-            for (const auto &cluster: _clusters) {
-                if (keyColumns().find(cluster.first) == keyColumns().end()) {
-                    continue;
-                }
-                
-                const auto &read = cluster.second.read;
-                const auto &write = cluster.second.write;
-                
-                for (const auto &writePair: write) {
-                    const auto &range = writePair.first;
-                    const auto &gids = writePair.second;
-                    
-                    if (gids.find(gid) == gids.end()) {
+
+        auto rebuildTargets = [&](auto &targets) {
+            for (auto &pair: targets) {
+                gid_t gid = pair.first;
+                auto &cache = pair.second;
+                cache.read.clear();
+                cache.write.clear();
+
+                for (const auto &cluster: _clusters) {
+                    if (keyColumns().find(cluster.first) == keyColumns().end()) {
                         continue;
                     }
-                    
-                    pair.second.write.emplace(cluster.first, range);
-                    _replayTargets.insert(gids.begin(), gids.end());
-                    
-                    const auto &depRangeIt = std::find_if(read.begin(), read.end(), [&range](const auto &pair) {
-                        return pair.first == range || StateRange::isIntersects(pair.first, range);
-                    });
-                    
-                    if (depRangeIt == read.end()) {
-                        continue;
+
+                    const auto &read = cluster.second.read;
+                    const auto &write = cluster.second.write;
+
+                    for (const auto &writePair: write) {
+                        const auto &range = writePair.first;
+                        const auto &gids = writePair.second;
+
+                        if (gids.find(gid) == gids.end()) {
+                            continue;
+                        }
+
+                        cache.write.emplace(cluster.first, range);
+                        _replayTargets.insert(gids.begin(), gids.end());
+
+                        const auto &depRangeIt = std::find_if(read.begin(), read.end(), [&range](const auto &pair) {
+                            return pair.first == range || StateRange::isIntersects(pair.first, range);
+                        });
+
+                        if (depRangeIt == read.end()) {
+                            continue;
+                        }
+
+                        cache.read.emplace(cluster.first, depRangeIt->first);
+
+                        const auto &depGids = depRangeIt->second;
+                        _replayTargets.insert(depGids.begin(), depGids.end());
                     }
-                    
-                    pair.second.read.emplace(cluster.first, depRangeIt->first);
-                    
-                    const auto &depGids = depRangeIt->second;
-                    _replayTargets.insert(depGids.begin(), depGids.end());
                 }
             }
+        };
+
+        rebuildTargets(_rollbackTargets);
+        rebuildTargets(_prependTargets);
+
+        for (auto &pair: _rollbackTargets) {
+            _replayTargets.erase(pair.first);
         }
-        
-        for (auto &pair: targets) {
-            gid_t gid = pair.first;
-            _replayTargets.erase(gid);
+        for (auto &pair: _prependTargets) {
+            _replayTargets.erase(pair.first);
         }
         
         _logger->debug("invalidateTargetCache() end");
 #else
         _targetCache.clear();
-        
-        for (auto &pair: targets) {
-            auto &cache = pair.second;
-            
-            for (const auto &keyColumn: _keyColumns) {
-                std::string column = resolver.resolveChain(keyColumn);
-                
-                if (column.empty()) {
-                    column = keyColumn;
-                }
-                
-                // auto readRange = match(READ, keyColumn, cache.transaction, resolver);
-                auto writeRange = match(WRITE, column, cache.transaction, resolver);
-                
-                /*
-                if (readRange.has_value()) {
-                    cache.read[keyColumn] = readRange.value();
-                }
-                 */
-                
-                if (writeRange.has_value()) {
-                    const auto &range = writeRange.value();
-                    cache.write[column] = range;
-                    
-                    std::unordered_map<StateRange, TargetGidSetRef> &cacheMap = _targetCache[column];
-                    TargetGidSetRef &entry = cacheMap[range];
-                    
-                    const auto &cluster = _clusters.at(column);
-                    
-                    if (entry.read == nullptr) {
-                        auto itRead = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(),
-                                                   [this, &range](const auto &pair) {
-                                                       return pair.first == range ||
-                                                              StateRange::isIntersects(pair.first, range);
-                                                   });
-                        
-                        if (itRead != cluster.read.end()) {
-                            entry.read = &itRead->second;
-                            cache.read[column] = itRead->first;
-                        }
+
+        auto rebuildTargets = [&](auto &targets) {
+            for (auto &pair: targets) {
+                auto &cache = pair.second;
+                cache.read.clear();
+                cache.write.clear();
+
+                for (const auto &keyColumn: _keyColumns) {
+                    std::string column = resolver.resolveChain(keyColumn);
+
+                    if (column.empty()) {
+                        column = keyColumn;
                     }
-                    
-                    if (entry.write == nullptr) {
-                        auto itWrite = cluster.write.find(range);
-                        if (itWrite != cluster.write.end()) {
-                            entry.write = &itWrite->second;
-                            cache.write[column] = itWrite->first;
+
+                    // auto readRange = match(READ, keyColumn, cache.transaction, resolver);
+                    auto writeRange = match(WRITE, column, cache.transaction, resolver);
+
+                    /*
+                    if (readRange.has_value()) {
+                        cache.read[keyColumn] = readRange.value();
+                    }
+                     */
+
+                    if (writeRange.has_value()) {
+                        const auto &range = writeRange.value();
+                        cache.write[column] = range;
+
+                        std::unordered_map<StateRange, TargetGidSetRef> &cacheMap = _targetCache[column];
+                        TargetGidSetRef &entry = cacheMap[range];
+
+                        const auto &cluster = _clusters.at(column);
+
+                        if (entry.read == nullptr) {
+                            auto itRead = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(),
+                                                       [this, &range](const auto &pair) {
+                                                           return pair.first == range ||
+                                                                  StateRange::isIntersects(pair.first, range);
+                                                       });
+
+                            if (itRead != cluster.read.end()) {
+                                entry.read = &itRead->second;
+                                cache.read[column] = itRead->first;
+                            }
+                        }
+
+                        if (entry.write == nullptr) {
+                            auto itWrite = cluster.write.find(range);
+                            if (itWrite != cluster.write.end()) {
+                                entry.write = &itWrite->second;
+                                cache.write[column] = itWrite->first;
+                            }
                         }
                     }
                 }
             }
-        }
+        };
+
+        rebuildTargets(_rollbackTargets);
+        rebuildTargets(_prependTargets);
 #endif
     }
     
@@ -658,25 +675,32 @@ namespace ultraverse::state::v2 {
                         changed = true;
                         conds.push_back(fmt::format("({})", range.MakeWhereQuery(keyColumn)));
                     };
-                    
-                    for (const auto &pair : _rollbackTargets) {
-                        const auto &targetCache = pair.second;
-                        
-                        auto itRead = targetCache.read.find(resolvedColumn);
-                        if (itRead != targetCache.read.end()) {
-                            appendRange(itRead->second);
-                            if (isWildcard) {
-                                goto NEXT_COLUMN;
+
+                    auto appendTargets = [&](const auto &targets) {
+                        for (const auto &pair : targets) {
+                            const auto &targetCache = pair.second;
+
+                            auto itRead = targetCache.read.find(resolvedColumn);
+                            if (itRead != targetCache.read.end()) {
+                                appendRange(itRead->second);
+                                if (isWildcard) {
+                                    return;
+                                }
+                            }
+
+                            auto itWrite = targetCache.write.find(resolvedColumn);
+                            if (itWrite != targetCache.write.end()) {
+                                appendRange(itWrite->second);
+                                if (isWildcard) {
+                                    return;
+                                }
                             }
                         }
-                        
-                        auto itWrite = targetCache.write.find(resolvedColumn);
-                        if (itWrite != targetCache.write.end()) {
-                            appendRange(itWrite->second);
-                            if (isWildcard) {
-                                goto NEXT_COLUMN;
-                            }
-                        }
+                    };
+
+                    appendTargets(_rollbackTargets);
+                    if (!isWildcard) {
+                        appendTargets(_prependTargets);
                     }
                 }
                 

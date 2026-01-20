@@ -176,7 +176,7 @@ $ DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=admin DB_PASS=password \
 ```
 The output files are as follows: `benchbase.ulttables`, `benchbase.ultindex`, `benchbase.ultcolumns`, and `benchbase.ultcluster`. 
 
-<u>**Step 7.**</u> Perform the change state. (see `./db_state_change -h` for more information)
+<u>**Step 7.**</u> Prepare the change state (rollback/prepend). This writes `benchbase.ultreplayplan` in the state log path. (see `./db_state_change -h` for more information)
 
 ```console
 $ echo "UPDATE useracct SET name = 'HELOWRLD' WHERE u_id = 512;" > prepend1.sql 
@@ -188,6 +188,19 @@ $ DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=admin DB_PASS=password \
        -d benchbase \
        -k "item2.i_id,useracct.u_id" \
        rollback=2:rollback=32
+```
+
+<u>**Step 8.**</u> Replay using the generated `.ultreplayplan` (no stdin required).
+
+```console
+$ DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=admin DB_PASS=password \
+    ../src/db_state_change \
+       -i benchbase \
+       -b checkpoint-epinions.backup \
+       -d benchbase \
+       -k "item2.i_id,useracct.u_id" \
+       -N \
+       replay
 ```
 
 

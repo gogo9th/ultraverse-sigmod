@@ -37,6 +37,7 @@ namespace ultraverse::state::v2 {
         std::mutex mutex;
         
         std::atomic_bool ready = false;
+        std::atomic_bool hold = false;
         std::atomic_int processedBy = -1;
         std::atomic_bool finalized = false;
         std::atomic_bool willBeRemoved = false;
@@ -96,7 +97,7 @@ namespace ultraverse::state::v2 {
          * @return 그래프의 노드 ID를 반환한다.
          * @note 그래프의 노드 ID는 트랜잭션 GID와 다르다!
          */
-        RowGraphId addNode(std::shared_ptr<Transaction> transaction);
+        RowGraphId addNode(std::shared_ptr<Transaction> transaction, bool hold = false);
         
         /**
          * @brief 사용되지 않음
@@ -127,6 +128,16 @@ namespace ultraverse::state::v2 {
          * @brief 노드 ID로 노드에 액세스한다.
          */
         std::shared_ptr<RowGraphNode> nodeFor(RowGraphId nodeId);
+
+        /**
+         * @brief 수동으로 간선을 추가한다.
+         */
+        void addEdge(RowGraphId from, RowGraphId to);
+
+        /**
+         * @brief 수동 hold를 해제한다.
+         */
+        void releaseNode(RowGraphId nodeId);
         
         /**
          * @brief 가비지 콜렉팅을 실시한다. (처리된 노드들을 제거한다.)
