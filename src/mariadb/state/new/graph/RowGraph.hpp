@@ -5,12 +5,16 @@
 #ifndef ULTRAVERSE_ROWGRAPH_HPP
 #define ULTRAVERSE_ROWGRAPH_HPP
 
-#include <string>
-#include <vector>
-#include <memory>
 #include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <vector>
 
 #include <boost/graph/adjacency_list.hpp>
 
@@ -20,7 +24,6 @@
 #include "../RangeComparisonMethod.hpp"
 
 #include "utils/log.hpp"
-#include "base/TaskExecutor.hpp"
 
 
 namespace ultraverse::state::v2 {
@@ -37,6 +40,7 @@ namespace ultraverse::state::v2 {
         std::atomic_int processedBy = -1;
         std::atomic_bool finalized = false;
         std::atomic_bool willBeRemoved = false;
+        std::atomic_uint32_t pendingColumns = 0;
     };
     
     using RowGraphInternal =
@@ -62,8 +66,26 @@ namespace ultraverse::state::v2 {
         struct RWStateHolder {
             RowGraphId read  = nullptr;
             RowGraphId write = nullptr;
+            gid_t readGid = 0;
+            gid_t writeGid = 0;
             
             std::mutex mutex;
+        };
+        struct ColumnTask {
+            RowGraphId nodeId;
+            std::vector<StateItem> readItems;
+            std::vector<StateItem> writeItems;
+        };
+        struct ColumnWorker {
+            std::string column;
+            std::unordered_map<StateRange, RWStateHolder> nodeMap;
+            std::mutex mapMutex;
+
+            std::mutex queueMutex;
+            std::condition_variable queueCv;
+            std::deque<ColumnTask> queue;
+            std::atomic_bool running = true;
+            std::thread worker;
         };
         explicit RowGraph(const std::set<std::string> &keyColumns, const RelationshipResolver &resolver);
         
@@ -118,12 +140,20 @@ namespace ultraverse::state::v2 {
         
         RangeComparisonMethod rangeComparisonMethod() const;
         void setRangeComparisonMethod(RangeComparisonMethod rangeComparisonMethod);
+
+// #ifdef ULTRAVERSE_TESTING
+        size_t debugNodeMapSize(const std::string &column);
+        size_t debugTotalNodeMapSize();
+// #endif
         
     private:
         /**
          * @brief 의존성을 해결하여 노드와 노드간 간선 (edge)를 추가한다.
          */
-        void buildEdge(RowGraphId nodeId);
+        void enqueueTask(const std::string &column, ColumnTask task);
+        void columnWorkerLoop(ColumnWorker &worker);
+        void processColumnTask(ColumnWorker &worker, ColumnTask &task);
+        void markColumnTaskDone(RowGraphId nodeId);
         
         LoggerPtr _logger;
         const RelationshipResolver &_resolver;
@@ -136,20 +166,13 @@ namespace ultraverse::state::v2 {
          * @brief (컬럼, Range)를 가장 마지막으로 읽고 쓴 노드 ID를 저장하는 맵
          * @details 노드간 간선을 빠르게 추가하기 위해 사용한다.
          */
-        std::map<
-            std::string,
-            std::unordered_map<StateRange, RWStateHolder>
-        > _nodeMap;
-        std::shared_mutex _nodeMapMutex;
+        std::unordered_map<std::string, std::unique_ptr<ColumnWorker>> _columnWorkers;
         
         
         RWMutex _graphMutex;
         /** @deprecated `_graphMutex`를 대신 사용하십시오. */
         std::mutex _mutex;
         std::atomic_bool _isGCRunning = false;
-        std::atomic_uint64_t _workerCount = 0;
-        
-        TaskExecutor _taskExecutor;
         
         RangeComparisonMethod _rangeComparisonMethod;
     };
