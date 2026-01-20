@@ -14,6 +14,18 @@
 #include "StateCluster.hpp"
 
 namespace ultraverse::state::v2 {
+
+    namespace {
+        constexpr size_t kParallelMinItems = 256;
+
+        std::set<std::string> normalizeKeyColumns(const std::set<std::string> &keyColumns) {
+            std::set<std::string> normalized;
+            for (const auto &keyColumn : keyColumns) {
+                normalized.insert(utility::toLower(keyColumn));
+            }
+            return normalized;
+        }
+    }
     
     StateCluster::Cluster::Cluster(): read(), write() {
     
@@ -41,9 +53,7 @@ namespace ultraverse::state::v2 {
     
     decltype(StateCluster::Cluster::pendingRead.begin()) StateCluster::Cluster::pending_findByRange(StateCluster::ClusterType type, const StateRange &range) {
         auto &cluster = type == READ ? pendingRead : pendingWrite;
-        auto &mutex = type == READ ? readLock : writeLock;
-        
-        return std::find_if(std::execution::par_unseq, cluster.begin(), cluster.end(), [&range](const auto &pair) {
+        return std::find_if(cluster.begin(), cluster.end(), [&range](const auto &pair) {
             return pair.first == range || StateRange::isIntersects(pair.first, range);
         });
     }
@@ -55,12 +65,13 @@ namespace ultraverse::state::v2 {
         std::scoped_lock _lock(mutex);
         
         std::vector<std::pair<StateRange, std::unordered_set<gid_t>>> merged;
+        merged.reserve(cluster.size());
         
         for (auto &it : cluster) {
             auto &range = it.first;
             auto &gids = it.second;
             
-            auto it2 = std::find_if(std::execution::par_unseq, merged.begin(), merged.end(), [&range](const auto &pair) {
+            auto it2 = std::find_if(merged.begin(), merged.end(), [&range](const auto &pair) {
                 return pair.first == range || StateRange::isIntersects(pair.first, range);
             });
             
@@ -72,13 +83,7 @@ namespace ultraverse::state::v2 {
             }
         }
         
-        cluster.clear();
-        
-        for (auto &pair : merged) {
-            cluster.emplace_back(std::move(pair));
-        }
-        
-        merged.clear();
+        cluster = std::move(merged);
     }
     
     void StateCluster::merge() {
@@ -97,14 +102,14 @@ namespace ultraverse::state::v2 {
     }
     
     void StateCluster::Cluster::finalize() {
-        for (const auto &pair: pendingRead) {
-            read.emplace(pair);
+        for (auto &pair: pendingRead) {
+            read.emplace(std::move(pair.first), std::move(pair.second));
         }
         
         pendingRead.clear();
         
-        for (const auto &pair: pendingWrite) {
-            write.emplace(pair);
+        for (auto &pair: pendingWrite) {
+            write.emplace(std::move(pair.first), std::move(pair.second));
         }
         
         pendingWrite.clear();
@@ -116,10 +121,41 @@ namespace ultraverse::state::v2 {
                                                            const ClusterMap &cluster,
                                                            const std::vector<StateItem> &items,
                                                            const RelationshipResolver &resolver) {
-        
-        auto it = std::find_if(cluster.begin(), cluster.end(), [type, &resolver, &columnName, &items](const auto &pair) {
+        const bool useParallel = items.size() >= kParallelMinItems;
+        auto it = std::find_if(cluster.begin(), cluster.end(), [type, &resolver, &columnName, &items, useParallel](const auto &pair) {
             const StateRange &range = pair.first;
-            return std::any_of(std::execution::par, items.begin(), items.end(), [type, &resolver, &columnName, &range](const StateItem &item) {
+            if (useParallel) {
+                return std::any_of(std::execution::par, items.begin(), items.end(), [type, &resolver, &columnName, &range](const StateItem &item) {
+                    // FIXME: 이거 개느릴거같은데;;
+                    
+                    // Q: 이거 std::move 해야 하지 않나?
+                    // A: 아니야. 그냥 const & 로 해야해. 그래야 더 빠르거든.
+                    // Q: 왜?
+                    // A: std::move 는 rvalue 로 바꿔주는거야. 그래서 이동 생성자를 호출하거든.
+                    
+                    // WRITE가 FK에 대해 직접 write하는 경우는 없으므로 chain resolve는 READ에 대해서만 수행한다.
+    
+                    const auto &real = (type == READ) ?
+                        resolver.resolveRowChain(item) :
+                        resolver.resolveRowAlias(item);
+                    
+                    if (real != nullptr) {
+                        return real->name == columnName && StateRange::isIntersects(real->MakeRange2(), range);
+                    } else {
+                        const auto &realColumn = (type == READ) ?
+                                                 resolver.resolveChain(item.name) :
+                                                 resolver.resolveColumnAlias(item.name);
+                        
+                        if (!realColumn.empty()) {
+                            return realColumn == columnName && StateRange::isIntersects(item.MakeRange2(), range);
+                        } else {
+                            return item.name == columnName && StateRange::isIntersects(item.MakeRange2(), range);
+                        }
+                    }
+                });
+            }
+
+            return std::any_of(items.begin(), items.end(), [type, &resolver, &columnName, &range](const StateItem &item) {
                 // FIXME: 이거 개느릴거같은데;;
                 
                 // Q: 이거 std::move 해야 하지 않나?
@@ -173,10 +209,15 @@ namespace ultraverse::state::v2 {
     
     StateCluster::StateCluster(const std::set<std::string> &keyColumns):
         _logger(createLogger("StateCluster")),
-        _keyColumns(keyColumns),
-        _keyColumnsMap(std::move(buildKeyColumnsMap(keyColumns))),
+        _keyColumnsMapOriginal(std::move(buildKeyColumnsMap(keyColumns))),
+        _keyColumns(normalizeKeyColumns(keyColumns)),
+        _keyColumnsMap(std::move(buildKeyColumnsMap(_keyColumns))),
         _clusters()
     {
+        _clusters.reserve(_keyColumns.size() * 2);
+        for (const auto &keyColumn : _keyColumns) {
+            _clusters.emplace(keyColumn, Cluster{});
+        }
     
     }
     
@@ -202,22 +243,26 @@ namespace ultraverse::state::v2 {
     }
     
     void StateCluster::insert2(StateCluster::ClusterType type, const std::string &columnName, const StateRange &range, gid_t gid) {
-        auto &clusterContainer = _clusters[columnName];
+        auto it = _clusters.find(columnName);
+        if (it == _clusters.end()) {
+            return;
+        }
+        auto &clusterContainer = it->second;
         auto &cluster = type == READ ? clusterContainer.pendingRead : clusterContainer.pendingWrite;
         auto &mutex = type == READ ? clusterContainer.readLock : clusterContainer.writeLock;
         
         std::scoped_lock _lock(mutex);
         
-        auto it = clusterContainer.pending_findByRange(type, range);
+        auto it2 = clusterContainer.pending_findByRange(type, range);
         
-        if (it != cluster.end()) {
-            StateRange dstRange(it->first);
+        if (it2 != cluster.end()) {
+            StateRange dstRange(it2->first);
             dstRange.OR_FAST(range);
             
-            if (it->first != dstRange) {
-                it->first = dstRange;
+            if (it2->first != dstRange) {
+                it2->first = dstRange;
             }
-            it->second.emplace(gid);
+            it2->second.emplace(gid);
         } else {
             cluster.emplace_back(std::make_pair(range, std::unordered_set<gid_t> { gid }));
         }
@@ -365,6 +410,7 @@ namespace ultraverse::state::v2 {
         }
         
         // insert all values to vector
+        _readKeyItems.reserve(readKeyItems.size());
         std::transform(
             readKeyItems.begin(), readKeyItems.end(),
             std::back_inserter(_readKeyItems),
@@ -373,6 +419,7 @@ namespace ultraverse::state::v2 {
             }
         );
         
+        _writeKeyItems.reserve(writeKeyItems.size());
         std::transform(
             writeKeyItems.begin(), writeKeyItems.end(),
             std::back_inserter(_writeKeyItems),
@@ -572,7 +619,7 @@ namespace ultraverse::state::v2 {
                         const auto &cluster = _clusters.at(column);
 
                         if (entry.read == nullptr) {
-                            auto itRead = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(),
+                            auto itRead = std::find_if(cluster.read.begin(), cluster.read.end(),
                                                        [this, &range](const auto &pair) {
                                                            return pair.first == range ||
                                                                   StateRange::isIntersects(pair.first, range);
@@ -648,7 +695,7 @@ namespace ultraverse::state::v2 {
     std::string StateCluster::generateReplaceQuery(const std::string &targetDB, const std::string &intermediateDB, const RelationshipResolver &resolver) {
         std::string query = fmt::format("use {};\nSET FOREIGN_KEY_CHECKS=0;\n", targetDB);
         
-        for (const auto &pair: _keyColumnsMap) {
+        for (const auto &pair: _keyColumnsMapOriginal) {
             const auto &tableName = pair.first;
             const auto &keyColumns = pair.second;
             
@@ -742,7 +789,7 @@ namespace ultraverse::state::v2 {
             const auto &range = pair.second;
             
             const auto &cluster = _clusters.at(columnName);
-            auto it = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(), [this, &range](const auto &pair) {
+            auto it = std::find_if(cluster.read.begin(), cluster.read.end(), [this, &range](const auto &pair) {
                 return pair.first == range || StateRange::isIntersects(pair.first, range);
             });
             
@@ -760,7 +807,7 @@ namespace ultraverse::state::v2 {
                  */
             }
             
-            auto itWrite = std::find_if(std::execution::par_unseq, cluster.write.begin(), cluster.write.end(), [this, &range](const auto &pair) {
+            auto itWrite = std::find_if(cluster.write.begin(), cluster.write.end(), [this, &range](const auto &pair) {
                 return pair.first == range || StateRange::isIntersects(pair.first, range);
             });
             

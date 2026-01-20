@@ -194,6 +194,8 @@ namespace ultraverse::state::v2 {
         
         std::mutex _clusterInsertionLock;
         
+        std::map<std::string, std::set<std::string>> _keyColumnsMapOriginal;
+
         std::set<std::string> _keyColumns;
         std::map<std::string, std::set<std::string>> _keyColumnsMap;
         std::unordered_map<std::string, Cluster> _clusters;
