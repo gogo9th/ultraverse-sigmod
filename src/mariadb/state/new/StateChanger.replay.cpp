@@ -129,11 +129,7 @@ namespace ultraverse::state::v2 {
         });
         
         std::vector<std::thread> workerThreads;
-        
-        for (int i = 0; i < _plan.threadNum(); i++) {
-            workerThreads.emplace_back(&StateChanger::replayThreadMain, this, i, std::ref(rowGraph));
-        }
-        
+
         if (!_plan.dbDumpPath().empty()) {
             auto load_backup_start = std::chrono::steady_clock::now();
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
@@ -154,6 +150,10 @@ namespace ultraverse::state::v2 {
         
         auto phase_main_start = std::chrono::steady_clock::now();
         _logger->info("replay(): executing replay plan...");
+
+        for (int i = 0; i < _plan.threadNum(); i++) {
+            workerThreads.emplace_back(&StateChanger::replayThreadMain, this, i, std::ref(rowGraph));
+        }
         
         if (replayThread.joinable()) {
             replayThread.join();
