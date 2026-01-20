@@ -82,6 +82,14 @@ namespace ultraverse::state::v2 {
                 query->writeSet().end(),
                 event.writeSet().begin(), event.writeSet().end()
             );
+
+            {
+                ColumnSet readColumns;
+                ColumnSet writeColumns;
+                event.columnRWSet(readColumns, writeColumns);
+                query->readColumns().insert(readColumns.begin(), readColumns.end());
+                query->writeColumns().insert(writeColumns.begin(), writeColumns.end());
+            }
             
             *transaction << query;
         }

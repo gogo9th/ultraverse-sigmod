@@ -24,6 +24,9 @@ namespace ultraverse::state::v2 {
             _readSet,
             _writeSet,
             _varMap,
+
+            _readColumns,
+            _writeColumns,
             
             _affectedRows
         );

@@ -20,6 +20,7 @@
 #include "mariadb/state/new/StateIO.hpp"
 #include "mariadb/state/new/cluster/StateCluster.hpp"
 #include "mariadb/state/new/cluster/StateRelationshipResolver.hpp"
+#include "utils/StringUtil.hpp"
 
 namespace {
     using ultraverse::mariadb::MockedDBHandle;
@@ -164,6 +165,18 @@ namespace {
 
         auto &writeSet = query->writeSet();
         writeSet = writes;
+
+        for (const auto &item : readSet) {
+            if (!item.name.empty()) {
+                query->readColumns().insert(ultraverse::utility::toLower(item.name));
+            }
+        }
+
+        for (const auto &item : writeSet) {
+            if (!item.name.empty()) {
+                query->writeColumns().insert(ultraverse::utility::toLower(item.name));
+            }
+        }
 
         return query;
     }
@@ -387,6 +400,60 @@ TEST_CASE("StateChanger prepare handles multiple rollback targets and partial-ke
     REQUIRE(!gids.empty());
 
     REQUIRE(gids == expected);
+}
+
+TEST_CASE("StateChanger prepare includes column-wise dependent queries without key columns", "[statechanger][prepare][columnwise]") {
+    auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+
+    auto plan = makePlan(1);
+    plan.rollbackGids().push_back(1);
+
+    StateCluster cluster(plan.keyColumns());
+    ultraverse::state::v2::StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+    CachedRelationshipResolver cachedResolver(resolver, 1000);
+
+    auto txn1 = makeTransaction(1, plan.dbName(), "/*TXN:1*/",
+                                {},
+                                {StateItem::EQ("items.name", StateData(std::string("A")))});
+    auto txn2 = makeTransaction(2, plan.dbName(), "/*TXN:2*/",
+                                {StateItem::EQ("items.name", StateData(std::string("A")))},
+                                {});
+    auto txn3 = makeTransaction(3, plan.dbName(), "/*TXN:3*/",
+                                {StateItem::EQ("items.id", StateData(static_cast<int64_t>(99)))},
+                                {});
+
+    cluster.insert(txn1, cachedResolver);
+    cluster.insert(txn2, cachedResolver);
+    cluster.insert(txn3, cachedResolver);
+    cluster.merge();
+
+    auto clusterStore = std::make_unique<MockedStateClusterStore>();
+    clusterStore->save(cluster);
+
+    auto logReader = std::make_unique<MockedStateLogReader>();
+    logReader->addTransaction(txn1, 1);
+    logReader->addTransaction(txn2, 2);
+    logReader->addTransaction(txn3, 3);
+
+    TestHandlePool pool(1, sharedState);
+
+    StateChangerIO io;
+    io.stateLogReader = std::move(logReader);
+    io.clusterStore = std::move(clusterStore);
+    io.backupLoader = std::make_unique<NoopBackupLoader>();
+    io.closeStandardFds = false;
+
+    StateChanger changer(pool, plan, std::move(io));
+
+    std::ostringstream out;
+    ScopedOStreamRedirect coutRedirect(std::cout, out.rdbuf());
+
+    changer.prepare();
+
+    auto gids = parseGidLines(out.str());
+    REQUIRE(gids.size() == 1);
+    REQUIRE(gids[0] == 2);
 }
 
 TEST_CASE("StateChanger replay respects dependency order within chains", "[statechanger][replay]") {

@@ -6,6 +6,7 @@
 #define ULTRAVERSE_STATE_QUERY_HPP
 
 #include <memory>
+#include <set>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -79,6 +80,12 @@ namespace ultraverse::state::v2 {
          * @breif Returns the set of 'row items' before the update was applied.
          */
         std::vector<StateItem> &writeSet();
+
+        ColumnSet &readColumns();
+        const ColumnSet &readColumns() const;
+
+        ColumnSet &writeColumns();
+        const ColumnSet &writeColumns() const;
         std::vector<StateItem> &varMap();
         
         std::string varMappedStatement(const std::vector<StateItem> &variableSet) const;
@@ -101,6 +108,9 @@ namespace ultraverse::state::v2 {
         std::vector<StateItem> _readSet;
         std::vector<StateItem> _writeSet;
         std::vector<StateItem> _varMap;
+
+        ColumnSet _readColumns;
+        ColumnSet _writeColumns;
         
         uint32_t _affectedRows;
     };

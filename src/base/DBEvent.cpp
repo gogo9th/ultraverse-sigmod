@@ -687,6 +687,28 @@ namespace ultraverse::base {
     std::vector<StateItem> &QueryEventBase::variableSet() {
         return _variableSet;
     }
+
+    QueryEventBase::QueryType QueryEventBase::queryType() const {
+        return _queryType;
+    }
+
+    void QueryEventBase::columnRWSet(std::set<std::string> &readColumns, std::set<std::string> &writeColumns) const {
+        for (const auto &column : _readColumns) {
+            readColumns.insert(utility::toLower(column));
+        }
+
+        for (const auto &column : _writeColumns) {
+            writeColumns.insert(utility::toLower(column));
+        }
+
+        if (_queryType == INSERT || _queryType == DELETE) {
+            for (const auto &table : _relatedTables) {
+                if (!table.empty()) {
+                    writeColumns.insert(utility::toLower(table) + ".*");
+                }
+            }
+        }
+    }
     
     std::vector<int16_t> QueryEventBase::tokens() const {
         return _tokens;

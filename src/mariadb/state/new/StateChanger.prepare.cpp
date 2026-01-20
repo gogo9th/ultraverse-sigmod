@@ -12,6 +12,7 @@
 #include <fmt/color.h>
 
 #include "GIDIndexWriter.hpp"
+#include "StateLogWriter.hpp"
 #include "cluster/RowCluster.hpp"
 
 #include "cluster/StateCluster.hpp"
@@ -24,6 +25,121 @@
 #include "StateChangeReport.hpp"
 
 
+namespace {
+    using ultraverse::state::v2::ColumnSet;
+    using ultraverse::state::v2::ForeignKey;
+    using ultraverse::state::v2::Query;
+    using ultraverse::state::v2::StateCluster;
+    using ultraverse::state::v2::Transaction;
+
+    struct ColumnRW {
+        ColumnSet read;
+        ColumnSet write;
+    };
+
+    ColumnRW collectColumnRW(const std::shared_ptr<Transaction> &transaction) {
+        ColumnRW rw;
+        for (const auto &query : transaction->queries()) {
+            if (query->flags() & Query::FLAG_IS_DDL) {
+                continue;
+            }
+            rw.read.insert(query->readColumns().begin(), query->readColumns().end());
+            rw.write.insert(query->writeColumns().begin(), query->writeColumns().end());
+        }
+        return rw;
+    }
+
+    bool isColumnRelated(const std::string &columnA,
+                         const std::string &columnB,
+                         const std::vector<ForeignKey> &foreignKeys) {
+        const auto resolvedA = ultraverse::state::v2::RowCluster::resolveForeignKey(columnA, foreignKeys);
+        const auto resolvedB = ultraverse::state::v2::RowCluster::resolveForeignKey(columnB, foreignKeys);
+
+        const auto vecA = ultraverse::utility::splitTableName(resolvedA);
+        const auto vecB = ultraverse::utility::splitTableName(resolvedB);
+
+        const auto &tableA = vecA.first;
+        const auto &colA = vecA.second;
+        const auto &tableB = vecB.first;
+        const auto &colB = vecB.second;
+
+        if (tableA.empty() || tableB.empty()) {
+            return resolvedA == resolvedB;
+        }
+
+        if (tableA == tableB && (colA == colB || colA == "*" || colB == "*")) {
+            return true;
+        }
+
+        if (colA == "*" || colB == "*") {
+            const auto it = std::find_if(foreignKeys.begin(), foreignKeys.end(), [&tableA, &tableB](const ForeignKey &fk) {
+                return (
+                    (fk.fromTable->getCurrentName() == tableA && fk.toTable->getCurrentName() == tableB) ||
+                    (fk.fromTable->getCurrentName() == tableB && fk.toTable->getCurrentName() == tableA)
+                );
+            });
+
+            if (it != foreignKeys.end()) {
+                if (colA == "*" && colB == "*") {
+                    return true;
+                }
+
+                if (colA == "*") {
+                    return it->fromColumn == colB || it->toColumn == colB;
+                }
+
+                if (colB == "*") {
+                    return it->fromColumn == colA || it->toColumn == colA;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool columnSetsRelated(const ColumnSet &taintedWrites,
+                           const ColumnSet &candidateColumns,
+                           const std::vector<ForeignKey> &foreignKeys) {
+        if (taintedWrites.empty() || candidateColumns.empty()) {
+            return false;
+        }
+
+        for (const auto &tainted : taintedWrites) {
+            for (const auto &column : candidateColumns) {
+                if (isColumnRelated(tainted, column, foreignKeys)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool hasKeyColumnItems(const std::shared_ptr<Transaction> &transaction,
+                           const StateCluster &cluster,
+                           const ultraverse::state::v2::RelationshipResolver &resolver) {
+        for (const auto &query : transaction->queries()) {
+            if (query->flags() & Query::FLAG_IS_DDL) {
+                continue;
+            }
+
+            for (const auto &item : query->readSet()) {
+                if (cluster.isKeyColumnItem(resolver, item)) {
+                    return true;
+                }
+            }
+
+            for (const auto &item : query->writeSet()) {
+                if (cluster.isKeyColumnItem(resolver, item)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+}
+
 namespace ultraverse::state::v2 {
     
     void StateChanger::makeCluster() {
@@ -31,6 +147,9 @@ namespace ultraverse::state::v2 {
         
         TaskExecutor taskExecutor(_plan.threadNum());
         StateCluster rowCluster(_plan.keyColumns());
+
+        _columnGraph = std::make_unique<ColumnDependencyGraph>();
+        _tableGraph = std::make_unique<TableDependencyGraph>();
         
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
@@ -53,6 +172,8 @@ namespace ultraverse::state::v2 {
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
         }
+
+        _tableGraph->addRelationship(_context->foreignKeys);
         
         _reader->open();
         
@@ -79,14 +200,6 @@ namespace ultraverse::state::v2 {
                         return 0;
                     }
                     
-                    if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {
-                        _logger->warn(
-                            "DDL statement found in transaction #{}, but this version of ultraverse does not support DDL statement yet",
-                            transaction->gid());
-                        _logger->warn("transaction #{} will be skipped", transaction->gid());
-                        return 0;
-                    }
-                    
                     rowCluster.insert(transaction, cachedResolver);
                     
                     for (auto &query: transaction->queries()) {
@@ -94,16 +207,26 @@ namespace ultraverse::state::v2 {
                             // FIXME: 프로시저 쿼리 어케할려고?
                             continue;
                         }
+                        if (query->flags() & Query::FLAG_IS_DDL) {
+                            _logger->warn(
+                                "DDL statement found in transaction #{}, but this version of ultraverse does not support DDL statement yet",
+                                transaction->gid());
+                            _logger->warn("DDL query will be skipped: {}", query->statement());
+                            continue;
+                        }
                         
-                        /*
                         std::scoped_lock _lock(graphLock);
                         
-                        bool isColumnGraphChanged =
-                            _columnGraph->add(query->readSet(), READ, _context->foreignKeys) ||
-                            _columnGraph->add(query->writeSet(), WRITE, _context->foreignKeys);
+                        bool isColumnGraphChanged = false;
+                        if (!query->readColumns().empty()) {
+                            isColumnGraphChanged |= _columnGraph->add(query->readColumns(), READ, _context->foreignKeys);
+                        }
+                        if (!query->writeColumns().empty()) {
+                            isColumnGraphChanged |= _columnGraph->add(query->writeColumns(), WRITE, _context->foreignKeys);
+                        }
                         
                         bool isTableGraphChanged =
-                            _tableGraph->addRelationship(query->readSet(), query->writeSet());
+                            _tableGraph->addRelationship(query->readColumns(), query->writeColumns());
                         
                         if (isColumnGraphChanged) {
                             _logger->info("updating column dependency graph");
@@ -112,7 +235,6 @@ namespace ultraverse::state::v2 {
                         if (isTableGraphChanged) {
                             _logger->info("updating table dependency graph");
                         }
-                         */
                     }
                     
                     return 0;
@@ -141,6 +263,12 @@ namespace ultraverse::state::v2 {
         
         _logger->info("make_cluster(): saving cluster..");
         _clusterStore->save(rowCluster);
+
+        {
+            StateLogWriter graphWriter(_plan.stateLogPath(), _plan.stateLogName());
+            graphWriter << *_columnGraph;
+            graphWriter << *_tableGraph;
+        }
         
         if (_plan.dropIntermediateDB()) {
             dropIntermediateDB();
@@ -299,9 +427,6 @@ namespace ultraverse::state::v2 {
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
         
-        std::mutex graphLock;
-        std::mutex stdoutLock;
-        
         std::atomic<size_t> replayGidCount = 0;
         size_t totalCount = 0;
         
@@ -337,6 +462,8 @@ namespace ultraverse::state::v2 {
         std::vector<std::future<gid_t>> replayTasks;
         replayTasks.reserve(1024);
         constexpr size_t kReplayFutureFlushSize = 10000;
+
+        ColumnSet columnTaint;
         
         auto flushReplayTasks = [&replayTasks, &replayGidCount]() {
             for (auto &future : replayTasks) {
@@ -356,41 +483,39 @@ namespace ultraverse::state::v2 {
             totalCount++;
             
             // _logger->info("read gid {}", gid);
-            
+
+            _reader->nextTransaction();
+            auto transaction = _reader->txnBody();
+
+            if (!transaction->isRelatedToDatabase(_plan.dbName())) {
+                _logger->trace("skipping transaction #{} because it is not related to database {}",
+                               transaction->gid(), _plan.dbName());
+                continue;
+            }
+
+            ColumnRW txnColumns = collectColumnRW(transaction);
+            ColumnSet txnAccess = txnColumns.read;
+            txnAccess.insert(txnColumns.write.begin(), txnColumns.write.end());
+
             if (_plan.isRollbackGid(gid) || _plan.hasUserQuery(gid)) {
-                _reader->nextTransaction();
-                auto transaction = _reader->txnBody();
-                
-                
-                if (!transaction->isRelatedToDatabase(_plan.dbName())) {
-                    _logger->trace("skipping transaction #{} because it is not related to database {}",
-                                   transaction->gid(), _plan.dbName());
-                    continue;
-                }
-                
-                if (transaction->flags() & Transaction::FLAG_CONTAINS_DDL) {
-                    _logger->warn(
-                        "DDL statement found in transaction #{}, but this version of ultraverse does not support DDL statement yet",
-                        transaction->gid());
-                    _logger->warn("transaction #{} will be skipped", transaction->gid());
-                    continue;
-                }
-                
                 auto nextGid = transaction->gid() + 1;
                 bool shouldRevalidate = !_plan.isRollbackGid(nextGid) && !_plan.hasUserQuery(nextGid);
-                
+
                 if (_plan.isRollbackGid(transaction->gid())) {
                     rowCluster.addRollbackTarget(transaction, cachedResolver, shouldRevalidate);
+                    columnTaint.insert(txnColumns.write.begin(), txnColumns.write.end());
                 }
-                
+
                 if (_plan.hasUserQuery(transaction->gid())) {
                     auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transaction->gid()]));
-                    
                     rowCluster.addPrependTarget(transaction->gid(), userQuery, cachedResolver);
+
+                    ColumnRW prependColumns = collectColumnRW(userQuery);
+                    columnTaint.insert(prependColumns.write.begin(), prependColumns.write.end());
                 }
 
                 if (_plan.performBenchInsert()) {
-                    auto promise = taskExecutor.post<gid_t>([gid, &rowCluster, &cachedResolver]() {
+                    auto promise = taskExecutor.post<gid_t>([gid, &rowCluster]() {
                         if (rowCluster.shouldReplay(gid)) {
                             return gid;
                         }
@@ -402,22 +527,40 @@ namespace ultraverse::state::v2 {
                     }
                 }
 
-               
                 continue;
-            } else {
-                auto promise = taskExecutor.post<gid_t>([gid, &rowCluster, &cachedResolver]() {
-                    if (rowCluster.shouldReplay(gid)) {
-                        return gid;
-                    }
-                    return UINT64_MAX;
-                });
-                replayTasks.emplace_back(promise->get_future());
+            }
+
+            bool isColumnDependent = columnSetsRelated(columnTaint, txnAccess, _context->foreignKeys);
+            if (isColumnDependent) {
+                columnTaint.insert(txnColumns.write.begin(), txnColumns.write.end());
+            }
+
+            if (!isColumnDependent) {
+                continue;
+            }
+
+            bool hasKeyColumns = hasKeyColumnItems(transaction, rowCluster, cachedResolver);
+            if (!hasKeyColumns) {
+                std::promise<gid_t> immediate;
+                auto future = immediate.get_future();
+                immediate.set_value(gid);
+                replayTasks.emplace_back(std::move(future));
                 if (replayTasks.size() >= kReplayFutureFlushSize) {
                     flushReplayTasks();
                 }
+                continue;
             }
-            
-            _reader->skipTransaction();
+
+            auto promise = taskExecutor.post<gid_t>([gid, &rowCluster]() {
+                if (rowCluster.shouldReplay(gid)) {
+                    return gid;
+                }
+                return UINT64_MAX;
+            });
+            replayTasks.emplace_back(promise->get_future());
+            if (replayTasks.size() >= kReplayFutureFlushSize) {
+                flushReplayTasks();
+            }
         }
         
         

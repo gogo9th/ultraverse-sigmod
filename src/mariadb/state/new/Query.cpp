@@ -102,6 +102,22 @@ namespace ultraverse::state::v2 {
     std::vector<StateItem> &Query::writeSet() {
         return _writeSet;
     }
+
+    ColumnSet &Query::readColumns() {
+        return _readColumns;
+    }
+
+    const ColumnSet &Query::readColumns() const {
+        return _readColumns;
+    }
+
+    ColumnSet &Query::writeColumns() {
+        return _writeColumns;
+    }
+
+    const ColumnSet &Query::writeColumns() const {
+        return _writeColumns;
+    }
     
     std::vector<StateItem> &Query::varMap() {
         return _varMap;

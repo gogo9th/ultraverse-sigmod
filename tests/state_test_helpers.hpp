@@ -12,6 +12,7 @@
 #include "../src/mariadb/state/new/Query.hpp"
 #include "../src/mariadb/state/new/cluster/StateRelationshipResolver.hpp"
 #include "../src/mariadb/state/new/graph/RowGraph.hpp"
+#include "../src/utils/StringUtil.hpp"
 
 namespace ultraverse::state::v2::test_helpers {
     class NoopRelationshipResolver final : public RelationshipResolver {
@@ -107,6 +108,16 @@ namespace ultraverse::state::v2::test_helpers {
         query->setDatabase(db);
         query->readSet().insert(query->readSet().end(), readItems.begin(), readItems.end());
         query->writeSet().insert(query->writeSet().end(), writeItems.begin(), writeItems.end());
+        for (const auto &item : query->readSet()) {
+            if (!item.name.empty()) {
+                query->readColumns().insert(ultraverse::utility::toLower(item.name));
+            }
+        }
+        for (const auto &item : query->writeSet()) {
+            if (!item.name.empty()) {
+                query->writeColumns().insert(ultraverse::utility::toLower(item.name));
+            }
+        }
         return query;
     }
 
@@ -166,4 +177,3 @@ namespace ultraverse::state::v2::test_helpers {
         return gids;
     }
 }
-

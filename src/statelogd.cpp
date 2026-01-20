@@ -361,6 +361,7 @@ public:
         auto transactionObj = std::make_shared<state::v2::Transaction>();
         
         auto &queries = transaction->queryObjs;
+        bool containsDDL = false;
         
         while (!queries.empty()) {
             auto pendingQuery = std::move(queries.front());
@@ -369,10 +370,18 @@ public:
             if (pendingQuery == nullptr) {
                 continue;
             }
+
+            if (pendingQuery->flags() & state::v2::Query::FLAG_IS_DDL) {
+                containsDDL = true;
+            }
             
             // auto pendingQuery = promise->get_future().get();
             
             *transactionObj << pendingQuery;
+        }
+
+        if (containsDDL) {
+            transactionObj->setFlags(transactionObj->flags() | state::v2::Transaction::FLAG_CONTAINS_DDL);
         }
         
         return std::move(transactionObj);
@@ -383,6 +392,7 @@ public:
         
         auto transactionObj = std::make_shared<state::v2::Transaction>();
         auto &queries = transaction->queryObjs;
+        bool containsDDL = false;
         
         auto procMatcher = procedureDefinition(procCall->procName());
         int prevIndex = 1;
@@ -421,6 +431,9 @@ public:
                         query->setTimestamp(pendingQuery->timestamp());
                         query->setFlags(state::v2::Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
                         *transactionObj << query;
+                        if (query->flags() & state::v2::Query::FLAG_IS_DDL) {
+                            containsDDL = true;
+                        }
                     }
                 }
                 
@@ -430,6 +443,9 @@ public:
             
             APPEND_QUERY:
             *transactionObj << pendingQuery;
+            if (pendingQuery->flags() & state::v2::Query::FLAG_IS_DDL) {
+                containsDDL = true;
+            }
         }
         
         {
@@ -445,6 +461,10 @@ public:
             transactionObj->setFlags(
                 transactionObj->flags() | state::v2::Transaction::FLAG_IS_PROCEDURE_CALL
             );
+        }
+
+        if (containsDDL) {
+            transactionObj->setFlags(transactionObj->flags() | state::v2::Transaction::FLAG_CONTAINS_DDL);
         }
         
         // _pendingTxn->variableSet() = procMatcher->variableSet(*procCall);
@@ -483,6 +503,14 @@ public:
                 event->writeSet().begin(), event->writeSet().end()
             );
 
+            {
+                state::v2::ColumnSet readColumns;
+                state::v2::ColumnSet writeColumns;
+                event->columnRWSet(readColumns, writeColumns);
+                pendingQuery->readColumns().insert(readColumns.begin(), readColumns.end());
+                pendingQuery->writeColumns().insert(writeColumns.begin(), writeColumns.end());
+            }
+
             /*
             tr->setFlags(
                 _pendingTxn->flags() |
@@ -507,6 +535,14 @@ public:
                 pendingQuery->writeSet().end(),
                 event->writeSet().begin(), event->writeSet().end()
             );
+
+            {
+                state::v2::ColumnSet readColumns;
+                state::v2::ColumnSet writeColumns;
+                event->columnRWSet(readColumns, writeColumns);
+                pendingQuery->readColumns().insert(readColumns.begin(), readColumns.end());
+                pendingQuery->writeColumns().insert(writeColumns.begin(), writeColumns.end());
+            }
 
             /*
             pendingTxn->setFlags(
@@ -628,7 +664,7 @@ public:
             dummyEvent.parseDDL(1);
         }
         dummyEvent.buildRWSet(_keyColumns);
-        
+
         pendingQuery->readSet().insert(
             pendingQuery->readSet().end(),
             dummyEvent.readSet().begin(), dummyEvent.readSet().end()
@@ -638,6 +674,14 @@ public:
             pendingQuery->writeSet().end(),
             dummyEvent.writeSet().begin(), dummyEvent.writeSet().end()
         );
+
+        {
+            state::v2::ColumnSet readColumns;
+            state::v2::ColumnSet writeColumns;
+            dummyEvent.columnRWSet(readColumns, writeColumns);
+            pendingQuery->readColumns().insert(readColumns.begin(), readColumns.end());
+            pendingQuery->writeColumns().insert(writeColumns.begin(), writeColumns.end());
+        }
         
         pendingQuery->varMap().insert(
             pendingQuery->varMap().end(),

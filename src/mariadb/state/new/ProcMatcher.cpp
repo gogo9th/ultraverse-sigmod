@@ -329,12 +329,18 @@ namespace ultraverse::state::v2 {
             );
             
             std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->variableSet()));
-            
-            event->parse();
+
+            event->tokenize();
+            if (!event->parse()) {
+                event->parseDDL(1);
+            }
             event->buildRWSet(keyColumns);
             
             query->setStatement(statement);
             query->setFlags(Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
+            if (code.type() == ultparser::Query_QueryType_DDL) {
+                query->setFlags(query->flags() | Query::FLAG_IS_DDL);
+            }
             
             query->readSet().insert(
                 query->readSet().end(),
@@ -344,6 +350,13 @@ namespace ultraverse::state::v2 {
                 query->writeSet().end(),
                 event->writeSet().begin(), event->writeSet().end()
             );
+            {
+                ColumnSet readColumns;
+                ColumnSet writeColumns;
+                event->columnRWSet(readColumns, writeColumns);
+                query->readColumns().insert(readColumns.begin(), readColumns.end());
+                query->writeColumns().insert(writeColumns.begin(), writeColumns.end());
+            }
             
             query->varMap().insert(
                 query->varMap().end(),

@@ -10,6 +10,7 @@
 
 #include <string>
 #include <unordered_set>
+#include <set>
 
 #include <ultparser_query.pb.h>
 
@@ -180,6 +181,10 @@ namespace ultraverse::base {
          * @brief SQL 변수의 row image를 반환한다.
          */
         std::vector<StateItem> &variableSet();
+
+        QueryType queryType() const;
+
+        void columnRWSet(std::set<std::string> &readColumns, std::set<std::string> &writeColumns) const;
         
     protected:
         LoggerPtr _logger;
