@@ -181,3 +181,28 @@ TEST_CASE("CachedRelationshipResolver returns consistent results") {
 
     REQUIRE(cached.resolveChain("unknown.col").empty());
 }
+
+TEST_CASE("StateRelationshipResolver resolves aliases case-insensitively") {
+    StateChangePlan plan;
+    plan.columnAliases().push_back({"users.id_str", "users.id"});
+
+    StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+
+    REQUIRE(resolver.resolveColumnAlias("Users.ID_Str") == "users.id");
+    REQUIRE(resolver.resolveChain("Users.ID_Str") == "users.id");
+}
+
+TEST_CASE("StateRelationshipResolver addTransaction ignores incomplete alias mapping") {
+    StateChangePlan plan;
+    plan.columnAliases().push_back({"users.id_str", "users.id"});
+
+    StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+
+    auto txn = makeTxn(1, "test", {}, {makeEqStr("users.id_str", "0001")});
+    resolver.addTransaction(*txn);
+
+    auto resolved = resolver.resolveRowAlias(makeEqStr("users.id_str", "0001"));
+    REQUIRE(resolved == nullptr);
+}
