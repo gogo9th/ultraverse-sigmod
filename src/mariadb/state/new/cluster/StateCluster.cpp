@@ -502,16 +502,18 @@ namespace ultraverse::state::v2 {
                         continue;
                     }
                     
+                    pair.second.write.emplace(cluster.first, range);
+                    _replayTargets.insert(gids.begin(), gids.end());
+                    
                     const auto &depRangeIt = std::find_if(read.begin(), read.end(), [&range](const auto &pair) {
                         return pair.first == range || StateRange::isIntersects(pair.first, range);
                     });
-                    
                     
                     if (depRangeIt == read.end()) {
                         continue;
                     }
                     
-                    pair.second.read[cluster.first] = depRangeIt->first;
+                    pair.second.read.emplace(cluster.first, depRangeIt->first);
                     
                     const auto &depGids = depRangeIt->second;
                     _replayTargets.insert(depGids.begin(), depGids.end());
@@ -548,23 +550,32 @@ namespace ultraverse::state::v2 {
                  */
                 
                 if (writeRange.has_value()) {
-                    cache.write[column] = writeRange.value();
-                    std::unordered_map<StateRange, std::reference_wrapper<const std::unordered_set<gid_t>>>
-                        &cacheMap = _targetCache[column];
-                    if (cacheMap.find(writeRange.value()) == cacheMap.end()) {
-                        auto range = writeRange.value();
-                        const auto &cluster = _clusters.at(column);
-                        auto it = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(),
-                                               [this, &range](const auto &pair) {
-                                                   return pair.first == range ||
-                                                          StateRange::isIntersects(pair.first, range);
-                                               });
+                    const auto &range = writeRange.value();
+                    cache.write[column] = range;
+                    
+                    std::unordered_map<StateRange, TargetGidSetRef> &cacheMap = _targetCache[column];
+                    TargetGidSetRef &entry = cacheMap[range];
+                    
+                    const auto &cluster = _clusters.at(column);
+                    
+                    if (entry.read == nullptr) {
+                        auto itRead = std::find_if(std::execution::par_unseq, cluster.read.begin(), cluster.read.end(),
+                                                   [this, &range](const auto &pair) {
+                                                       return pair.first == range ||
+                                                              StateRange::isIntersects(pair.first, range);
+                                                   });
                         
-                        if (it != cluster.read.end()) {
-                            const std::unordered_set<gid_t> &gids = it->second;
-                            cacheMap.emplace(range, std::ref(gids));
-                            
-                            cache.read[column] = it->first;
+                        if (itRead != cluster.read.end()) {
+                            entry.read = &itRead->second;
+                            cache.read[column] = itRead->first;
+                        }
+                    }
+                    
+                    if (entry.write == nullptr) {
+                        auto itWrite = cluster.write.find(range);
+                        if (itWrite != cluster.write.end()) {
+                            entry.write = &itWrite->second;
+                            cache.write[column] = itWrite->first;
                         }
                     }
                 }
@@ -598,8 +609,7 @@ namespace ultraverse::state::v2 {
                 const auto &ranges = _targetCache[keyColumn];
                 
                 if (std::any_of(ranges.begin(), ranges.end(), [gid](const auto &pair) {
-                    const auto &gids = pair.second.get();
-                    return gids.find(gid) != gids.end();
+                    return pair.second.contains(gid);
                 })) {
                     count++;
                 }
@@ -640,36 +650,34 @@ namespace ultraverse::state::v2 {
                 }
                 
                 {
-                    size_t j = 0;
-                    
-                    auto it = _rollbackTargets.begin();
-                    
-                    while (true) {
-                        it = std::find_if(
-                            it, _rollbackTargets.end(),
-                            [&resolvedColumn](const auto &pair) {
-                                return pair.second.read.find(resolvedColumn) != pair.second.read.end();
-                            }
-                       );
-                        
-                        if (it == _rollbackTargets.end()) {
-                            break;
-                        }
-                        
-                        const auto &range = it->second.read.at(resolvedColumn);
-                        
+                    auto appendRange = [&conds, &isWildcard, &changed, &keyColumn](const StateRange &range) {
                         if (range.wildcard()) {
                             isWildcard = true;
-                            goto NEXT_COLUMN;
-                        } else {
-                            changed = true;
+                            return;
+                        }
+                        changed = true;
+                        conds.push_back(fmt::format("({})", range.MakeWhereQuery(keyColumn)));
+                    };
+                    
+                    for (const auto &pair : _rollbackTargets) {
+                        const auto &targetCache = pair.second;
+                        
+                        auto itRead = targetCache.read.find(resolvedColumn);
+                        if (itRead != targetCache.read.end()) {
+                            appendRange(itRead->second);
+                            if (isWildcard) {
+                                goto NEXT_COLUMN;
+                            }
                         }
                         
-                        conds.push_back(fmt::format("({})", range.MakeWhereQuery(keyColumn)));
-                        
-                        it++;
+                        auto itWrite = targetCache.write.find(resolvedColumn);
+                        if (itWrite != targetCache.write.end()) {
+                            appendRange(itWrite->second);
+                            if (isWildcard) {
+                                goto NEXT_COLUMN;
+                            }
+                        }
                     }
-                    
                 }
                 
                 if (!conds.empty()) {
@@ -728,16 +736,18 @@ namespace ultraverse::state::v2 {
                  */
             }
             
-            /*
-            if (cluster.write.find(range) != cluster.write.end()) {
-                const auto &gids = _clusters.at(columnName).write.at(range);
+            auto itWrite = std::find_if(std::execution::par_unseq, cluster.write.begin(), cluster.write.end(), [this, &range](const auto &pair) {
+                return pair.first == range || StateRange::isIntersects(pair.first, range);
+            });
+            
+            if (itWrite != cluster.write.end()) {
+                const auto &gids = itWrite->second;
                 if (gids.find(gid) != gids.end()) {
                     // FIXME: 속도 졸라느려지므로 아래 로그 제거해야 함
-                    _logger->debug("shouldReplay({}): matched with {} ({} - WRITE)", gid, range.MakeWhereQuery(columnName), type == READ ? "READ" : "WRITE");
+                    // _logger->debug("shouldReplay({}): matched with {} ({} - WRITE)", gid, range.MakeWhereQuery(columnName), type == READ ? "READ" : "WRITE");
                     return true;
                 }
             }
-            */
             
             return false;
         };

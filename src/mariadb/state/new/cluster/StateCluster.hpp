@@ -151,6 +151,21 @@ namespace ultraverse::state::v2 {
              */
             std::unordered_map<std::string, StateRange> write;
         };
+
+        struct TargetGidSetRef {
+            const std::unordered_set<gid_t> *read = nullptr;
+            const std::unordered_set<gid_t> *write = nullptr;
+
+            bool contains(gid_t gid) const {
+                if (read != nullptr && read->find(gid) != read->end()) {
+                    return true;
+                }
+                if (write != nullptr && write->find(gid) != write->end()) {
+                    return true;
+                }
+                return false;
+            }
+        };
         
     private:
         static std::map<std::string, std::set<std::string>> buildKeyColumnsMap(const std::set<std::string> &keyColumns);
@@ -183,7 +198,7 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, Cluster> _clusters;
         
         std::mutex _targetCacheLock;
-        std::unordered_map<std::string, std::unordered_map<StateRange, std::reference_wrapper<const std::unordered_set<gid_t>>>> _targetCache;
+        std::unordered_map<std::string, std::unordered_map<StateRange, TargetGidSetRef>> _targetCache;
         std::unordered_map<gid_t, TargetTransactionCache> _rollbackTargets;
         std::unordered_map<gid_t, TargetTransactionCache> _prependTargets;
 

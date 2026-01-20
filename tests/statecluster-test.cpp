@@ -82,18 +82,24 @@ TEST_CASE("StateCluster shouldReplay identifies dependent transactions") {
     StateCluster cluster({"users.id"});
     auto rollbackTxn = makeTxn(1, "test", {}, {makeEq("users.id", 1)});
     auto dependentTxn = makeTxn(2, "test", {makeEq("users.id", 1)}, {});
+    auto dependentWriteTxn = makeTxn(4, "test", {}, {makeEq("users.id", 1)});
     auto unrelatedTxn = makeTxn(3, "test", {makeEq("users.id", 2)}, {});
+    auto unrelatedWriteTxn = makeTxn(5, "test", {}, {makeEq("users.id", 2)});
 
     cluster.insert(rollbackTxn, resolver);
     cluster.insert(dependentTxn, resolver);
+    cluster.insert(dependentWriteTxn, resolver);
     cluster.insert(unrelatedTxn, resolver);
+    cluster.insert(unrelatedWriteTxn, resolver);
     cluster.merge();
 
     cluster.addRollbackTarget(rollbackTxn, resolver, true);
 
     REQUIRE_FALSE(cluster.shouldReplay(rollbackTxn->gid()));
     REQUIRE(cluster.shouldReplay(dependentTxn->gid()));
+    REQUIRE(cluster.shouldReplay(dependentWriteTxn->gid()));
     REQUIRE_FALSE(cluster.shouldReplay(unrelatedTxn->gid()));
+    REQUIRE_FALSE(cluster.shouldReplay(unrelatedWriteTxn->gid()));
 }
 
 TEST_CASE("StateCluster generateReplaceQuery uses wildcard for composite keys") {
@@ -207,6 +213,23 @@ TEST_CASE("StateCluster generateReplaceQuery uses WHERE for non-wildcard keys") 
 
     cluster.insert(rollbackTxn, resolver);
     cluster.insert(readerTxn, resolver);
+    cluster.merge();
+
+    cluster.addRollbackTarget(rollbackTxn, resolver, true);
+
+    auto query = cluster.generateReplaceQuery("targetdb", "intermediate", resolver);
+    REQUIRE(query.find("TRUNCATE users;") == std::string::npos);
+    REQUIRE(query.find("DELETE FROM users WHERE") != std::string::npos);
+    REQUIRE(query.find("REPLACE INTO users SELECT * FROM intermediate.users WHERE") != std::string::npos);
+}
+
+TEST_CASE("StateCluster generateReplaceQuery uses write ranges without reads") {
+    NoopRelationshipResolver resolver;
+
+    StateCluster cluster({"users.id"});
+    auto rollbackTxn = makeTxn(1, "test", {}, {makeEq("users.id", 1)});
+
+    cluster.insert(rollbackTxn, resolver);
     cluster.merge();
 
     cluster.addRollbackTarget(rollbackTxn, resolver, true);
