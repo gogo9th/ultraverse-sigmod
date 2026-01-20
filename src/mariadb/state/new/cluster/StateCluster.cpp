@@ -452,7 +452,7 @@ namespace ultraverse::state::v2 {
     void StateCluster::addRollbackTarget(const std::shared_ptr<Transaction> &transaction,
                                          const RelationshipResolver &resolver,
                                          bool revalidate) {
-        std::scoped_lock lock(_targetCacheLock);
+        std::unique_lock<std::shared_mutex> lock(_targetCacheLock);
         
         _rollbackTargets.insert(std::make_pair(transaction->gid(), TargetTransactionCache {
             transaction,
@@ -467,7 +467,7 @@ namespace ultraverse::state::v2 {
     void StateCluster::addPrependTarget(gid_t gid,
                                         const std::shared_ptr<Transaction> &transaction,
                                         const RelationshipResolver &resolver) {
-        std::scoped_lock lock(_targetCacheLock);
+        std::unique_lock<std::shared_mutex> lock(_targetCacheLock);
         
         _prependTargets.insert(std::make_pair(gid, TargetTransactionCache {
             transaction,
@@ -585,7 +585,7 @@ namespace ultraverse::state::v2 {
     }
     
     bool StateCluster::shouldReplay(gid_t gid) {
-        std::scoped_lock lock(_targetCacheLock);
+        std::shared_lock<std::shared_mutex> lock(_targetCacheLock);
         if (_rollbackTargets.find(gid) != _rollbackTargets.end()) {
             // 롤백 타겟 자신은 재실행되어선 안된다
             return false;

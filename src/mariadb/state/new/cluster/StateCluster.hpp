@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <mutex>
+#include <shared_mutex>
 
 #include "../../StateItem.h"
 #include "../Transaction.hpp"
@@ -197,7 +198,7 @@ namespace ultraverse::state::v2 {
         std::map<std::string, std::set<std::string>> _keyColumnsMap;
         std::unordered_map<std::string, Cluster> _clusters;
         
-        std::mutex _targetCacheLock;
+        std::shared_mutex _targetCacheLock;
         std::unordered_map<std::string, std::unordered_map<StateRange, TargetGidSetRef>> _targetCache;
         std::unordered_map<gid_t, TargetTransactionCache> _rollbackTargets;
         std::unordered_map<gid_t, TargetTransactionCache> _prependTargets;
