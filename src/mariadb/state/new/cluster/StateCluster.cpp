@@ -232,53 +232,70 @@ namespace ultraverse::state::v2 {
         std::vector<StateItem> _readKeyItems;
         std::vector<StateItem> _writeKeyItems;
         
-        auto processFn = [this, &resolver, &readKeyItems, &writeKeyItems](bool isWrite) {
-            return [this, &resolver, &readKeyItems, &writeKeyItems, isWrite](const StateItem &item) {
+        auto mergeItem = [&readKeyItems, &writeKeyItems](bool isWrite, StateItem candidate) {
+            auto &target = isWrite ? writeKeyItems : readKeyItems;
+            std::string key = utility::toLower(candidate.name);
+            candidate.name = key;
+
+            auto it = target.find(key);
+            if (it == target.end()) {
+                target.emplace(key, std::move(candidate));
+                return;
+            }
+
+            auto isWildcard = [](const StateItem &item) {
+                return item.function_type == FUNCTION_WILDCARD;
+            };
+
+            if (isWildcard(it->second)) {
+                return;
+            }
+            if (isWildcard(candidate)) {
+                it->second = std::move(candidate);
+                return;
+            }
+
+            StateItem merged;
+            merged.name = key;
+            merged.condition_type = EN_CONDITION_OR;
+            merged.function_type = FUNCTION_NONE;
+
+            auto appendArgs = [&merged](const StateItem &item) {
+                if (item.condition_type == EN_CONDITION_OR) {
+                    merged.arg_list.insert(merged.arg_list.end(), item.arg_list.begin(), item.arg_list.end());
+                } else {
+                    merged.arg_list.push_back(item);
+                }
+            };
+
+            appendArgs(it->second);
+            appendArgs(candidate);
+
+            it->second = std::move(merged);
+        };
+
+        auto processFn = [this, &resolver, &mergeItem](bool isWrite) {
+            return [this, &resolver, &mergeItem, isWrite](const StateItem &item) {
                 std::string itemName = utility::toLower(item.name);
                 const auto &real = resolver.resolveRowChain(item);
-                
+
                 if (real != nullptr) {
-                    std::string realName = utility::toLower(real->name);
-                    auto &_item = isWrite ? writeKeyItems[realName] : readKeyItems[realName];
-                    
-                    if (_item.name.empty()) {
-                        _item.name = realName;
-                        _item.function_type = FUNCTION_IN_INTERNAL;
-                    }
-                    
-                    _item.data_list.insert(
-                        _item.data_list.end(),
-                        real->data_list.begin(), real->data_list.end()
-                        );
+                    StateItem resolved = *real;
+                    resolved.name = utility::toLower(real->name);
+                    mergeItem(isWrite, std::move(resolved));
                 } else {
                     const auto &realColumn = utility::toLower(resolver.resolveChain(item.name));
-                    
+
                     if (!realColumn.empty()) {
                         // real row를 해결하지 못했지만, realColumn은 해결한 경우 => 즉, foreignKey인 경우
-                        auto &_item = isWrite ? writeKeyItems[itemName] : readKeyItems[realColumn];
-                        
-                        if (_item.name.empty()) {
-                            _item.name = realColumn;
-                            _item.function_type = FUNCTION_IN_INTERNAL;
-                        }
-                        
-                        _item.data_list.insert(
-                            _item.data_list.end(),
-                            item.data_list.begin(), item.data_list.end()
-                        );
+                        StateItem resolved = item;
+                        resolved.name = realColumn;
+                        mergeItem(isWrite, std::move(resolved));
                     } else if (_keyColumns.find(itemName) != _keyColumns.end()) {
                         // real row도 해결하지 못하고, realColumn도 해결하지 못한 경우 => keyColumn인 경우
-                        auto &_item = isWrite ? writeKeyItems[itemName] : readKeyItems[itemName];
-                        
-                        if (_item.name.empty()) {
-                            _item.name = itemName;
-                            _item.function_type = FUNCTION_IN_INTERNAL;
-                        }
-                        
-                        _item.data_list.insert(
-                            _item.data_list.end(),
-                            item.data_list.begin(), item.data_list.end()
-                        );
+                        StateItem resolved = item;
+                        resolved.name = itemName;
+                        mergeItem(isWrite, std::move(resolved));
                     }
                 }
             };

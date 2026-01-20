@@ -13,7 +13,6 @@
 
 #include "StateLogWriter.hpp"
 #include "GIDIndexWriter.hpp"
-#include "GIDIndexReader.hpp"
 #include "cluster/RowCluster.hpp"
 
 #include "cluster/StateCluster.hpp"
@@ -22,25 +21,56 @@
 #include "utils/StringUtil.hpp"
 
 #include "StateChangeReport.hpp"
+#include "StateLogReader.hpp"
 
 #include "StateChanger.hpp"
 
 namespace ultraverse::state::v2 {
     
     const std::string StateChanger::QUERY_TAG_STATECHANGE = "/* STATECHANGE_QUERY */ ";
+
+    namespace {
+        StateChangerIO makeDefaultIO(const StateChangePlan &plan) {
+            StateChangerIO io;
+            io.stateLogReader = std::make_unique<StateLogReader>(plan.stateLogPath(), plan.stateLogName());
+            io.clusterStore = std::make_unique<FileStateClusterStore>(plan.stateLogPath(), plan.stateLogName());
+            io.backupLoader = std::make_unique<MySQLBackupLoader>(plan.dbHost(), plan.dbUsername(), plan.dbPassword());
+            io.closeStandardFds = true;
+            return io;
+        }
+    }
     
-    StateChanger::StateChanger(DBHandlePool<mariadb::DBHandle> &dbHandlePool, const StateChangePlan &plan):
+    StateChanger::StateChanger(mariadb::DBHandlePoolBase &dbHandlePool, const StateChangePlan &plan):
+        StateChanger(dbHandlePool, plan, makeDefaultIO(plan))
+    {
+    }
+
+    StateChanger::StateChanger(mariadb::DBHandlePoolBase &dbHandlePool, const StateChangePlan &plan, StateChangerIO io):
         _logger(createLogger("StateChanger")),
         _dbHandlePool(dbHandlePool),
         _mode(OperationMode::NORMAL),
         _plan(plan),
         _intermediateDBName(fmt::format("ult_intermediate_{}_{}", (int) time(nullptr), getpid())), // FIXME
-        _reader(plan.stateLogPath(), plan.stateLogName()),
+        _reader(std::move(io.stateLogReader)),
+        _clusterStore(std::move(io.clusterStore)),
+        _backupLoader(std::move(io.backupLoader)),
+        _closeStandardFds(io.closeStandardFds),
         _columnGraph(std::make_unique<ColumnDependencyGraph>()),
         _tableGraph(std::make_unique<TableDependencyGraph>()),
         _context(new StateChangeContext),
         _replayedQueries(0)
     {
+        if (_reader == nullptr) {
+            _reader = std::make_unique<StateLogReader>(plan.stateLogPath(), plan.stateLogName());
+        }
+
+        if (_clusterStore == nullptr) {
+            _clusterStore = std::make_unique<FileStateClusterStore>(plan.stateLogPath(), plan.stateLogName());
+        }
+
+        if (_backupLoader == nullptr) {
+            _backupLoader = std::make_unique<MySQLBackupLoader>(plan.dbHost(), plan.dbUsername(), plan.dbPassword());
+        }
     }
     
     void StateChanger::fullReplay() {
@@ -55,8 +85,8 @@ namespace ultraverse::state::v2 {
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
             
             auto dbHandle = _dbHandlePool.take();
-            updatePrimaryKeys(dbHandle.get(), 0);
-            updateForeignKeys(dbHandle.get(), 0);
+            updatePrimaryKeys(dbHandle->get(), 0);
+            updateForeignKeys(dbHandle->get(), 0);
             auto load_backup_end = std::chrono::steady_clock::now();
             
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
@@ -65,18 +95,18 @@ namespace ultraverse::state::v2 {
         }
         
         _logger->info("opening state log");
-        _reader.open();
+        _reader->open();
         
         _isRunning = true;
         
         auto phase_main_start = std::chrono::steady_clock::now();
         
-        while (_reader.nextHeader()) {
-            auto transactionHeader = _reader.txnHeader();
-            auto pos = _reader.pos() - sizeof(TransactionHeader);
+        while (_reader->nextHeader()) {
+            auto transactionHeader = _reader->txnHeader();
+            auto pos = _reader->pos() - sizeof(TransactionHeader);
             
-            _reader.nextTransaction();
-            auto transaction = _reader.txnBody();
+            _reader->nextTransaction();
+            auto transaction = _reader->txnBody();
             auto gid = transactionHeader->gid;
             auto flags = transactionHeader->flags;
             
@@ -86,11 +116,12 @@ namespace ultraverse::state::v2 {
             }
             
             auto dbHandle = _dbHandlePool.take();
+            auto &handle = dbHandle->get();
  
             // _logger->info("replaying transaction #{}", gid);
             
-            dbHandle.get().executeQuery("USE " + _intermediateDBName);
-            dbHandle.get().executeQuery("START TRANSACTION");
+            handle.executeQuery("USE " + _intermediateDBName);
+            handle.executeQuery("START TRANSACTION");
             
             bool isProcedureCall = transaction->flags() & Transaction::FLAG_IS_PROCEDURE_CALL;
             
@@ -101,28 +132,23 @@ namespace ultraverse::state::v2 {
                         goto NEXT_QUERY;
                     }
                     
-                    if (dbHandle.get().executeQuery(query->statement()) != 0) {
-                        _logger->error("query execution failed: {}", mysql_error(dbHandle.get()));
+                    if (handle.executeQuery(query->statement()) != 0) {
+                        _logger->error("query execution failed: {}", handle.lastError());
                     }
                     
                     // 프로시저에서 반환한 result를 소모하지 않으면 commands out of sync 오류가 난다
-                    do {
-                        auto result = mysql_store_result(dbHandle.get());
-                        if (result != nullptr) {
-                            mysql_free_result(result);
-                        }
-                    } while (mysql_next_result(dbHandle.get()) == 0);
+                    handle.consumeResults();
                     
                     NEXT_QUERY:
                     continue;
                 }
             } catch (std::exception &e) {
                 _logger->error("exception occurred while replaying transaction #{}: {}", gid, e.what());
-                dbHandle.get().executeQuery("ROLLBACK");
+                handle.executeQuery("ROLLBACK");
                 continue;
             }
             
-            dbHandle.get().executeQuery("COMMIT");
+            handle.executeQuery("COMMIT");
         }
         
         
@@ -162,10 +188,10 @@ namespace ultraverse::state::v2 {
         
         auto query = QUERY_TAG_STATECHANGE + fmt::format("CREATE DATABASE IF NOT EXISTS {} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", _intermediateDBName);
         auto dbHandleLease = _dbHandlePool.take();
-        auto &dbHandle = dbHandleLease.get();
+        auto &dbHandle = dbHandleLease->get();
         if (dbHandle.executeQuery(query) != 0) {
-            _logger->error("cannot create intermediate database: {}", mysql_error(dbHandle));
-            throw std::runtime_error(mysql_error(dbHandle));
+            _logger->error("cannot create intermediate database: {}", dbHandle.lastError());
+            throw std::runtime_error(dbHandle.lastError());
         }
         dbHandle.executeQuery("COMMIT");
     }
@@ -175,10 +201,10 @@ namespace ultraverse::state::v2 {
         
         auto query = QUERY_TAG_STATECHANGE + fmt::format("DROP DATABASE IF EXISTS {}", _intermediateDBName);
         auto dbHandleLease = _dbHandlePool.take();
-        auto &dbHandle = dbHandleLease.get();
+        auto &dbHandle = dbHandleLease->get();
         if (dbHandle.executeQuery(query) != 0) {
-            _logger->error("cannot drop intermediate database: {}", mysql_error(dbHandle));
-            throw std::runtime_error(mysql_error(dbHandle));
+            _logger->error("cannot drop intermediate database: {}", dbHandle.lastError());
+            throw std::runtime_error(dbHandle.lastError());
         }
         dbHandle.executeQuery("COMMIT");
     }
@@ -195,14 +221,21 @@ namespace ultraverse::state::v2 {
     
     
         if (dbHandle.executeQuery(query) != 0) {
-            _logger->error("cannot fetch foreign key information: {}", mysql_error(dbHandle));
-            throw std::runtime_error(mysql_error(dbHandle));
+            _logger->error("cannot fetch foreign key information: {}", dbHandle.lastError());
+            throw std::runtime_error(dbHandle.lastError());
         }
-    
-        MYSQL_RES *result = mysql_store_result(dbHandle);
-        MYSQL_ROW row;
-    
-        while ((row = mysql_fetch_row(result)) != nullptr) {
+
+        auto result = dbHandle.storeResult();
+        if (result == nullptr) {
+            throw std::runtime_error("failed to read primary keys: empty result");
+        }
+
+        std::vector<std::string> row;
+        while (result->next(row)) {
+            if (row.size() < 2) {
+                continue;
+            }
+
             std::string table(std::move(utility::toLower(row[0])));
             std::string column(std::move(utility::toLower(row[1])));
 
@@ -210,7 +243,6 @@ namespace ultraverse::state::v2 {
         
             primaryKeys.insert(table + "." + column);
         }
-        mysql_free_result(result);
     
         _context->primaryKeys = primaryKeys;
     }
@@ -227,14 +259,21 @@ namespace ultraverse::state::v2 {
         
         
         if (dbHandle.executeQuery(query) != 0) {
-            _logger->error("cannot fetch foreign key information: {}", mysql_error(dbHandle));
-            throw std::runtime_error(mysql_error(dbHandle));
+            _logger->error("cannot fetch foreign key information: {}", dbHandle.lastError());
+            throw std::runtime_error(dbHandle.lastError());
         }
-        
-        MYSQL_RES *result = mysql_store_result(dbHandle);
-        MYSQL_ROW row;
-        
-        while ((row = mysql_fetch_row(result)) != nullptr) {
+
+        auto result = dbHandle.storeResult();
+        if (result == nullptr) {
+            throw std::runtime_error("failed to read foreign keys: empty result");
+        }
+
+        std::vector<std::string> row;
+        while (result->next(row)) {
+            if (row.size() < 4) {
+                continue;
+            }
+
             std::string fromTable(std::move(utility::toLower(row[0])));
             std::string fromColumn(std::move(utility::toLower(row[1])));
             
@@ -250,7 +289,6 @@ namespace ultraverse::state::v2 {
             
             foreignKeys.push_back(foreignKey);
         }
-        mysql_free_result(result);
         
         _context->foreignKeys = foreignKeys;
     }
@@ -262,25 +300,22 @@ namespace ultraverse::state::v2 {
                         _intermediateDBName, table);
         
         if (dbHandle.executeQuery(query) != 0) {
-            _logger->error("cannot fetch auto increment: {}", mysql_error(dbHandle));
-            throw std::runtime_error(mysql_error(dbHandle));
+            _logger->error("cannot fetch auto increment: {}", dbHandle.lastError());
+            throw std::runtime_error(dbHandle.lastError());
         }
-        
-        MYSQL_RES *result = mysql_store_result(dbHandle);
-        bool isAvailable = mysql_num_rows(result) != 0;
-        
-        if (!isAvailable) {
+
+        auto result = dbHandle.storeResult();
+        if (result == nullptr || result->rowCount() == 0) {
             return -1;
         }
-        
-        MYSQL_ROW row = mysql_fetch_row(result);
-        
-        if (row[0] == nullptr) {
+
+        std::vector<std::string> row;
+        if (!result->next(row) || row.empty() || row[0].empty()) {
             return -1;
         }
-        
+
         // TODO: support for 64-bit integer
-        return std::atoi(row[0]);
+        return std::atoi(row[0].c_str());
     }
     
     void StateChanger::setAutoIncrement(mariadb::DBHandle &dbHandle, std::string table, int64_t value) {
@@ -293,8 +328,8 @@ namespace ultraverse::state::v2 {
             fmt::format("ALTER TABLE {} AUTO_INCREMENT = {}", table, value);
         
         if (dbHandle.executeQuery(query) != 0) {
-            _logger->error("cannot set auto increment: {}", mysql_error(dbHandle));
-            throw std::runtime_error(mysql_error(dbHandle));
+            _logger->error("cannot set auto increment: {}", dbHandle.lastError());
+            throw std::runtime_error(dbHandle.lastError());
         }
     }
 }

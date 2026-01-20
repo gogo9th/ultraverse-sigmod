@@ -18,8 +18,6 @@
 #include "utils/StringUtil.hpp"
 
 #include "StateChanger.hpp"
-#include "StateClusterWriter.hpp"
-#include "GIDIndexReader.hpp"
 
 #include "StateChangeReport.hpp"
 
@@ -35,7 +33,6 @@ namespace ultraverse::state::v2 {
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
         
-        StateClusterWriter clusterWriter(_plan.stateLogPath(), _plan.stateLogName());
         GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
         
         std::mutex graphLock;
@@ -47,15 +44,15 @@ namespace ultraverse::state::v2 {
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
             
             auto dbHandle = _dbHandlePool.take();
-            updatePrimaryKeys(dbHandle.get(), 0);
-            updateForeignKeys(dbHandle.get(), 0);
+            updatePrimaryKeys(dbHandle->get(), 0);
+            updateForeignKeys(dbHandle->get(), 0);
             auto load_backup_end = std::chrono::steady_clock::now();
             
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
         }
         
-        _reader.open();
+        _reader->open();
         
         auto phase_main_start = std::chrono::steady_clock::now();
         _logger->info("makeCluster(): building cluster");
@@ -63,17 +60,17 @@ namespace ultraverse::state::v2 {
         std::queue<std::shared_ptr<std::promise<int>>> tasks;
         std::set<gid_t> replayGids;
         
-        while (_reader.nextHeader()) {
-            auto header = _reader.txnHeader();
-            auto pos = _reader.pos() - sizeof(TransactionHeader);
+        while (_reader->nextHeader()) {
+            auto header = _reader->txnHeader();
+            auto pos = _reader->pos() - sizeof(TransactionHeader);
             
-            _reader.nextTransaction();
-            auto transaction = _reader.txnBody();
+            _reader->nextTransaction();
+            auto transaction = _reader->txnBody();
             
             gidIndexWriter.append(pos);
             
             auto promise = taskExecutor.post<int>(
-                [this, &graphLock, &rowCluster, &cachedResolver, &clusterWriter, transaction]() {
+                [this, &graphLock, &rowCluster, &cachedResolver, transaction]() {
                     if (!transaction->isRelatedToDatabase(_plan.dbName())) {
                         _logger->trace("skipping transaction #{} because it is not related to database {}",
                                        transaction->gid(), _plan.dbName());
@@ -108,12 +105,10 @@ namespace ultraverse::state::v2 {
                         
                         if (isColumnGraphChanged) {
                             _logger->info("updating column dependency graph");
-                            clusterWriter << *_columnGraph;
                         }
                         
                         if (isTableGraphChanged) {
                             _logger->info("updating table dependency graph");
-                            clusterWriter << *_tableGraph;
                         }
                          */
                     }
@@ -143,7 +138,7 @@ namespace ultraverse::state::v2 {
         _logger->info("make_cluster(): main phase {}s", _phase2Time);
         
         _logger->info("make_cluster(): saving cluster..");
-        clusterWriter << rowCluster;
+        _clusterStore->save(rowCluster);
         
         if (_plan.dropIntermediateDB()) {
             dropIntermediateDB();
@@ -158,7 +153,6 @@ namespace ultraverse::state::v2 {
         StateChangeReport report(StateChangeReport::PREPARE_AUTO, _plan);
         
         StateCluster rowCluster(_plan.keyColumns());
-        StateClusterWriter clusterWriter(_plan.stateLogPath(), _plan.stateLogName());
         
         std::mutex gidListMutex;
         
@@ -176,20 +170,20 @@ namespace ultraverse::state::v2 {
         
         {
             _logger->info("prepare(): loading cluster");
-            clusterWriter >> rowCluster;
+            _clusterStore->load(rowCluster);
             _logger->info("prepare(): loading cluster end");
         }
         
         /* PHASE 0: walk state log */
         
-        _reader.open();
-        _reader.seek(0);
+        _reader->open();
+        _reader->seek(0);
         
-        while (_reader.nextHeader()) {
-            const auto &header = _reader.txnHeader();
+        while (_reader->nextHeader()) {
+            const auto &header = _reader->txnHeader();
             
-            _reader.nextTransaction();
-            const auto &body = _reader.txnBody();
+            _reader->nextTransaction();
+            const auto &body = _reader->txnBody();
             
             if (!body->isRelatedToDatabase(_plan.dbName())) {
                 continue;
@@ -303,8 +297,6 @@ namespace ultraverse::state::v2 {
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
         
-        StateClusterWriter clusterWriter(_plan.stateLogPath(), _plan.stateLogName());
-        
         std::mutex graphLock;
         std::mutex stdoutLock;
         
@@ -320,8 +312,8 @@ namespace ultraverse::state::v2 {
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
             
             auto dbHandle = _dbHandlePool.take();
-            updatePrimaryKeys(dbHandle.get(), 0);
-            updateForeignKeys(dbHandle.get(), 0);
+            updatePrimaryKeys(dbHandle->get(), 0);
+            updateForeignKeys(dbHandle->get(), 0);
             auto load_backup_end = std::chrono::steady_clock::now();
             
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
@@ -331,12 +323,12 @@ namespace ultraverse::state::v2 {
         
         {
             _logger->info("prepare(): loading cluster");
-            clusterWriter >> rowCluster;
+            _clusterStore->load(rowCluster);
             _logger->info("prepare(): loading cluster end");
         }
         
-        _reader.open();
-        _reader.seek(0);
+        _reader->open();
+        _reader->seek(0);
         
         auto phase_main_start = std::chrono::steady_clock::now();
         
@@ -366,8 +358,8 @@ namespace ultraverse::state::v2 {
             }
         });
         
-        while (_reader.nextHeader()) {
-            auto header = _reader.txnHeader();
+        while (_reader->nextHeader()) {
+            auto header = _reader->txnHeader();
             gid_t gid = header->gid;
             
             totalCount++;
@@ -375,8 +367,8 @@ namespace ultraverse::state::v2 {
             // _logger->info("read gid {}", gid);
             
             if (_plan.isRollbackGid(gid) || _plan.hasUserQuery(gid)) {
-                _reader.nextTransaction();
-                auto transaction = _reader.txnBody();
+                _reader->nextTransaction();
+                auto transaction = _reader->txnBody();
                 
                 
                 if (!transaction->isRelatedToDatabase(_plan.dbName())) {
@@ -428,7 +420,7 @@ namespace ultraverse::state::v2 {
                 }));
             }
             
-            _reader.skipTransaction();
+            _reader->skipTransaction();
         }
         
         
@@ -466,10 +458,12 @@ namespace ultraverse::state::v2 {
         std::string replaceQuery = rowCluster.generateReplaceQuery(_plan.dbName(), "__INTERMEDIATE_DB__", cachedResolver);
         _logger->debug("TODO: execute query: \n{}", replaceQuery);
         report.setReplaceQuery(replaceQuery);
-        
-        close(STDIN_FILENO);
-        close(STDOUT_FILENO);
-        close(STDERR_FILENO);
+
+        if (_closeStandardFds) {
+            close(STDIN_FILENO);
+            close(STDOUT_FILENO);
+            close(STDERR_FILENO);
+        }
         
         if (!_plan.reportPath().empty()) {
             report.writeToJSON(_plan.reportPath());

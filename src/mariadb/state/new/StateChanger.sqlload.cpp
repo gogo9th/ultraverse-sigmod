@@ -2,11 +2,7 @@
 // Created by cheesekun on 12/7/22.
 //
 
-#include <unistd.h>
-#include <sys/wait.h>
-#include <sys/fcntl.h>
-
-#include <fmt/format.h>
+#include <stdexcept>
 
 #include "mariadb/DBEvent.hpp"
 #include "StateChanger.hpp"
@@ -95,46 +91,11 @@ namespace ultraverse::state::v2 {
     
     void StateChanger::loadBackup(const std::string &dbName, const std::string &fileName) {
         _logger->info("loading database backup from {}...", fileName);
-        
-        int fd = ::open(fileName.c_str(), O_RDONLY);
-        if (fd < 0) {
-            throw std::runtime_error("failed to load backup file");
+
+        if (_backupLoader == nullptr) {
+            throw std::runtime_error("backup loader is not configured");
         }
-        
-        auto pid = fork();
-        if (pid == -1) {
-            throw std::runtime_error("failed to fork process");
-        }
-       
-        if (pid == 0) {
-            dup2(fd, STDIN_FILENO);
-            std::string password = "-p" + _plan.dbPassword();
-            int retval = execl(
-                "/usr/bin/mysql",
-                "mysql",
-                "-h", _plan.dbHost().c_str(),
-                "-u", _plan.dbUsername().c_str(),
-                password.c_str(),
-                dbName.c_str(),
-                nullptr
-            );
-            
-            close(fd);
-    
-            if (retval == -1) {
-                throw std::runtime_error(fmt::format("failed to execute mysql: {}", strerror(errno)));
-            }
-        } else {
-            close(fd);
-            
-            int wstatus = 0;
-            waitpid(pid, &wstatus, 0);
-            
-            if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0) {
-                throw std::runtime_error(
-                    fmt::format("failed to restore backup: WEXITSTATUS {}", WEXITSTATUS(wstatus))
-                );
-            }
-        }
+
+        _backupLoader->loadBackup(dbName, fileName);
     }
 }

@@ -7,7 +7,6 @@
 
 #include <fmt/color.h>
 
-#include "GIDIndexWriter.hpp"
 #include "cluster/RowCluster.hpp"
 
 #include "cluster/StateCluster.hpp"
@@ -18,7 +17,6 @@
 #include "graph/RowGraph.hpp"
 
 #include "StateChanger.hpp"
-#include "GIDIndexReader.hpp"
 #include "StateChangeReport.hpp"
 
 namespace ultraverse::state::v2 {
@@ -32,7 +30,6 @@ namespace ultraverse::state::v2 {
         CachedRelationshipResolver cachedResolver(relationshipResolver, 8000);
         
         RowGraph rowGraph(_plan.keyColumns(), cachedResolver);
-        GIDIndexReader gidIndexReader(_plan.stateLogPath(), _plan.stateLogName());
         
         std::atomic_bool isEOF = false;
         
@@ -45,15 +42,16 @@ namespace ultraverse::state::v2 {
         
         for (int i = 0; i < _dbHandlePool.poolSize(); i++) {
             auto dbHandle = _dbHandlePool.take();
+            auto &handle = dbHandle->get();
             
-            dbHandle.get().executeQuery(fmt::format("USE {}", _intermediateDBName));
+            handle.executeQuery(fmt::format("USE {}", _intermediateDBName));
         }
         
         std::thread replayThread([&]() {
             std::set<gid_t> replayedGids;
             int i = 0;
             
-            _reader.open();
+            _reader->open();
             
             
             while (!isEOF || !replayTargets.empty()) {
@@ -76,14 +74,16 @@ namespace ultraverse::state::v2 {
                             std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 60));
                         }
                         
-                        auto offset = gidIndexReader.offsetOf(gid);
-                        _reader.seek(offset);
+                        if (!_reader->seekGid(gid)) {
+                            _logger->warn("replay(): gid #{} not found in state log", gid);
+                            continue;
+                        }
+
+                        _reader->nextHeader();
+                        _reader->nextTransaction();
                         
-                        _reader.nextHeader();
-                        _reader.nextTransaction();
-                        
-                        const auto header = _reader.txnHeader();
-                        const auto transaction = _reader.txnBody();
+                        const auto header = _reader->txnHeader();
+                        const auto transaction = _reader->txnBody();
                         
                         relationshipResolver.addTransaction(*transaction);
                         
@@ -123,8 +123,8 @@ namespace ultraverse::state::v2 {
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
             
             auto dbHandle = _dbHandlePool.take();
-            updatePrimaryKeys(dbHandle.get(), 0);
-            updateForeignKeys(dbHandle.get(), 0);
+            updatePrimaryKeys(dbHandle->get(), 0);
+            updateForeignKeys(dbHandle->get(), 0);
             auto load_backup_end = std::chrono::steady_clock::now();
             
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
@@ -226,13 +226,14 @@ namespace ultraverse::state::v2 {
                  */
                 {
                     auto dbHandle = _dbHandlePool.take();
-                    
+                    auto &handle = dbHandle->get();
+
                     bool isProcedureCall = transaction->flags() & Transaction::FLAG_IS_PROCEDURE_CALL;
                     
                     // logger->info("replaying transaction #{}", transaction->gid());
                     
-                    dbHandle.get().executeQuery("SET autocommit=0");
-                    dbHandle.get().executeQuery("START TRANSACTION");
+                    handle.executeQuery("SET autocommit=0");
+                    handle.executeQuery("START TRANSACTION");
                     
                     try {
                         for (const auto &query: transaction->queries()) {
@@ -241,26 +242,21 @@ namespace ultraverse::state::v2 {
                                 goto NEXT_QUERY;
                             }
                             
-                            if (dbHandle.get().executeQuery(query->statement()) != 0) {
-                                logger->error("query execution failed: {} / {}", mysql_error(dbHandle.get()), query->statement());
+                            if (handle.executeQuery(query->statement()) != 0) {
+                                logger->error("query execution failed: {} / {}", handle.lastError(), query->statement());
                             }
                             
                             // 프로시저에서 반환한 result를 소모하지 않으면 commands out of sync 오류가 난다
-                            do {
-                                auto result = mysql_store_result(dbHandle.get());
-                                if (result != nullptr) {
-                                    mysql_free_result(result);
-                                }
-                            } while (mysql_next_result(dbHandle.get()) == 0);
+                            handle.consumeResults();
                             
                             NEXT_QUERY:
                             continue;
                         }
-                        dbHandle.get().executeQuery("COMMIT");
+                        handle.executeQuery("COMMIT");
                     } catch (std::exception &e) {
                         logger->error("exception occurred while replaying transaction #{}: {}", transaction->gid(),
                                        e.what());
-                        dbHandle.get().executeQuery("ROLLBACK");
+                        handle.executeQuery("ROLLBACK");
                     }
                 }
                 

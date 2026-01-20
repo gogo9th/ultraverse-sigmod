@@ -156,13 +156,14 @@ namespace ultraverse {
             return 1;
         }
     
-        DBHandlePool<mariadb::DBHandle> dbHandlePool(
+        DBHandlePool<mariadb::MySQLDBHandle> dbHandlePool(
             threadNum,
             getEnv("DB_HOST"),
             std::stoi(getEnv("DB_PORT")),
             getEnv("DB_USER"),
             getEnv("DB_PASS")
         );
+        DBHandlePoolAdapter<mariadb::MySQLDBHandle> dbHandlePoolAdapter(dbHandlePool);
     
         auto actions = parseActions(argv()[argc() - 1]);
         if (actions.empty()) {
@@ -210,7 +211,7 @@ namespace ultraverse {
         changePlan.setDBUsername(getEnv("DB_USER"));
         changePlan.setDBPassword(getEnv("DB_PASS"));
     
-        StateChanger stateChanger(dbHandlePool, changePlan);
+        StateChanger stateChanger(dbHandlePoolAdapter, changePlan);
         
         if (makeClusterMap) {
             stateChanger.makeCluster();

@@ -13,6 +13,8 @@ namespace ultraverse::base {
      */
     class DBHandle {
     public:
+        virtual ~DBHandle() = default;
+
         /**
          * @brief DB 서버에 접속한다.
          */
