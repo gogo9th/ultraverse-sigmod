@@ -83,12 +83,12 @@ namespace ultraverse::state::v2 {
         /**
          * updates primary keys
          */
-        void updatePrimaryKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp);
+        void updatePrimaryKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp, std::string schemaName = "");
         
         /**
          * updates foreign keys
          */
-        void updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp);
+        void updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp, std::string schemaName = "");
         
         int64_t getAutoIncrement(mariadb::DBHandle &dbHandle, std::string table);
         void setAutoIncrement(mariadb::DBHandle &dbHandle, std::string table, int64_t value);

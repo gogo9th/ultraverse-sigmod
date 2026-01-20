@@ -145,7 +145,6 @@ namespace ultraverse::state::v2 {
     void StateChanger::makeCluster() {
         StateChangeReport report(StateChangeReport::MAKE_CLUSTER, _plan);
         
-        TaskExecutor taskExecutor(_plan.threadNum());
         StateCluster rowCluster(_plan.keyColumns());
 
         _columnGraph = std::make_unique<ColumnDependencyGraph>();
@@ -157,9 +156,9 @@ namespace ultraverse::state::v2 {
         GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
         
         std::mutex graphLock;
-        
+
         createIntermediateDB();
-        
+
         if (!_plan.dbDumpPath().empty()) {
             auto load_backup_start = std::chrono::steady_clock::now();
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
@@ -171,6 +170,10 @@ namespace ultraverse::state::v2 {
             
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
+        } else {
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle->get(), 0, _plan.dbName());
+            updateForeignKeys(dbHandle->get(), 0, _plan.dbName());
         }
 
         _tableGraph->addRelationship(_context->foreignKeys);
@@ -180,76 +183,135 @@ namespace ultraverse::state::v2 {
         auto phase_main_start = std::chrono::steady_clock::now();
         _logger->info("makeCluster(): building cluster");
         
-        std::queue<std::shared_ptr<std::promise<int>>> tasks;
-        std::set<gid_t> replayGids;
-        
-        while (_reader->nextHeader()) {
-            auto header = _reader->txnHeader();
-            auto pos = _reader->pos() - sizeof(TransactionHeader);
-            
-            _reader->nextTransaction();
-            auto transaction = _reader->txnBody();
-            
-            gidIndexWriter.append(pos);
-            
-            auto promise = taskExecutor.post<int>(
-                [this, &graphLock, &rowCluster, &cachedResolver, transaction]() {
-                    if (!transaction->isRelatedToDatabase(_plan.dbName())) {
-                        _logger->trace("skipping transaction #{} because it is not related to database {}",
-                                       transaction->gid(), _plan.dbName());
+        const bool useRowAlias = !_plan.columnAliases().empty();
+        if (useRowAlias) {
+            _logger->info("makeCluster(): row-alias enabled; processing sequentially");
+            while (_reader->nextHeader()) {
+                auto header = _reader->txnHeader();
+                auto pos = _reader->pos() - sizeof(TransactionHeader);
+
+                _reader->nextTransaction();
+                auto transaction = _reader->txnBody();
+
+                gidIndexWriter.append(pos);
+
+                if (!transaction->isRelatedToDatabase(_plan.dbName())) {
+                    _logger->trace("skipping transaction #{} because it is not related to database {}",
+                                   transaction->gid(), _plan.dbName());
+                    continue;
+                }
+
+                if (relationshipResolver.addTransaction(*transaction)) {
+                    cachedResolver.clearCache();
+                }
+
+                rowCluster.insert(transaction, cachedResolver);
+
+                for (auto &query: transaction->queries()) {
+                    if (query->flags() & Query::FLAG_IS_PROCCALL_QUERY) {
+                        // FIXME: 프로시저 쿼리 어케할려고?
+                        continue;
+                    }
+                    if (query->flags() & Query::FLAG_IS_DDL) {
+                        _logger->warn(
+                            "DDL statement found in transaction #{}, but this version of ultraverse does not support DDL statement yet",
+                            transaction->gid());
+                        _logger->warn("DDL query will be skipped: {}", query->statement());
+                        continue;
+                    }
+
+                    bool isColumnGraphChanged = false;
+                    if (!query->readColumns().empty()) {
+                        isColumnGraphChanged |= _columnGraph->add(query->readColumns(), READ, _context->foreignKeys);
+                    }
+                    if (!query->writeColumns().empty()) {
+                        isColumnGraphChanged |= _columnGraph->add(query->writeColumns(), WRITE, _context->foreignKeys);
+                    }
+
+                    bool isTableGraphChanged =
+                        _tableGraph->addRelationship(query->readColumns(), query->writeColumns());
+
+                    if (isColumnGraphChanged) {
+                        _logger->info("updating column dependency graph");
+                    }
+
+                    if (isTableGraphChanged) {
+                        _logger->info("updating table dependency graph");
+                    }
+                }
+            }
+        } else {
+            TaskExecutor taskExecutor(_plan.threadNum());
+            std::queue<std::shared_ptr<std::promise<int>>> tasks;
+
+            while (_reader->nextHeader()) {
+                auto header = _reader->txnHeader();
+                auto pos = _reader->pos() - sizeof(TransactionHeader);
+
+                _reader->nextTransaction();
+                auto transaction = _reader->txnBody();
+
+                gidIndexWriter.append(pos);
+
+                auto promise = taskExecutor.post<int>(
+                    [this, &graphLock, &rowCluster, &cachedResolver, transaction]() {
+                        if (!transaction->isRelatedToDatabase(_plan.dbName())) {
+                            _logger->trace("skipping transaction #{} because it is not related to database {}",
+                                           transaction->gid(), _plan.dbName());
+                            return 0;
+                        }
+
+                        rowCluster.insert(transaction, cachedResolver);
+
+                        for (auto &query: transaction->queries()) {
+                            if (query->flags() & Query::FLAG_IS_PROCCALL_QUERY) {
+                                // FIXME: 프로시저 쿼리 어케할려고?
+                                continue;
+                            }
+                            if (query->flags() & Query::FLAG_IS_DDL) {
+                                _logger->warn(
+                                    "DDL statement found in transaction #{}, but this version of ultraverse does not support DDL statement yet",
+                                    transaction->gid());
+                                _logger->warn("DDL query will be skipped: {}", query->statement());
+                                continue;
+                            }
+
+                            std::scoped_lock _lock(graphLock);
+
+                            bool isColumnGraphChanged = false;
+                            if (!query->readColumns().empty()) {
+                                isColumnGraphChanged |= _columnGraph->add(query->readColumns(), READ, _context->foreignKeys);
+                            }
+                            if (!query->writeColumns().empty()) {
+                                isColumnGraphChanged |= _columnGraph->add(query->writeColumns(), WRITE, _context->foreignKeys);
+                            }
+
+                            bool isTableGraphChanged =
+                                _tableGraph->addRelationship(query->readColumns(), query->writeColumns());
+
+                            if (isColumnGraphChanged) {
+                                _logger->info("updating column dependency graph");
+                            }
+
+                            if (isTableGraphChanged) {
+                                _logger->info("updating table dependency graph");
+                            }
+                        }
+
                         return 0;
-                    }
-                    
-                    rowCluster.insert(transaction, cachedResolver);
-                    
-                    for (auto &query: transaction->queries()) {
-                        if (query->flags() & Query::FLAG_IS_PROCCALL_QUERY) {
-                            // FIXME: 프로시저 쿼리 어케할려고?
-                            continue;
-                        }
-                        if (query->flags() & Query::FLAG_IS_DDL) {
-                            _logger->warn(
-                                "DDL statement found in transaction #{}, but this version of ultraverse does not support DDL statement yet",
-                                transaction->gid());
-                            _logger->warn("DDL query will be skipped: {}", query->statement());
-                            continue;
-                        }
-                        
-                        std::scoped_lock _lock(graphLock);
-                        
-                        bool isColumnGraphChanged = false;
-                        if (!query->readColumns().empty()) {
-                            isColumnGraphChanged |= _columnGraph->add(query->readColumns(), READ, _context->foreignKeys);
-                        }
-                        if (!query->writeColumns().empty()) {
-                            isColumnGraphChanged |= _columnGraph->add(query->writeColumns(), WRITE, _context->foreignKeys);
-                        }
-                        
-                        bool isTableGraphChanged =
-                            _tableGraph->addRelationship(query->readColumns(), query->writeColumns());
-                        
-                        if (isColumnGraphChanged) {
-                            _logger->info("updating column dependency graph");
-                        }
-                        
-                        if (isTableGraphChanged) {
-                            _logger->info("updating table dependency graph");
-                        }
-                    }
-                    
-                    return 0;
-                });
-            
-            tasks.emplace(std::move(promise));
+                    });
+
+                tasks.emplace(std::move(promise));
+            }
+
+            while (!tasks.empty()) {
+                _logger->info("make_cluster(): {} tasks remaining", tasks.size());
+                tasks.front()->get_future().wait();
+                tasks.pop();
+            }
+
+            taskExecutor.shutdown();
         }
-        
-        while (!tasks.empty()) {
-            _logger->info("make_cluster(): {} tasks remaining", tasks.size());
-            tasks.front()->get_future().wait();
-            tasks.pop();
-        }
-        
-        taskExecutor.shutdown();
         
         rowCluster.merge();
         
@@ -446,6 +508,10 @@ namespace ultraverse::state::v2 {
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
             report.setSQLLoadTime(time.count());
+        } else {
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle->get(), 0, _plan.dbName());
+            updateForeignKeys(dbHandle->get(), 0, _plan.dbName());
         }
         
         {
@@ -491,6 +557,10 @@ namespace ultraverse::state::v2 {
                 _logger->trace("skipping transaction #{} because it is not related to database {}",
                                transaction->gid(), _plan.dbName());
                 continue;
+            }
+
+            if (relationshipResolver.addTransaction(*transaction)) {
+                cachedResolver.clearCache();
             }
 
             ColumnRW txnColumns = collectColumnRW(transaction);

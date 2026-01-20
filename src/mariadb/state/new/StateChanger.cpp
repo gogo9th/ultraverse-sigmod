@@ -209,15 +209,19 @@ namespace ultraverse::state::v2 {
         dbHandle.executeQuery("COMMIT");
     }
     
-    void StateChanger::updatePrimaryKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp) {
+    void StateChanger::updatePrimaryKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp, std::string schemaName) {
         std::scoped_lock _lock(_context->contextLock);
     
         // TODO: LOCK
         std::unordered_set<std::string> primaryKeys;
+
+        if (schemaName.empty()) {
+            schemaName = _intermediateDBName;
+        }
     
         const auto query =
             QUERY_TAG_STATECHANGE +
-            fmt::format("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = '{}' AND CONSTRAINT_NAME = 'PRIMARY'", _intermediateDBName);
+            fmt::format("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = '{}' AND CONSTRAINT_NAME = 'PRIMARY'", schemaName);
     
     
         if (dbHandle.executeQuery(query) != 0) {
@@ -247,15 +251,19 @@ namespace ultraverse::state::v2 {
         _context->primaryKeys = primaryKeys;
     }
     
-    void StateChanger::updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp) {
+    void StateChanger::updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp, std::string schemaName) {
         std::scoped_lock _lock(_context->contextLock);
     
         // TODO: LOCK
         std::vector<ForeignKey> foreignKeys;
+
+        if (schemaName.empty()) {
+            schemaName = _intermediateDBName;
+        }
         
         const auto query =
             QUERY_TAG_STATECHANGE +
-            fmt::format("SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = '{}' AND REFERENCED_TABLE_NAME IS NOT NULL", _intermediateDBName);
+            fmt::format("SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = '{}' AND REFERENCED_TABLE_NAME IS NOT NULL", schemaName);
         
         
         if (dbHandle.executeQuery(query) != 0) {

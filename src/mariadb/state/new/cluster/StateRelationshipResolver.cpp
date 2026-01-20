@@ -157,7 +157,8 @@ namespace ultraverse::state::v2 {
         _rowAliasTable[name].insert(std::make_pair(range, RowAlias { alias, real }));
     }
     
-    void StateRelationshipResolver::addTransaction(Transaction &transaction) {
+    bool StateRelationshipResolver::addTransaction(Transaction &transaction) {
+        bool changed = false;
         for (const auto &pair: _plan.columnAliases()) {
             const auto &alias = pair.first;
             const auto &real = pair.second;
@@ -171,8 +172,10 @@ namespace ultraverse::state::v2 {
             if (aliasIt != itEnd && itemIt != itEnd) {
                 // std::cerr << "adding alias: " << (*aliasIt).MakeRange2().MakeWhereQuery((*aliasIt).name) << " => " << (*itemIt).MakeRange2().MakeWhereQuery((*itemIt).name) << std::endl;
                 addRowAlias(*aliasIt, *itemIt);
+                changed = true;
             }
         }
+        return changed;
     }
     
     CachedRelationshipResolver::CachedRelationshipResolver(const RelationshipResolver &resolver, int maxRowElements):

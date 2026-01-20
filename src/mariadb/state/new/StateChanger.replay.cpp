@@ -85,7 +85,9 @@ namespace ultraverse::state::v2 {
                         const auto header = _reader->txnHeader();
                         const auto transaction = _reader->txnBody();
                         
-                        relationshipResolver.addTransaction(*transaction);
+                        if (relationshipResolver.addTransaction(*transaction)) {
+                            cachedResolver.clearCache();
+                        }
                         
                         auto nodeId = rowGraph.addNode(transaction);
                         
@@ -130,6 +132,10 @@ namespace ultraverse::state::v2 {
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
             report.setSQLLoadTime(time.count());
+        } else {
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle->get(), 0, _plan.dbName());
+            updateForeignKeys(dbHandle->get(), 0, _plan.dbName());
         }
         
         auto phase_main_start = std::chrono::steady_clock::now();
