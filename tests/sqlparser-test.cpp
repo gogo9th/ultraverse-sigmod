@@ -239,6 +239,44 @@ bool runTests() {
     SQL_OK("UPDATE scores SET score = (NAME_CONST('var_score', 32) * NAME_CONST('var_multiplier', 2)) WHERE user_id = 42;")
     
     SQL_OK("INSERT scores (user_id, score) VALUES (42, NAME_CONST('var_score', 32) * NAME_CONST('var_multiplier', 2));")
+
+    // complex boolean + arithmetic expressions
+    SQL_OK("SELECT u.id, u.name, (u.score + 10) * 2 AS boosted FROM users u WHERE (u.status = 'active' AND u.score >= 100) OR (u.status = 'new' AND u.score < 20);")
+
+    {
+        std::string sqlString = "SELECT u.id, u.name, (u.score + 10) * 2 AS boosted FROM users u WHERE (u.status = 'active' AND u.score >= 100) OR (u.status = 'new' AND u.score < 20);";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 1, "statements_size must be 1");
+
+        const auto &statement = parseResult.statements(0);
+        OK(statement.has_dml(), "statement must be DML");
+
+        const auto &dml = statement.dml();
+        OK(dml.type() == ultparser::DMLQuery::SELECT, "statement type must be SELECT");
+        OK(dml.select_size() == 3, "select size must be 3");
+
+        OK(dml.has_where(), "where clause must exist");
+        const auto &where = dml.where();
+        OK(where.operator_() == ultparser::DMLQueryExpr::OR, "where operator must be OR");
+        OK(where.expressions_size() == 2, "OR expressions size must be 2");
+
+        const auto &leftAnd = where.expressions(0);
+        const auto &rightAnd = where.expressions(1);
+        OK(leftAnd.operator_() == ultparser::DMLQueryExpr::AND, "left expression must be AND");
+        OK(rightAnd.operator_() == ultparser::DMLQueryExpr::AND, "right expression must be AND");
+        OK(leftAnd.expressions_size() == 2, "left AND expressions size must be 2");
+        OK(rightAnd.expressions_size() == 2, "right AND expressions size must be 2");
+    }
+
+    SQL_OK("SELECT id FROM users WHERE name LIKE 'A%' AND email LIKE '%@example.com';")
+    SQL_OK("UPDATE orders SET checksum = MD5(CONCAT(user_id, '-', order_id)), score = (score + 5) * 3 WHERE (status = 'paid' OR status = 'shipped') AND total >= 1000;")
+    SQL_OK("DELETE FROM logs WHERE (level = 'debug' OR level = 'trace') AND (retry_count % 3 = 0);")
+    SQL_OK("INSERT INTO pricing (sku, price, discount, note) VALUES ('SKU-1', 19.9900, -0.05, CONCAT('promo-', 2026));")
     
     return true;
 }
