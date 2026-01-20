@@ -4,6 +4,7 @@
 
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/fcntl.h>
 
 #include <fmt/format.h>
 
@@ -95,7 +96,7 @@ namespace ultraverse::state::v2 {
     void StateChanger::loadBackup(const std::string &dbName, const std::string &fileName) {
         _logger->info("loading database backup from {}...", fileName);
         
-        int fd = open(fileName.c_str(), O_RDONLY);
+        int fd = ::open(fileName.c_str(), O_RDONLY);
         if (fd < 0) {
             throw std::runtime_error("failed to load backup file");
         }
