@@ -217,7 +217,7 @@ TEST_CASE("RowGraph entrypoints scale with thousands of nodes") {
     ids.reserve(kNodes);
 
     for (int i = 0; i < kNodes; i++) {
-        const gid_t gid = static_cast<gid_t>(i + 1);
+        const ultraverse::state::v2::gid_t gid = static_cast<ultraverse::state::v2::gid_t>(i + 1);
         if (i % 2 == 0) {
             auto txn = makeTxn(gid, "test", {}, {makeEq("users.id", 1)});
             ids.push_back(graph.addNode(txn));

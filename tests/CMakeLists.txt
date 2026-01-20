@@ -2,7 +2,7 @@ include(CTest)
 include(FetchContent)
 set(CMAKE_CXX_STANDARD 20)
 
-add_compile_options(-O2)
+add_compile_options(-O0 -g)
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 
 find_package(Boost REQUIRED)
@@ -43,6 +43,7 @@ target_link_libraries(statecluster-test ultraverse Catch2::Catch2WithMain)
 
 add_executable(rowgraph-test rowgraph-test.cpp)
 target_link_libraries(rowgraph-test ultraverse Catch2::Catch2WithMain)
+# target_compile_definitions(rowgraph-test PRIVATE ULTRAVERSE_TESTING)
 
 add_executable(relationship-resolver-test relationship-resolver-test.cpp)
 target_link_libraries(relationship-resolver-test ultraverse Catch2::Catch2WithMain)
@@ -53,6 +54,9 @@ target_link_libraries(statehash-test ultraverse Catch2::Catch2WithMain)
 add_executable(sqlparser-test sqlparser-test.cpp)
 target_link_libraries(sqlparser-test ultraverse Catch2::Catch2WithMain)
 
+add_executable(tabledependencygraph-test tabledependencygraph-test.cpp)
+target_link_libraries(tabledependencygraph-test ultraverse Catch2::Catch2WithMain)
+
 add_dependencies(sqlparser-test ultparserlib)
 
 if (APPLE)
@@ -61,6 +65,7 @@ if (APPLE)
     target_link_options(relationship-resolver-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(statehash-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(sqlparser-test PRIVATE "-L/opt/homebrew/lib")
+    target_link_options(tabledependencygraph-test PRIVATE "-L/opt/homebrew/lib")
 endif()
 
 add_test(NAME statecluster-test COMMAND statecluster-test)
@@ -68,3 +73,4 @@ add_test(NAME rowgraph-test COMMAND rowgraph-test)
 add_test(NAME relationship-resolver-test COMMAND relationship-resolver-test)
 add_test(NAME statehash-test COMMAND statehash-test)
 add_test(NAME sqlparser-test COMMAND sqlparser-test)
+add_test(NAME tabledependencygraph-test COMMAND tabledependencygraph-test)
