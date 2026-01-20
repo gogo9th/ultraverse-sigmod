@@ -5,6 +5,10 @@ set(CMAKE_CXX_STANDARD 20)
 add_compile_options(-O0 -g)
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 
+if (APPLE)
+    add_compile_options(-fexperimental-library "-I/opt/homebrew/opt/llvm/include")
+endif()
+
 find_package(Boost REQUIRED)
 
 include_directories(../dependencies/sql-parser/src)
@@ -66,6 +70,17 @@ target_link_libraries(naminghistory-test ultraverse Catch2::Catch2WithMain)
 add_executable(rowcluster-test rowcluster-test.cpp)
 target_link_libraries(rowcluster-test ultraverse Catch2::Catch2WithMain)
 
+add_executable(statechanger-test
+        statechanger-test.cpp
+
+        ../src/mariadb/state/new/StateChanger.cpp
+        ../src/mariadb/state/new/StateChanger.hpp
+        ../src/mariadb/state/new/StateChanger.prepare.cpp
+        ../src/mariadb/state/new/StateChanger.replay.cpp
+        ../src/mariadb/state/new/StateChangeContext.hpp
+)
+target_link_libraries(statechanger-test ultraverse Catch2::Catch2WithMain tbb)
+
 add_dependencies(sqlparser-test ultparserlib)
 
 if (APPLE)
@@ -78,6 +93,7 @@ if (APPLE)
     target_link_options(tabledependencygraph-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(naminghistory-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(rowcluster-test PRIVATE "-L/opt/homebrew/lib")
+    target_link_options(statechanger-test PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
 endif()
 
 add_test(NAME statecluster-test COMMAND statecluster-test)
@@ -89,3 +105,4 @@ add_test(NAME sqlparser-test COMMAND sqlparser-test)
 add_test(NAME tabledependencygraph-test COMMAND tabledependencygraph-test)
 add_test(NAME naminghistory-test COMMAND naminghistory-test)
 add_test(NAME rowcluster-test COMMAND rowcluster-test)
+add_test(NAME statechanger-test COMMAND statechanger-test)

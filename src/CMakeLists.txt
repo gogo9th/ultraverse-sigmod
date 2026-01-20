@@ -105,6 +105,9 @@ set(LIBULTRAVERSE_STATE_SRCS
     
     mariadb/state/new/StateLogReader.cpp
     mariadb/state/new/StateLogReader.hpp
+
+    mariadb/state/new/StateIO.cpp
+    mariadb/state/new/StateIO.hpp
     
     mariadb/state/new/cluster/CandidateColumn.hpp
     
@@ -194,8 +197,6 @@ set(DB_STATE_CHANGE_SRCS
     mariadb/state/new/StateChanger.hpp
     mariadb/state/new/StateChanger.prepare.cpp
     mariadb/state/new/StateChanger.replay.cpp
-    mariadb/state/new/StateIO.cpp
-    mariadb/state/new/StateIO.hpp
     mariadb/state/new/StateChangeContext.hpp
     db_state_change.cpp
 )

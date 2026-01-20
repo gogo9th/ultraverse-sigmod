@@ -574,6 +574,7 @@ namespace ultraverse::state::v2 {
     }
     
     bool StateCluster::shouldReplay(gid_t gid) {
+        std::scoped_lock lock(_targetCacheLock);
         if (_rollbackTargets.find(gid) != _rollbackTargets.end()) {
             // 롤백 타겟 자신은 재실행되어선 안된다
             return false;

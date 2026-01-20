@@ -30,7 +30,9 @@ namespace ultraverse {
         }
         
         ~DBHandleLease() {
-            this->_releaser();
+            if (this->_releaser) {
+                this->_releaser();
+            }
         }
         
         DBHandleLease(DBHandleLease &) = delete;

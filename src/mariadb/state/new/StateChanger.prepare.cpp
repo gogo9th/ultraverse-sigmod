@@ -3,6 +3,8 @@
 //
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <sstream>
 
 #include <execution>
@@ -156,7 +158,7 @@ namespace ultraverse::state::v2 {
         
         std::mutex gidListMutex;
         
-        size_t replayGidCount = 0;
+        std::atomic<size_t> replayGidCount{0};
         size_t totalCount = 0;
         
         size_t totalQueryCount = 0;
@@ -279,7 +281,7 @@ namespace ultraverse::state::v2 {
         report.bench_setReplayQueryCount(replayQueryCount);
         report.bench_setTotalQueryCount(totalQueryCount);
         
-        _logger->info("benchAutoRollback(): {} / {} transactions will be replayed ({}%)", replayGidCount, totalCount, ((double) replayGidCount / totalCount) * 100);
+        _logger->info("benchAutoRollback(): {} / {} transactions will be replayed ({}%)", replayGidCount.load(), totalCount, ((double) replayGidCount / totalCount) * 100);
         _logger->info("benchAutoRollback(): {} / {} queries will be replayed ({}%)", replayQueryCount, totalQueryCount, ((double) replayQueryCount / totalQueryCount) * 100);
         // rowCluster.describe();
         
@@ -300,7 +302,7 @@ namespace ultraverse::state::v2 {
         std::mutex graphLock;
         std::mutex stdoutLock;
         
-        size_t replayGidCount = 0;
+        std::atomic<size_t> replayGidCount = 0;
         size_t totalCount = 0;
         
         createIntermediateDB();
@@ -335,25 +337,34 @@ namespace ultraverse::state::v2 {
         std::atomic_bool isRunning = true;
         
         std::mutex tasksMutex;
+        std::condition_variable tasksCv;
         std::queue<std::shared_ptr<std::promise<gid_t>>> tasks;
         std::set<gid_t> replayGids;
         
-        std::thread promiseConsumerThread([&isRunning, &tasks, &tasksMutex, &replayGidCount]() {
-            while (isRunning || !tasks.empty()) {
-                if (tasks.empty()) {
-                    continue;
+        std::thread promiseConsumerThread([&isRunning, &tasks, &tasksMutex, &tasksCv, &replayGidCount]() {
+            for (;;) {
+                std::shared_ptr<std::promise<gid_t>> promise;
+                {
+                    std::unique_lock lock(tasksMutex);
+                    tasksCv.wait(lock, [&tasks, &isRunning]() {
+                        return !tasks.empty() || !isRunning.load();
+                    });
+
+                    if (tasks.empty()) {
+                        if (!isRunning.load()) {
+                            break;
+                        }
+                        continue;
+                    }
+
+                    promise = std::move(tasks.front());
+                    tasks.pop();
                 }
-                
-                tasksMutex.lock();
-                auto promise = std::move(tasks.front());
-                tasks.pop();
-                tasksMutex.unlock();
                 
                 gid_t gid = promise->get_future().get();
                 if (gid != UINT64_MAX) {
                     std::cout << gid << std::endl;
-                    
-                    replayGidCount++;
+                    replayGidCount.fetch_add(1, std::memory_order_relaxed);
                 }
             }
         });
@@ -406,7 +417,8 @@ namespace ultraverse::state::v2 {
                         }
                         return UINT64_MAX;
                     }));
-		}
+                    tasksCv.notify_one();
+                }
 
                
                 continue;
@@ -418,6 +430,7 @@ namespace ultraverse::state::v2 {
                     }
                     return UINT64_MAX;
                 }));
+                tasksCv.notify_one();
             }
             
             _reader->skipTransaction();
@@ -425,6 +438,7 @@ namespace ultraverse::state::v2 {
         
         
         isRunning = false;
+        tasksCv.notify_all();
         
         if (promiseConsumerThread.joinable()) {
             promiseConsumerThread.join();
@@ -440,11 +454,12 @@ namespace ultraverse::state::v2 {
             _phase2Time = time.count();
         }
         
-        report.setReplayGidCount(replayGidCount);
+        report.setReplayGidCount(replayGidCount.load());
         report.setTotalCount(totalCount);
         report.setExecutionTime(_phase2Time);
         
-        _logger->info("prepare(): {} / {} transactions will be replayed ({}%)", replayGidCount, totalCount, ((double) replayGidCount / totalCount) * 100);
+        auto replayCountValue = replayGidCount.load();
+        _logger->info("prepare(): {} / {} transactions will be replayed ({}%)", replayCountValue, totalCount, ((double) replayCountValue / totalCount) * 100);
         // rowCluster.describe();
         
         _logger->info("prepare(): main phase {}s", _phase2Time);
