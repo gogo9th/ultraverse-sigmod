@@ -58,6 +58,8 @@ public:
   void Set(uint64_t val);
   void Set(double val);
   void Set(const char *val, size_t length);
+  void SetDecimal(const std::string &val);
+  void SetDecimal(const char *val, size_t length);
 
   bool Get(int64_t &val) const;
   bool Get(uint64_t &val) const;

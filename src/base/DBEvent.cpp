@@ -405,6 +405,12 @@ namespace ultraverse::base {
                 item.data_list.emplace_back(std::move(data));
             }
                 break;
+            case ultparser::DMLQueryExpr::DECIMAL: {
+                StateData data;
+                data.SetDecimal(right.decimal());
+                item.data_list.emplace_back(std::move(data));
+            }
+                break;
             case ultparser::DMLQueryExpr::STRING: {
                 StateData data;
                 data.Set(right.string().c_str(), right.string().size());

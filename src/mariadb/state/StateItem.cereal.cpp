@@ -22,7 +22,7 @@ void StateData::save(Archive &archive) const {
         archive(d.uval);
     } else if (type == en_column_data_double) {
         archive(d.fval);
-    } else if (type == en_column_data_string) {
+    } else if (type == en_column_data_string || type == en_column_data_decimal) {
         std::string strVal(d.str);
         archive(strVal);
     }
@@ -43,7 +43,7 @@ void StateData::load(Archive &archive) {
         archive(d.uval);
     } else if (type == en_column_data_double) {
         archive(d.fval);
-    } else if (type == en_column_data_string) {
+    } else if (type == en_column_data_string || type == en_column_data_decimal) {
         std::string strVal;
         archive(strVal);
         d.str = new char[strVal.size() + 1];

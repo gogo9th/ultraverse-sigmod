@@ -1,9 +1,170 @@
 #include "StateItem.h"
 
+#include <cctype>
+#include <cstdlib>
 #include <sstream>
 #include <execution>
 
 #include <boost/tuple/tuple.hpp>
+
+namespace {
+
+struct DecimalParts {
+  bool negative = false;
+  std::string intPart;
+  std::string fracPart;
+};
+
+bool parseDecimalString(const std::string &input, DecimalParts *out) {
+  if (out == nullptr) {
+    return false;
+  }
+
+  size_t start = 0;
+  size_t end = input.size();
+  while (start < end && std::isspace(static_cast<unsigned char>(input[start])) != 0) {
+    start++;
+  }
+  while (end > start && std::isspace(static_cast<unsigned char>(input[end - 1])) != 0) {
+    end--;
+  }
+
+  if (start >= end) {
+    return false;
+  }
+
+  bool negative = false;
+  if (input[start] == '+' || input[start] == '-') {
+    negative = (input[start] == '-');
+    start++;
+  }
+
+  if (start >= end) {
+    return false;
+  }
+
+  bool seenDot = false;
+  std::string intPart;
+  std::string fracPart;
+
+  for (size_t i = start; i < end; ++i) {
+    char c = input[i];
+    if (c == '.') {
+      if (seenDot) {
+        return false;
+      }
+      seenDot = true;
+      continue;
+    }
+    if (std::isdigit(static_cast<unsigned char>(c)) == 0) {
+      return false;
+    }
+    if (seenDot) {
+      fracPart.push_back(c);
+    } else {
+      intPart.push_back(c);
+    }
+  }
+
+  if (intPart.empty() && fracPart.empty()) {
+    return false;
+  }
+
+  if (intPart.empty()) {
+    intPart = "0";
+  }
+
+  size_t firstNonZero = intPart.find_first_not_of('0');
+  if (firstNonZero == std::string::npos) {
+    intPart = "0";
+  } else if (firstNonZero > 0) {
+    intPart = intPart.substr(firstNonZero);
+  }
+
+  while (!fracPart.empty() && fracPart.back() == '0') {
+    fracPart.pop_back();
+  }
+
+  if (intPart == "0" && fracPart.empty()) {
+    negative = false;
+  }
+
+  out->negative = negative;
+  out->intPart = std::move(intPart);
+  out->fracPart = std::move(fracPart);
+  return true;
+}
+
+std::string normalizeDecimalString(const std::string &input, bool *ok) {
+  DecimalParts parts;
+  bool parsed = parseDecimalString(input, &parts);
+  if (ok != nullptr) {
+    *ok = parsed;
+  }
+  if (!parsed) {
+    return input;
+  }
+
+  std::string normalized;
+  if (parts.negative) {
+    normalized.push_back('-');
+  }
+  normalized += parts.intPart;
+  if (!parts.fracPart.empty()) {
+    normalized.push_back('.');
+    normalized += parts.fracPart;
+  }
+  return normalized;
+}
+
+int compareDecimalMagnitude(const DecimalParts &left, const DecimalParts &right) {
+  if (left.intPart.size() != right.intPart.size()) {
+    return left.intPart.size() < right.intPart.size() ? -1 : 1;
+  }
+
+  int intCmp = left.intPart.compare(right.intPart);
+  if (intCmp != 0) {
+    return intCmp < 0 ? -1 : 1;
+  }
+
+  size_t maxFrac = std::max(left.fracPart.size(), right.fracPart.size());
+  for (size_t i = 0; i < maxFrac; ++i) {
+    char leftDigit = i < left.fracPart.size() ? left.fracPart[i] : '0';
+    char rightDigit = i < right.fracPart.size() ? right.fracPart[i] : '0';
+    if (leftDigit != rightDigit) {
+      return leftDigit < rightDigit ? -1 : 1;
+    }
+  }
+
+  return 0;
+}
+
+int compareDecimalStrings(const std::string &left, const std::string &right) {
+  DecimalParts leftParts;
+  DecimalParts rightParts;
+  if (!parseDecimalString(left, &leftParts) || !parseDecimalString(right, &rightParts)) {
+    int cmp = strcmp(left.c_str(), right.c_str());
+    if (cmp < 0) {
+      return -1;
+    }
+    if (cmp > 0) {
+      return 1;
+    }
+    return 0;
+  }
+
+  if (leftParts.negative != rightParts.negative) {
+    return leftParts.negative ? -1 : 1;
+  }
+
+  int magnitude = compareDecimalMagnitude(leftParts, rightParts);
+  if (leftParts.negative) {
+    magnitude = -magnitude;
+  }
+  return magnitude;
+}
+
+}  // namespace
 
 StateData::StateData()
 {
@@ -38,7 +199,7 @@ StateData::StateData(const std::string &val):
 
 StateData::StateData(const StateData &c)
 {
-  if (c.type == en_column_data_string) {
+  if (c.type == en_column_data_string || c.type == en_column_data_decimal) {
       Copy(c);
   } else {
       memcpy(this, &c, sizeof(StateData));
@@ -52,7 +213,7 @@ StateData::~StateData()
 
 void StateData::Clear()
 {
-  if (type == en_column_data_string && d.str != nullptr)
+  if ((type == en_column_data_string || type == en_column_data_decimal) && d.str != nullptr)
   {
     free(d.str);
   }
@@ -68,7 +229,7 @@ void StateData::Copy(const StateData &c)
 {
   is_equal = c.is_equal;
   type = c.type;
-  if (type == en_column_data_string)
+  if (type == en_column_data_string || type == en_column_data_decimal)
   {
     d.str = strdup(c.d.str);
     str_len = c.str_len;
@@ -107,6 +268,9 @@ bool StateData::SetData(en_state_log_column_data_type _type, void *_data, size_t
   case en_column_data_string:
     Set((char *)_data, _length);
     // debug("[StateData::SetData] en_column_data_string %s", d.str);
+    break;
+  case en_column_data_decimal:
+    SetDecimal((char *)_data, _length);
     break;
 
   default:
@@ -174,6 +338,16 @@ bool StateData::ConvertData(en_state_log_column_data_type _type)
       return false;
     }
     Set(value.c_str(), value.size());
+    return true;
+  }
+  case en_column_data_decimal:
+  {
+    std::string value;
+    if (false == Get(value))
+    {
+      return false;
+    }
+    SetDecimal(value);
     return true;
   }
 
@@ -252,6 +426,30 @@ void StateData::Set(const char *val, size_t length)
   calculateHash();
 }
 
+void StateData::SetDecimal(const std::string &val)
+{
+  SetDecimal(val.c_str(), val.size());
+}
+
+void StateData::SetDecimal(const char *val, size_t length)
+{
+  Clear();
+
+  bool normalizedOk = false;
+  std::string normalized = normalizeDecimalString(std::string(val, length), &normalizedOk);
+  if (!normalizedOk) {
+    normalized.assign(val, length);
+  }
+
+  type = en_column_data_decimal;
+  d.str = (char *)malloc(normalized.size() + 1);
+  memcpy(d.str, normalized.data(), normalized.size());
+  d.str[normalized.size()] = 0;
+  str_len = normalized.size();
+
+  calculateHash();
+}
+
 bool StateData::Get(int64_t &val) const
 {
   switch (type)
@@ -264,6 +462,10 @@ bool StateData::Get(int64_t &val) const
   case en_column_data_string:
     char *end;
     val = std::strtol(d.str, &end, 10);
+    return true;
+  case en_column_data_decimal:
+    char *endDec;
+    val = std::strtoll(d.str, &endDec, 10);
     return true;
 
   case en_column_data_double:
@@ -285,6 +487,10 @@ bool StateData::Get(uint64_t &val) const
     char *end;
     val = std::strtoul(d.str, &end, 10);
     return true;
+  case en_column_data_decimal:
+    char *endDec;
+    val = std::strtoull(d.str, &endDec, 10);
+    return true;
 
   case en_column_data_double:
   default:
@@ -303,6 +509,10 @@ bool StateData::Get(double &val) const
   case en_column_data_string:
     char *end;
     val = std::strtold(d.str, &end);
+    return true;
+  case en_column_data_decimal:
+    char *endDec;
+    val = std::strtold(d.str, &endDec);
     return true;
 
   case en_column_data_int:
@@ -332,6 +542,9 @@ bool StateData::Get(std::string &val) const
     char *end;
     val = std::string(d.str);
     return true;
+  case en_column_data_decimal:
+    val = std::string(d.str);
+    return true;
 
   default:
     return false;
@@ -346,7 +559,7 @@ bool StateData::operator==(const StateData &c) const
 #ifdef __amd64__
   static_assert(sizeof(UNION_RAW_DATA) == 8, "the size of UNION_RAW_DATA must be 8");
   
-  if (type == en_column_data_string)
+  if (type == en_column_data_string || type == en_column_data_decimal)
       return str_len == c.str_len && memcmp(d.str, c.d.str, str_len) == 0;
 
   return d.ival == c.d.ival;
@@ -364,6 +577,8 @@ bool StateData::operator==(const StateData &c) const
 
   case en_column_data_string:
     return str_len == c.str_len && memcmp(d.str, c.d.str, str_len) == 0;
+  case en_column_data_decimal:
+    return compareDecimalStrings(d.str, c.d.str) == 0;
 
   case en_column_data_null:
     return true;
@@ -381,7 +596,7 @@ bool StateData::operator!=(const StateData &c) const
 #ifdef __amd64__
   static_assert(sizeof(UNION_RAW_DATA) == 8, "the size of UNION_RAW_DATA must be 8");
   
-  if (type == en_column_data_string)
+  if (type == en_column_data_string || type == en_column_data_decimal)
       return str_len != c.str_len || strcmp(d.str, c.d.str) != 0;
   
   return d.ival == c.d.ival;
@@ -399,6 +614,8 @@ bool StateData::operator!=(const StateData &c) const
 
   case en_column_data_string:
     return str_len != c.str_len || strcmp(d.str, c.d.str) != 0;
+  case en_column_data_decimal:
+    return compareDecimalStrings(d.str, c.d.str) != 0;
 
   case en_column_data_null:
     return false;
@@ -426,6 +643,8 @@ bool StateData::operator>(const StateData &c) const
 
   case en_column_data_string:
     return strcmp(d.str, c.d.str) > 0;
+  case en_column_data_decimal:
+    return compareDecimalStrings(d.str, c.d.str) > 0;
 
   default:
     return false;
@@ -449,6 +668,8 @@ bool StateData::operator>=(const StateData &c) const
 
   case en_column_data_string:
       return strcmp(d.str, c.d.str) >= 0;
+  case en_column_data_decimal:
+      return compareDecimalStrings(d.str, c.d.str) >= 0;
 
 
   default:
@@ -473,6 +694,8 @@ bool StateData::operator<(const StateData &c) const
 
   case en_column_data_string:
       return strcmp(d.str, c.d.str) < 0;
+  case en_column_data_decimal:
+      return compareDecimalStrings(d.str, c.d.str) < 0;
 
 
   default:
@@ -497,6 +720,8 @@ bool StateData::operator<=(const StateData &c) const
 
   case en_column_data_string:
       return strcmp(d.str, c.d.str) <= 0;
+  case en_column_data_decimal:
+      return compareDecimalStrings(d.str, c.d.str) <= 0;
 
   default:
     return false;
@@ -541,7 +766,7 @@ void StateData::calculateHash() {
         return;
     }
     
-    if (Type() == en_column_data_string) {
+    if (Type() == en_column_data_string || Type() == en_column_data_decimal) {
         _hash = (
             std::hash<en_state_log_column_data_type>()(Type()) ^
             (std::hash<std::string>()(std::string(d.str, str_len)) + 0x9e3779b9 + (_hash << 6) + (_hash >> 2))

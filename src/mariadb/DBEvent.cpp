@@ -317,7 +317,7 @@ namespace ultraverse::mariadb {
                 
                 std::string replVal = replStream.str();
                 
-                data.Set(replVal.c_str(), replVal.size());
+                data.SetDecimal(replVal.c_str(), replVal.size());
     
                 candidateItem.data_list.emplace_back(std::move(data));
                 candidateItem.function_type = FUNCTION_EQ;
