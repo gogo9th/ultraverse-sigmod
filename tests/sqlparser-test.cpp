@@ -177,8 +177,8 @@ bool runTests() {
         OK(arg0.value_type() == ultparser::DMLQueryExpr::STRING, "NAME_CONST arg0 must be string");
         OK(toLower(arg0.string()) == "var_paymentamount", "NAME_CONST arg0 must be var_paymentAmount");
 
-        OK(arg1.value_type() == ultparser::DMLQueryExpr::DOUBLE, "NAME_CONST arg1 must be double");
-        OK(std::fabs(arg1.double_() - 3980.34) < 0.0001, "NAME_CONST arg1 must be 3980.34");
+        OK(arg1.value_type() == ultparser::DMLQueryExpr::DECIMAL, "NAME_CONST arg1 must be decimal");
+        OK(arg1.decimal() == "3980.34", "NAME_CONST arg1 must be 3980.34");
     }
     
     SQL_OK("UPDATE customer SET C_BALANCE =  NAME_CONST('var_c_balance',-3990.34), C_YTD_PAYMENT =  NAME_CONST('var_c_ytd_payment',3990.34),      C_PAYMENT_CNT =  NAME_CONST('var_c_payment_cnt',2)     WHERE C_W_ID =  NAME_CONST('var_customerWarehouseID',10) AND C_D_ID =  NAME_CONST('var_customerDistrictID',7)      AND C_ID =  NAME_CONST('var_c_id',62)")

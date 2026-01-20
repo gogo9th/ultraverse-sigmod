@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	types2 "github.com/pingcap/tidb/types"
 	_ "github.com/pingcap/tidb/types/parser_driver"
@@ -106,11 +107,17 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 				ValueType: pb.DMLQueryExpr_INTEGER,
 				Integer:   valueExpr.GetValue().(int64),
 			}
-		} else if types2.IsTypeFloat(tp) {
+		} else if tp == mysql.TypeNewDecimal {
+			return &pb.DMLQueryExpr{
+				Operator:  pb.DMLQueryExpr_VALUE,
+				ValueType: pb.DMLQueryExpr_DECIMAL,
+				Decimal:   valueExpr.GetDatumString(),
+			}
+		} else if tp == mysql.TypeDouble || types2.IsTypeFloat(tp) {
 			return &pb.DMLQueryExpr{
 				Operator:  pb.DMLQueryExpr_VALUE,
 				ValueType: pb.DMLQueryExpr_DOUBLE,
-				Double:    valueExpr.GetValue().(float64),
+				Double:    valueExpr.GetValue().(float64), // valueExpr.GetFloat64(),
 			}
 		} else {
 			return &pb.DMLQueryExpr{
@@ -214,6 +221,12 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 					exprNode.Integer = -exprNode.Integer
 				} else if exprNode.ValueType == pb.DMLQueryExpr_DOUBLE {
 					exprNode.Double = -exprNode.Double
+				} else if exprNode.ValueType == pb.DMLQueryExpr_DECIMAL {
+					if strings.HasPrefix(exprNode.Decimal, "-") {
+						exprNode.Decimal = strings.TrimPrefix(exprNode.Decimal, "-")
+					} else if exprNode.Decimal != "0" {
+						exprNode.Decimal = "-" + exprNode.Decimal
+					}
 				}
 				break
 			default:

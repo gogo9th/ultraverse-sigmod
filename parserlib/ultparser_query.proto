@@ -53,6 +53,7 @@ message DMLQueryExpr {
     LIST = 7;
     MAP = 8;
     FUNCTION = 9;
+    DECIMAL = 10;
   }
 
   Operator operator = 1;
@@ -78,6 +79,7 @@ message DMLQueryExpr {
   map<string, DMLQueryExpr> map = 13;
 
   string function = 14;
+  string decimal = 15;
 }
 
 message AliasedIdentifier {
