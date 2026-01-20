@@ -84,7 +84,7 @@ namespace ultraverse::state::v2 {
     
     RowGraphId RowGraph::addNode(std::shared_ptr<Transaction> transaction, bool hold) {
         auto node = std::make_shared<RowGraphNode>();
-        node->transaction = std::move(transaction);
+        std::atomic_store(&node->transaction, std::move(transaction));
         node->hold = hold;
         
         RowGraphId id = nullptr;
@@ -103,6 +103,11 @@ namespace ultraverse::state::v2 {
         std::unordered_set<std::string> wildcardWriteColumns;
         bool globalReadWildcard = false;
         bool globalWriteWildcard = false;
+        const auto transactionPtr = std::atomic_load(&node->transaction);
+        if (!transactionPtr) {
+            node->ready = true;
+            return id;
+        }
 
         auto addResolvedItem = [&](StateItem resolved, bool isWrite) {
             resolved.name = utility::toLower(resolved.name);
@@ -233,7 +238,7 @@ namespace ultraverse::state::v2 {
             }
         };
 
-        for (auto it = node->transaction->readSet_begin(); it != node->transaction->readSet_end(); ++it) {
+        for (auto it = transactionPtr->readSet_begin(); it != transactionPtr->readSet_end(); ++it) {
             const auto &item = *it;
             auto resolved = resolveKeyItem(item);
             if (resolved.has_value()) {
@@ -243,7 +248,7 @@ namespace ultraverse::state::v2 {
             }
         }
 
-        for (auto it = node->transaction->writeSet_begin(); it != node->transaction->writeSet_end(); ++it) {
+        for (auto it = transactionPtr->writeSet_begin(); it != transactionPtr->writeSet_end(); ++it) {
             const auto &item = *it;
             auto resolved = resolveKeyItem(item);
             if (resolved.has_value()) {
@@ -418,8 +423,9 @@ namespace ultraverse::state::v2 {
             
             std::for_each(vi, vi_end, [this, &toRemove](const auto &id) {
                 auto node = _graph[id];
-                
-                if (node->finalized && node->transaction == nullptr) {
+
+                const auto transactionPtr = std::atomic_load(&node->transaction);
+                if (node->finalized && transactionPtr == nullptr) {
                     toRemove.emplace(id);
                 }
             });
@@ -566,11 +572,15 @@ namespace ultraverse::state::v2 {
     
     void RowGraph::processColumnTask(ColumnWorker &worker, ColumnTask &task) {
         auto node = nodeFor(task.nodeId);
-        if (node == nullptr || node->transaction == nullptr) {
+        if (node == nullptr) {
             return;
         }
-        
-        const auto gid = node->transaction->gid();
+        const auto transactionPtr = std::atomic_load(&node->transaction);
+        if (transactionPtr == nullptr) {
+            return;
+        }
+
+        const auto gid = transactionPtr->gid();
         const auto comparisonMethod = rangeComparisonMethod();
         std::unordered_set<RowGraphId> edgeSources;
         edgeSources.reserve(task.readItems.size() + task.writeItems.size());

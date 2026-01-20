@@ -208,10 +208,13 @@ namespace ultraverse::state::v2 {
             }
             
             {
-                auto node = std::move(rowGraph.nodeFor(nodeId));
-                const auto transaction = node->transaction;
-                
+                auto node = rowGraph.nodeFor(nodeId);
                 if (node == nullptr || node->finalized) {
+                    goto NEXT_LOOP;
+                }
+
+                const auto transaction = std::atomic_load(&node->transaction);
+                if (!transaction) {
                     goto NEXT_LOOP;
                 }
                 
@@ -290,7 +293,7 @@ namespace ultraverse::state::v2 {
                 
                 
                 node->finalized = true;
-                node->transaction.reset();
+                std::atomic_store(&node->transaction, std::shared_ptr<Transaction>{});
             }
             
             NEXT_LOOP:
