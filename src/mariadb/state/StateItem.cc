@@ -1429,6 +1429,9 @@ const StateRange &StateItem::MakeRange2() const {
                         range.SetValue(data, true);
                     }
                     break;
+                case FUNCTION_WILDCARD:
+                    range.setWildcard(true);
+                    break;
                     
                 default:
                     break;
