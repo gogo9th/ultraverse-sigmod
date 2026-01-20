@@ -4,6 +4,25 @@ if (APPLE)
     set(BISON_EXECUTABLE "/opt/homebrew/opt/bison/bin/bison" CACHE PATH "Bison executable")
 endif()
 
+set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "Use external fmt library" FORCE)
+
+Include(FetchContent)
+
+FetchContent_Declare(
+        fmt
+        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+        GIT_TAG        12.1.0
+)
+
+FetchContent_Declare(
+        spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG        v1.16.0
+)
+
+FetchContent_MakeAvailable(fmt)
+FetchContent_MakeAvailable(spdlog)
+
 find_package(PkgConfig REQUIRED)
 find_package(BISON 3.0.0 REQUIRED)
 find_package(FLEX REQUIRED)
@@ -11,8 +30,6 @@ find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
 
 # pkg_check_modules(JEMALLOC REQUIRED jemalloc)
-pkg_check_modules(FMT REQUIRED fmt)
-pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
 
@@ -36,8 +53,7 @@ endif()
 set(ULTRAVERSE_DEPENDENCIES
     ${BOOST_LIBRARIES}
     ${MARIADB_LIBRARIES}
-    ${FMT_LIBRARIES}
-    ${SPDLOG_LIBRARIES}
+    fmt::fmt spdlog::spdlog
     ${Boost_LIBRARIES}
     ${GRAPHVIZ_LIBRARIES}
     
