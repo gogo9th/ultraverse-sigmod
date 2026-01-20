@@ -1,0 +1,145 @@
+#include <string>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include "../src/mariadb/state/new/StateChangePlan.hpp"
+#include "../src/mariadb/state/new/StateChangeContext.hpp"
+#include "../src/mariadb/state/new/cluster/NamingHistory.hpp"
+
+#include "state_test_helpers.hpp"
+
+using namespace ultraverse::state::v2;
+using namespace ultraverse::state::v2::test_helpers;
+
+TEST_CASE("RelationshipResolver resolveChain handles alias and FK mapping (mocked)") {
+    MockedRelationshipResolver resolver;
+
+    resolver.addColumnAlias("posts.uuid", "posts.id");
+    resolver.addForeignKey("posts.author", "users.id");
+    resolver.addColumnAlias("posts.author_name", "posts.author");
+
+    REQUIRE(resolver.resolveChain("posts.uuid") == "posts.id");
+    REQUIRE(resolver.resolveChain("posts.author") == "users.id");
+    REQUIRE(resolver.resolveChain("posts.author_name") == "users.id");
+
+    resolver.addColumnAlias("a", "b");
+    resolver.addColumnAlias("b", "c");
+    REQUIRE(resolver.resolveChain("a") == "b");
+
+    REQUIRE(resolver.resolveChain("unknown.col").empty());
+}
+
+TEST_CASE("RelationshipResolver resolveRowChain maps row alias and FK chain") {
+    MockedRelationshipResolver resolver;
+
+    resolver.addRowAlias(
+        makeEqStr("posts.uuid", "uuid-1"),
+        makeEq("posts.id", 1)
+    );
+
+    auto resolved = resolver.resolveRowChain(makeEqStr("posts.uuid", "uuid-1"));
+    REQUIRE(resolved != nullptr);
+    REQUIRE(resolved->name == "posts.id");
+    REQUIRE(resolved->MakeRange2() == StateRange{1});
+
+    resolver.addRowAlias(
+        makeEqStr("posts.author_str", "alice"),
+        makeEq("posts.author", 1)
+    );
+    resolver.addForeignKey("posts.author", "users.id");
+
+    auto chained = resolver.resolveRowChain(makeEqStr("posts.author_str", "alice"));
+    REQUIRE(chained != nullptr);
+    REQUIRE(chained->name == "users.id");
+    REQUIRE(chained->MakeRange2() == StateRange{1});
+
+    auto missing = resolver.resolveRowChain(makeEqStr("posts.uuid", "missing"));
+    REQUIRE(missing == nullptr);
+}
+
+TEST_CASE("StateRelationshipResolver resolves alias chains and FK mapping") {
+    StateChangePlan plan;
+    plan.columnAliases().push_back({"posts.author_name", "posts.author"});
+    plan.columnAliases().push_back({"a", "b"});
+    plan.columnAliases().push_back({"b", "c"});
+
+    StateChangeContext context;
+    auto posts = std::make_shared<NamingHistory>("posts");
+    auto users = std::make_shared<NamingHistory>("users");
+    context.tables = {posts, users};
+    context.foreignKeys.push_back(ForeignKey{posts, "author", users, "id"});
+
+    StateRelationshipResolver resolver(plan, context);
+
+    REQUIRE(resolver.resolveColumnAlias("posts.author_name") == "posts.author");
+    REQUIRE(resolver.resolveColumnAlias("A") == "c");
+    REQUIRE(resolver.resolveChain("posts.author_name") == "users.id");
+    REQUIRE(resolver.resolveChain("unknown.col").empty());
+}
+
+TEST_CASE("StateRelationshipResolver addTransaction builds row alias mapping") {
+    StateChangePlan plan;
+    plan.columnAliases().push_back({"users.id_str", "users.id"});
+
+    StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+
+    auto txn = makeTxn(
+        1,
+        "test",
+        {},
+        {makeEqStr("users.id_str", "0001"), makeEq("users.id", 1)}
+    );
+
+    resolver.addTransaction(*txn);
+
+    auto resolved = resolver.resolveRowAlias(makeEqStr("users.id_str", "0001"));
+    REQUIRE(resolved != nullptr);
+    REQUIRE(resolved->name == "users.id");
+    REQUIRE(resolved->MakeRange2() == StateRange{1});
+}
+
+TEST_CASE("StateRelationshipResolver resolveRowChain follows FK even without row alias") {
+    StateChangePlan plan;
+    StateChangeContext context;
+    auto posts = std::make_shared<NamingHistory>("posts");
+    auto users = std::make_shared<NamingHistory>("users");
+    context.tables = {posts, users};
+    context.foreignKeys.push_back(ForeignKey{posts, "author", users, "id"});
+
+    StateRelationshipResolver resolver(plan, context);
+
+    auto resolved = resolver.resolveRowChain(makeEq("posts.author", 1));
+    REQUIRE(resolved != nullptr);
+    REQUIRE(resolved->name == "users.id");
+    REQUIRE(resolved->MakeRange2() == StateRange{1});
+}
+
+TEST_CASE("CachedRelationshipResolver returns consistent results") {
+    MockedRelationshipResolver resolver;
+    resolver.addColumnAlias("posts.uuid", "posts.id");
+    resolver.addForeignKey("posts.author", "users.id");
+    resolver.addRowAlias(
+        makeEqStr("posts.uuid", "uuid-1"),
+        makeEq("posts.id", 1)
+    );
+
+    CachedRelationshipResolver cached(resolver, 4);
+
+    REQUIRE(cached.resolveColumnAlias("posts.uuid") == "posts.id");
+    REQUIRE(cached.resolveChain("posts.author") == "users.id");
+
+    auto resolved1 = cached.resolveRowAlias(makeEqStr("posts.uuid", "uuid-1"));
+    REQUIRE(resolved1 != nullptr);
+    REQUIRE(resolved1->name == "posts.id");
+    REQUIRE(resolved1->MakeRange2() == StateRange{1});
+
+    auto resolved2 = cached.resolveRowChain(makeEqStr("posts.uuid", "uuid-1"));
+    REQUIRE(resolved2 != nullptr);
+    REQUIRE(resolved2->name == "posts.id");
+
+    cached.clearCache();
+    REQUIRE(cached.resolveChain("posts.author") == "users.id");
+
+    REQUIRE(cached.resolveChain("unknown.col").empty());
+}
