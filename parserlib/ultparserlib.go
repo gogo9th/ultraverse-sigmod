@@ -108,10 +108,18 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 				Integer:   valueExpr.GetValue().(int64),
 			}
 		} else if tp == mysql.TypeNewDecimal {
+			decimalValue := ""
+			if raw := valueExpr.GetValue(); raw != nil {
+				if dec, ok := raw.(*types2.MyDecimal); ok {
+					decimalValue = dec.String()
+				} else {
+					decimalValue = fmt.Sprintf("%v", raw)
+				}
+			}
 			return &pb.DMLQueryExpr{
 				Operator:  pb.DMLQueryExpr_VALUE,
 				ValueType: pb.DMLQueryExpr_DECIMAL,
-				Decimal:   valueExpr.GetDatumString(),
+				Decimal:   decimalValue,
 			}
 		} else if tp == mysql.TypeDouble || types2.IsTypeFloat(tp) {
 			return &pb.DMLQueryExpr{
@@ -207,6 +215,16 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 		}
 
 		return &expr_out
+	} else if likeExpr, ok := (*expr).(*ast.PatternLikeOrIlikeExpr); ok {
+		op := pb.DMLQueryExpr_LIKE
+		if likeExpr.Not {
+			op = pb.DMLQueryExpr_NOT_LIKE
+		}
+		return &pb.DMLQueryExpr{
+			Operator: op,
+			Left:     process_expr_node(&likeExpr.Expr),
+			Right:    process_expr_node(&likeExpr.Pattern),
+		}
 	} else if parenExpr, ok := (*expr).(*ast.ParenthesesExpr); ok {
 		return process_expr_node(&parenExpr.Expr)
 	} else if unaryExpr, ok := (*expr).(*ast.UnaryOperationExpr); ok {
