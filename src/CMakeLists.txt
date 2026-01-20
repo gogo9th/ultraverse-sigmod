@@ -194,6 +194,8 @@ set(DB_STATE_CHANGE_SRCS
     mariadb/state/new/StateChanger.hpp
     mariadb/state/new/StateChanger.prepare.cpp
     mariadb/state/new/StateChanger.replay.cpp
+    mariadb/state/new/StateIO.cpp
+    mariadb/state/new/StateIO.hpp
     mariadb/state/new/StateChangeContext.hpp
     db_state_change.cpp
 )
@@ -213,4 +215,3 @@ endif()
 target_link_libraries(state_log_viewer ultraverse ${ULTRAVERSE_DEPENDENCIES})
 target_link_libraries(statelogd ultraverse ${ULTRAVERSE_DEPENDENCIES})
 target_link_libraries(db_state_change ultraverse ${ULTRAVERSE_DEPENDENCIES})
-

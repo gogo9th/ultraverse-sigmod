@@ -51,11 +51,20 @@ target_link_libraries(relationship-resolver-test ultraverse Catch2::Catch2WithMa
 add_executable(statehash-test statehash-test.cpp)
 target_link_libraries(statehash-test ultraverse Catch2::Catch2WithMain)
 
+add_executable(stateitem-test stateitem-test.cpp)
+target_link_libraries(stateitem-test ultraverse Catch2::Catch2WithMain)
+
 add_executable(sqlparser-test sqlparser-test.cpp)
 target_link_libraries(sqlparser-test ultraverse Catch2::Catch2WithMain)
 
 add_executable(tabledependencygraph-test tabledependencygraph-test.cpp)
 target_link_libraries(tabledependencygraph-test ultraverse Catch2::Catch2WithMain)
+
+add_executable(naminghistory-test naminghistory-test.cpp)
+target_link_libraries(naminghistory-test ultraverse Catch2::Catch2WithMain)
+
+add_executable(rowcluster-test rowcluster-test.cpp)
+target_link_libraries(rowcluster-test ultraverse Catch2::Catch2WithMain)
 
 add_dependencies(sqlparser-test ultparserlib)
 
@@ -64,13 +73,19 @@ if (APPLE)
     target_link_options(rowgraph-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(relationship-resolver-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(statehash-test PRIVATE "-L/opt/homebrew/lib")
+    target_link_options(stateitem-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(sqlparser-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(tabledependencygraph-test PRIVATE "-L/opt/homebrew/lib")
+    target_link_options(naminghistory-test PRIVATE "-L/opt/homebrew/lib")
+    target_link_options(rowcluster-test PRIVATE "-L/opt/homebrew/lib")
 endif()
 
 add_test(NAME statecluster-test COMMAND statecluster-test)
 add_test(NAME rowgraph-test COMMAND rowgraph-test)
 add_test(NAME relationship-resolver-test COMMAND relationship-resolver-test)
 add_test(NAME statehash-test COMMAND statehash-test)
+add_test(NAME stateitem-test COMMAND stateitem-test)
 add_test(NAME sqlparser-test COMMAND sqlparser-test)
 add_test(NAME tabledependencygraph-test COMMAND tabledependencygraph-test)
+add_test(NAME naminghistory-test COMMAND naminghistory-test)
+add_test(NAME rowcluster-test COMMAND rowcluster-test)
