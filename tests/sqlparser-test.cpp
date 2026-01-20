@@ -2,45 +2,94 @@
 // Created by cheesekun on 2/22/23.
 //
 
-#include <cstring>
+#include <algorithm>
+#include <cmath>
+#include <cctype>
+#include <cstdlib>
+#include <functional>
 #include <iostream>
+#include <string>
+#include <thread>
 
-#include <SQLParser.h>
+#include <libultparser/libultparser.h>
+#include <ultparser_query.pb.h>
 
-#define OK(expr, message) \
-    std::cerr << message << "... "; \
-    if (!(expr)) { \
-        std::cerr << "FAIL" << std::endl; \
-        return 1; \
-    } else { \
-        std::cerr << "OK" << std::endl; \
-    } \
-    
-#define SQL_OK(sql) \
-    if (parseSQL(sql) == false) return 1;
-
-#define NOT_OK(sql) \
-    if (parseSQL(sql) == true) return 1;
-
-bool parseSQL(const std::string &sqlString) {
-    std::cerr << "testing " << sqlString << " ... ";
-    
-    hsql::SQLParserResult result;
-    hsql::SQLParser::parse(sqlString, &result);
-    bool isSuccessful = result.isValid();
-    
-    std::cerr << (isSuccessful ? "OK" : "FAIL") << "\n";
-    
-    if (!isSuccessful) {
-        std::cerr << "failed to parse SQL: " << sqlString << "\n"
-                  << "    (" << result.errorMsg() << " at line " << result.errorLine() << ", column "
-                  << result.errorColumn() << std::endl;
+#define OK(expr, message)                                            \
+    std::cerr << message << "... ";                                  \
+    if (!(expr)) {                                                   \
+        std::cerr << "FAIL" << std::endl;                            \
+        return false;                                                \
+    } else {                                                         \
+        std::cerr << "OK" << std::endl;                              \
     }
-    
+
+#define SQL_OK(sql)                  \
+    if (parseSQL(sql) == false) {    \
+        return false;                \
+    }
+
+#define NOT_OK(sql)                  \
+    if (parseSQL(sql) == true) {     \
+        return false;                \
+    }
+
+static std::string toLower(const std::string &value) {
+    std::string out = value;
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return out;
+}
+
+bool parseSQL(const std::string &sqlString, ultparser::ParseResult *out = nullptr) {
+    std::cerr << "testing " << sqlString << " ... ";
+
+    int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
+    ultparser::ParseResult parseResult;
+    char *parseResultCStr = nullptr;
+    int64_t parseResultCStrSize = ult_sql_parse(
+        (char *) sqlString.c_str(),
+        threadId,
+        &parseResultCStr
+    );
+
+    bool isSuccessful = false;
+    if (parseResultCStrSize <= 0 || parseResultCStr == nullptr) {
+        isSuccessful = false;
+    } else if (!parseResult.ParseFromArray(parseResultCStr, parseResultCStrSize)) {
+        isSuccessful = false;
+    } else if (parseResult.result() != ultparser::ParseResult::SUCCESS) {
+        isSuccessful = false;
+    } else {
+        isSuccessful = true;
+    }
+
+    if (parseResultCStr != nullptr) {
+        free(parseResultCStr);
+    }
+
+    std::cerr << (isSuccessful ? "OK" : "FAIL") << "\n";
+
+    if (!isSuccessful) {
+        if (parseResult.result() == ultparser::ParseResult::ERROR) {
+            std::cerr << "parser error: " << parseResult.error() << std::endl;
+        } else {
+            std::cerr << "failed to parse SQL: " << sqlString << std::endl;
+        }
+    } else if (parseResult.warnings_size() > 0) {
+        for (const auto &warning : parseResult.warnings()) {
+            std::cerr << "parser warning: " << warning << std::endl;
+        }
+    }
+
+    if (out != nullptr) {
+        *out = parseResult;
+    }
+
     return isSuccessful;
 }
 
-int main() {
+bool runTests() {
     SQL_OK("SELECT 1;")
     
     // function call
@@ -50,21 +99,41 @@ int main() {
     
     {
         std::string sqlString = "UPDATE users SET joined_at = NOW() WHERE id = 32;";
-        hsql::SQLParserResult result;
-        hsql::SQLParser::parse(sqlString, &result);
-    
-        if (!result.isValid()) {
-            return 1;
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
         }
-    
-        auto *updateStatement = static_cast<hsql::UpdateStatement *>(result.getStatements()[0]);
-        auto *updates = updateStatement->updates;
-        auto *where = updateStatement->where;
-    
-        OK(updates->size() == 1, "updates->size() must be 1");
-    
-        OK(updates->at(0)->value->type == hsql::ExprType::kExprFunctionRef, "type of updates[0]->value must be function");
-        OK(strcmp(updates->at(0)->value->name, "NOW") == 0, "value of updates[0]->value must be \"NOW\"");
+
+        OK(parseResult.statements_size() == 1, "statements_size must be 1");
+
+        const auto &statement = parseResult.statements(0);
+        OK(statement.has_dml(), "statement must be DML");
+
+        const auto &dml = statement.dml();
+        OK(dml.type() == ultparser::DMLQuery::UPDATE, "statement type must be UPDATE");
+        OK(dml.update_or_write_size() == 1, "update_or_write size must be 1");
+
+        const auto &assignment = dml.update_or_write(0);
+        OK(assignment.operator_() == ultparser::DMLQueryExpr::EQ, "assignment operator must be EQ");
+        OK(assignment.has_left(), "assignment must have left");
+        OK(assignment.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "left must be identifier");
+        OK(toLower(assignment.left().identifier()) == "joined_at", "left identifier must be joined_at");
+
+        OK(assignment.has_right(), "assignment must have right");
+        OK(assignment.right().value_type() == ultparser::DMLQueryExpr::FUNCTION, "right must be function");
+        OK(toLower(assignment.right().function()) == "now", "function name must be now");
+        OK(assignment.right().value_list_size() == 0, "NOW() must have no args");
+
+        OK(dml.has_where(), "where clause must exist");
+        const auto &where = dml.where();
+        OK(where.operator_() == ultparser::DMLQueryExpr::EQ, "where operator must be EQ");
+        OK(where.has_left(), "where must have left");
+        OK(where.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "where left must be identifier");
+        OK(toLower(where.left().identifier()) == "id", "where left must be id");
+        OK(where.has_right(), "where must have right");
+        OK(where.right().value_type() == ultparser::DMLQueryExpr::INTEGER, "where right must be integer");
+        OK(where.right().integer() == 32, "where right must be 32");
     }
     
     // MySQL NAME_CONST
@@ -72,24 +141,44 @@ int main() {
     
     {
         std::string sqlString = "UPDATE warehouse SET W_YTD := W_YTD +  NAME_CONST('var_paymentAmount',3980.34) WHERE W_ID = NAME_CONST('var_w_id',10);";
-        hsql::SQLParserResult result;
-        hsql::SQLParser::parse(sqlString, &result);
-        
-        if (!result.isValid()) {
-            return 1;
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
         }
-        
-        auto *updateStatement = static_cast<hsql::UpdateStatement *>(result.getStatements()[0]);
-        auto *updates = updateStatement->updates;
-        auto *where = updateStatement->where;
-        
-        OK(updates->size() == 1, "updates->size() must be 1");
-        
-        auto *update = updates->at(0);
-        
-        OK(update->value->opType == hsql::kOpPlus, "type of updates[0]->opType must be PLUS");
-        OK(strcmp(update->value->expr->name, "W_YTD") == 0, "value of updates[0]->expr must be \"W_YTD\"");
-        OK(((int) update->value->expr2->fval) == 3980, "value of (int) updates[0]->expr2 must be 3980");
+
+        OK(parseResult.statements_size() == 1, "statements_size must be 1");
+
+        const auto &statement = parseResult.statements(0);
+        OK(statement.has_dml(), "statement must be DML");
+
+        const auto &dml = statement.dml();
+        OK(dml.type() == ultparser::DMLQuery::UPDATE, "statement type must be UPDATE");
+        OK(dml.update_or_write_size() == 1, "update_or_write size must be 1");
+
+        const auto &assignment = dml.update_or_write(0);
+        OK(assignment.operator_() == ultparser::DMLQueryExpr::EQ, "assignment operator must be EQ");
+        OK(assignment.has_right(), "assignment must have right");
+        OK(assignment.right().operator_() == ultparser::DMLQueryExpr::PLUS, "update expr must be PLUS");
+
+        const auto &plusLeft = assignment.right().left();
+        const auto &plusRight = assignment.right().right();
+
+        OK(plusLeft.value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "plus left must be identifier");
+        OK(toLower(plusLeft.identifier()) == "w_ytd", "plus left identifier must be w_ytd");
+
+        OK(plusRight.value_type() == ultparser::DMLQueryExpr::FUNCTION, "plus right must be function");
+        OK(toLower(plusRight.function()) == "name_const", "function name must be NAME_CONST");
+        OK(plusRight.value_list_size() == 2, "NAME_CONST must have 2 args");
+
+        const auto &arg0 = plusRight.value_list(0);
+        const auto &arg1 = plusRight.value_list(1);
+
+        OK(arg0.value_type() == ultparser::DMLQueryExpr::STRING, "NAME_CONST arg0 must be string");
+        OK(toLower(arg0.string()) == "var_paymentamount", "NAME_CONST arg0 must be var_paymentAmount");
+
+        OK(arg1.value_type() == ultparser::DMLQueryExpr::DOUBLE, "NAME_CONST arg1 must be double");
+        OK(std::fabs(arg1.double_() - 3980.34) < 0.0001, "NAME_CONST arg1 must be 3980.34");
     }
     
     SQL_OK("UPDATE customer SET C_BALANCE =  NAME_CONST('var_c_balance',-3990.34), C_YTD_PAYMENT =  NAME_CONST('var_c_ytd_payment',3990.34),      C_PAYMENT_CNT =  NAME_CONST('var_c_payment_cnt',2)     WHERE C_W_ID =  NAME_CONST('var_customerWarehouseID',10) AND C_D_ID =  NAME_CONST('var_customerDistrictID',7)      AND C_ID =  NAME_CONST('var_c_id',62)")
@@ -103,23 +192,46 @@ int main() {
     
     {
         std::string sqlString = "INSERT users (name, point) VALUES (NAME_CONST('var_name', _utf8mb4'testuser' COLLATE 'utf8mb4_general_ci'), NAME_CONST('var_point', 32));";
-        hsql::SQLParserResult result;
-        hsql::SQLParser::parse(sqlString, &result);
-        
-        if (!result.isValid()) {
-            return 1;
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
         }
-        
-        auto *insertStatement = static_cast<hsql::InsertStatement *>(result.getStatements()[0]);
-        auto *values = insertStatement->values;
-        
-        OK(values->size() == 2, "values->size() must be 2");
-        
-        OK(values->at(0)->type == hsql::ExprType::kExprLiteralString, "type of values[0] must be string");
-        OK(strcmp(values->at(0)->name, "testuser") == 0, "value of values[0] must be \"testuser\"");
-        
-        OK(values->at(1)->type == hsql::ExprType::kExprLiteralInt, "type of values[1] must be Int");
-        OK(values->at(1)->ival == 32, "value of values[1] must be 32");
+
+        OK(parseResult.statements_size() == 1, "statements_size must be 1");
+
+        const auto &statement = parseResult.statements(0);
+        OK(statement.has_dml(), "statement must be DML");
+
+        const auto &dml = statement.dml();
+        OK(dml.type() == ultparser::DMLQuery::INSERT, "statement type must be INSERT");
+        OK(dml.update_or_write_size() == 2, "update_or_write size must be 2");
+
+        const auto &nameAssignment = dml.update_or_write(0);
+        OK(nameAssignment.has_left(), "name assignment must have left");
+        OK(nameAssignment.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "name left must be identifier");
+        OK(toLower(nameAssignment.left().identifier()) == "name", "name column must be name");
+        OK(nameAssignment.has_right(), "name assignment must have right");
+        OK(nameAssignment.right().value_type() == ultparser::DMLQueryExpr::FUNCTION, "name right must be function");
+        OK(toLower(nameAssignment.right().function()) == "name_const", "name function must be NAME_CONST");
+        OK(nameAssignment.right().value_list_size() == 2, "name NAME_CONST must have 2 args");
+        OK(nameAssignment.right().value_list(0).value_type() == ultparser::DMLQueryExpr::STRING,
+           "name NAME_CONST arg0 must be string");
+        OK(toLower(nameAssignment.right().value_list(0).string()) == "var_name",
+           "name NAME_CONST arg0 must be var_name");
+
+        const auto &pointAssignment = dml.update_or_write(1);
+        OK(pointAssignment.has_left(), "point assignment must have left");
+        OK(pointAssignment.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "point left must be identifier");
+        OK(toLower(pointAssignment.left().identifier()) == "point", "point column must be point");
+        OK(pointAssignment.has_right(), "point assignment must have right");
+        OK(pointAssignment.right().value_type() == ultparser::DMLQueryExpr::FUNCTION, "point right must be function");
+        OK(toLower(pointAssignment.right().function()) == "name_const", "point function must be NAME_CONST");
+        OK(pointAssignment.right().value_list_size() == 2, "point NAME_CONST must have 2 args");
+        OK(pointAssignment.right().value_list(1).value_type() == ultparser::DMLQueryExpr::INTEGER,
+           "point NAME_CONST arg1 must be integer");
+        OK(pointAssignment.right().value_list(1).integer() == 32,
+           "point NAME_CONST arg1 must be 32");
     }
     
     // NAME_CONST() * NAME_CONST
@@ -128,5 +240,12 @@ int main() {
     
     SQL_OK("INSERT scores (user_id, score) VALUES (42, NAME_CONST('var_score', 32) * NAME_CONST('var_multiplier', 2));")
     
-    return 0;
+    return true;
+}
+
+int main() {
+    ult_sql_parser_init();
+    bool ok = runTests();
+    ult_sql_parser_deinit();
+    return ok ? 0 : 1;
 }
