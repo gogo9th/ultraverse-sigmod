@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include <queue>
 
 #include <boost/graph/adjacency_list.hpp>
@@ -74,6 +76,63 @@ namespace ultraverse::state::v2 {
         }
        
         return real->second.real;
+    }
+
+    std::optional<StateItem> RowCluster::resolveAliasWithCoercion(const StateItem &alias, const AliasMap &aliasMap) {
+        auto container = aliasMap.find(alias.name);
+        if (container == aliasMap.end() || container->second.empty()) {
+            return std::nullopt;
+        }
+
+        if (!alias.data_list.empty()) {
+            auto real = container->second.find(alias.data_list[0]);
+            if (real != container->second.end()) {
+                return real->second.real;
+            }
+        }
+
+        if (container->second.begin()->second.real.data_list.empty()) {
+            return std::nullopt;
+        }
+
+        int64_t signedSample = 0;
+        uint64_t unsignedSample = 0;
+        if (!container->second.begin()->second.real.data_list[0].Get(signedSample) &&
+            !container->second.begin()->second.real.data_list[0].Get(unsignedSample)) {
+            return std::nullopt;
+        }
+
+        std::vector<StateData> converted;
+        converted.reserve(alias.data_list.size());
+
+        for (const auto &data : alias.data_list) {
+            std::string raw;
+            if (!data.Get(raw)) {
+                return std::nullopt;
+            }
+
+            if (raw.empty() ||
+                !std::all_of(raw.begin(), raw.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
+                return std::nullopt;
+            }
+
+            try {
+                converted.emplace_back(StateData{std::stoll(raw)});
+            } catch (const std::exception &) {
+                return std::nullopt;
+            }
+        }
+
+        StateItem real;
+        real.condition_type = alias.condition_type;
+        real.function_type = alias.function_type;
+        real.name = container->second.begin()->second.real.name;
+        real.data_list = std::move(converted);
+        real.arg_list = alias.arg_list;
+        real.sub_query_list = alias.sub_query_list;
+        real._isRangeCacheBuilt = false;
+
+        return real;
     }
     
     std::vector<std::unique_ptr<std::pair<std::string, std::shared_ptr<StateRange>>>>
@@ -280,6 +339,73 @@ namespace ultraverse::state::v2 {
     std::unordered_map<std::string, std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>>> &RowCluster::keyMap() {
         return _clusterMap;
     }
+
+    std::unordered_map<std::string, std::vector<std::pair<RowCluster::CompositeRange, std::vector<gid_t>>>> &RowCluster::compositeKeyMap() {
+        return _compositeClusterMap;
+    }
+
+    const std::unordered_map<std::string, std::vector<std::pair<RowCluster::CompositeRange, std::vector<gid_t>>>> &RowCluster::compositeKeyMap() const {
+        return _compositeClusterMap;
+    }
+
+    void RowCluster::addCompositeKey(const std::vector<std::string> &columnNames) {
+        const auto keyId = normalizeCompositeKeyId(columnNames);
+        if (keyId.empty()) {
+            return;
+        }
+        if (_compositeClusterMap.find(keyId) == _compositeClusterMap.end()) {
+            _compositeClusterMap.emplace(keyId, std::vector<std::pair<CompositeRange, std::vector<gid_t>>>());
+        }
+    }
+
+    void RowCluster::addCompositeKeyRange(const std::vector<std::string> &columnNames, CompositeRange ranges, gid_t gid) {
+        if (columnNames.size() != ranges.size() || columnNames.empty()) {
+            return;
+        }
+
+        const auto normalized = normalizeCompositeInput(columnNames, ranges);
+        if (normalized.first.empty()) {
+            return;
+        }
+
+        auto &cluster = _compositeClusterMap[normalized.first];
+        cluster.emplace_back(std::make_pair(normalized.second, std::vector<gid_t>{gid}));
+    }
+
+    void RowCluster::mergeCompositeCluster(const std::vector<std::string> &columnNames) {
+        const auto keyId = normalizeCompositeKeyId(columnNames);
+        if (keyId.empty()) {
+            return;
+        }
+
+        auto it = _compositeClusterMap.find(keyId);
+        if (it == _compositeClusterMap.end()) {
+            return;
+        }
+
+        auto &cluster = it->second;
+        if (cluster.size() < 2) {
+            return;
+        }
+
+        bool merged = true;
+        while (merged) {
+            merged = false;
+            for (size_t i = 0; i < cluster.size() && !merged; i++) {
+                for (size_t j = i + 1; j < cluster.size(); j++) {
+                    if (!compositeIntersects(cluster[i].first, cluster[j].first)) {
+                        continue;
+                    }
+
+                    compositeMerge(cluster[i].first, cluster[j].first);
+                    cluster[i].second.insert(cluster[i].second.end(), cluster[j].second.begin(), cluster[j].second.end());
+                    cluster.erase(cluster.begin() + static_cast<long>(j));
+                    merged = true;
+                    break;
+                }
+            }
+        }
+    }
     
     std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>>
     RowCluster::getKeyRangeOf(Transaction &transaction, const std::string &keyColumn,
@@ -312,11 +438,11 @@ namespace ultraverse::state::v2 {
     }
     
     bool RowCluster::isQueryRelated(std::map<std::string, std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>>> &keyRanges, Query &query,
-                                    const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
+                                    const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables) {
         // 각 keyRange에 대해 하나만 매칭되어도 재실행 대상이 된다.
         for (auto &pair: keyRanges) {
             for (auto &keyRange: pair.second) {
-                if (isQueryRelated(pair.first, keyRange.first, query, foreignKeys, aliases)) {
+                if (isQueryRelated(pair.first, keyRange.first, query, foreignKeys, aliases, implicitTables)) {
                     return true;
                 }
             }
@@ -343,15 +469,15 @@ namespace ultraverse::state::v2 {
         return std::find(gidList.begin(), gidList.end(), gid) != gidList.end();
     }
     
-    bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
+    bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables) {
         for (auto &expr: query.readSet()) {
-            if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases)) {
+            if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases, implicitTables)) {
                 return true;
             }
         }
         
         for (auto &expr: query.writeSet()) {
-            if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases)) {
+            if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases, implicitTables)) {
                 return true;
             }
         }
@@ -359,32 +485,57 @@ namespace ultraverse::state::v2 {
         return false;
     }
     
-    bool RowCluster::isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases) {
+    bool RowCluster::isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables) {
         if (!expr.name.empty()) {
-            expr.name = resolveForeignKey(expr.name, foreignKeys);
-            auto alias = resolveAlias(expr, aliases);
-            if (alias.name != expr.name) {
-                return isExprRelated(keyColumn, keyRange, alias, foreignKeys, aliases);
+            expr.name = resolveForeignKey(expr.name, foreignKeys, implicitTables);
+            auto resolved = resolveAliasWithCoercion(expr, aliases);
+            if (resolved.has_value()) {
+                return isExprRelated(keyColumn, keyRange, *resolved, foreignKeys, aliases, implicitTables);
             }
             
             if (keyColumn == expr.name) {
-                auto range = StateItem::MakeRange(expr);
-                if (StateRange::isIntersects(*range, keyRange)) {
+                const auto &range = expr.MakeRange2();
+                if (StateRange::isIntersects(range, keyRange)) {
                     return true;
                 }
             }
         }
         
         for (auto &subExpr: expr.arg_list) {
-            if (isExprRelated(keyColumn, keyRange, subExpr, foreignKeys, aliases)) {
+            if (isExprRelated(keyColumn, keyRange, subExpr, foreignKeys, aliases, implicitTables)) {
+                return true;
+            }
+        }
+
+        for (auto &subExpr: expr.sub_query_list) {
+            if (isExprRelated(keyColumn, keyRange, subExpr, foreignKeys, aliases, implicitTables)) {
                 return true;
             }
         }
         
         return false;
     }
+
+    bool RowCluster::isQueryRelatedComposite(const std::vector<std::string> &keyColumns, const CompositeRange &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables) {
+        if (keyColumns.size() != keyRanges.size()) {
+            return false;
+        }
+
+        for (size_t i = 0; i < keyColumns.size(); i++) {
+            if (!isQueryRelated(keyColumns[i], keyRanges[i], query, foreignKeys, aliases, implicitTables)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
     
     std::string RowCluster::resolveForeignKey(std::string exprName, const std::vector<ForeignKey> &foreignKeys) {
+        return resolveForeignKey(std::move(exprName), foreignKeys, nullptr);
+    }
+
+    std::string RowCluster::resolveForeignKey(std::string exprName, const std::vector<ForeignKey> &foreignKeys,
+                                              const std::unordered_set<std::string> *implicitTables) {
         auto vec = utility::splitTableName(exprName);
         auto tableName  = std::move(utility::toLower(vec.first));
         auto columnName = std::move(utility::toLower(vec.second));
@@ -397,10 +548,107 @@ namespace ultraverse::state::v2 {
         });
         
         if (it == foreignKeys.end()) {
+            if (implicitTables != nullptr && !columnName.empty()) {
+                const std::string suffix = "_id";
+                if (columnName.size() > suffix.size() &&
+                    columnName.compare(columnName.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                    const std::string base = columnName.substr(0, columnName.size() - suffix.size());
+                    const std::vector<std::string> candidates = {
+                        base,
+                        base + "s",
+                        base + "es"
+                    };
+                    for (const auto &candidate : candidates) {
+                        if (implicitTables->find(candidate) != implicitTables->end()) {
+                            return candidate + ".id";
+                        }
+                    }
+                }
+            }
             return std::move(utility::toLower(exprName));
         } else {
-            return resolveForeignKey(it->toTable->getCurrentName() + "." + it->toColumn, foreignKeys);
+            return resolveForeignKey(it->toTable->getCurrentName() + "." + it->toColumn, foreignKeys, implicitTables);
         }
+    }
+
+    bool RowCluster::compositeIntersects(const CompositeRange &lhs, const CompositeRange &rhs) {
+        if (lhs.size() != rhs.size() || lhs.empty()) {
+            return false;
+        }
+
+        for (size_t i = 0; i < lhs.size(); i++) {
+            if (!StateRange::isIntersects(*lhs[i], *rhs[i])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    void RowCluster::compositeMerge(CompositeRange &dst, const CompositeRange &src) {
+        if (dst.size() != src.size()) {
+            return;
+        }
+
+        for (size_t i = 0; i < dst.size(); i++) {
+            dst[i]->OR_FAST(*src[i]);
+            dst[i]->arrangeSelf();
+        }
+    }
+
+    std::pair<std::string, RowCluster::CompositeRange>
+    RowCluster::normalizeCompositeInput(const std::vector<std::string> &columns, const CompositeRange &ranges) {
+        if (columns.size() != ranges.size() || columns.empty()) {
+            return {"", CompositeRange{}};
+        }
+
+        std::vector<std::pair<std::string, std::shared_ptr<StateRange>>> pairs;
+        pairs.reserve(columns.size());
+        for (size_t i = 0; i < columns.size(); i++) {
+            pairs.emplace_back(utility::toLower(columns[i]), ranges[i]);
+        }
+
+        std::sort(pairs.begin(), pairs.end(), [](const auto &lhs, const auto &rhs) {
+            return lhs.first < rhs.first;
+        });
+
+        CompositeRange normalizedRanges;
+        normalizedRanges.reserve(pairs.size());
+
+        std::string keyId;
+        for (size_t i = 0; i < pairs.size(); i++) {
+            if (i > 0) {
+                keyId.append("|");
+            }
+            keyId.append(pairs[i].first);
+            normalizedRanges.push_back(pairs[i].second);
+        }
+
+        return {keyId, normalizedRanges};
+    }
+
+    std::string RowCluster::normalizeCompositeKeyId(const std::vector<std::string> &columns) {
+        if (columns.empty()) {
+            return std::string();
+        }
+
+        std::vector<std::string> normalized;
+        normalized.reserve(columns.size());
+        for (const auto &column : columns) {
+            normalized.push_back(utility::toLower(column));
+        }
+
+        std::sort(normalized.begin(), normalized.end());
+
+        std::string keyId;
+        for (size_t i = 0; i < normalized.size(); i++) {
+            if (i > 0) {
+                keyId.append("|");
+            }
+            keyId.append(normalized[i]);
+        }
+
+        return keyId;
     }
     
     RowCluster RowCluster::operator&(const RowCluster &other) const {
