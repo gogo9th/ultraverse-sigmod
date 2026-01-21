@@ -86,6 +86,9 @@ namespace ultraverse::state::v2 {
         void setRangeComparisonMethod(RangeComparisonMethod rangeComparisonMethod);
         
         std::set<std::string> &keyColumns();
+        std::vector<std::vector<std::string>> &keyColumnGroups();
+        const std::vector<std::vector<std::string>> &keyColumnGroups() const;
+        void setKeyColumnGroups(std::vector<std::vector<std::string>> keyColumnGroups);
         std::vector<std::pair<std::string, std::string>> &columnAliases();
         const std::vector<std::pair<std::string, std::string>> &columnAliases() const;
         
@@ -115,6 +118,7 @@ namespace ultraverse::state::v2 {
         std::string _reportPath;
         
         std::set<std::string> _keyColumns;
+        std::vector<std::vector<std::string>> _keyColumnGroups;
         std::vector<std::pair<std::string, std::string>> _columnAliases;
     
         std::vector<uint64_t> _skipGids;

@@ -99,6 +99,8 @@ set(LIBULTRAVERSE_STATE_SRCS
     mariadb/state/new/Query.hpp
     mariadb/state/new/Transaction.cpp
     mariadb/state/new/Transaction.hpp
+    mariadb/state/new/analysis/TaintAnalyzer.cpp
+    mariadb/state/new/analysis/TaintAnalyzer.hpp
     
     mariadb/state/new/StateLogWriter.cpp
     mariadb/state/new/StateLogWriter.hpp

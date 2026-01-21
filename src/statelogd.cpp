@@ -3,6 +3,8 @@
 #include <cereal/archives/binary.hpp>
 #include <cereal/types/utility.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <fstream>
 #include <signal.h>
@@ -82,7 +84,7 @@ public:
             "    -b file        specify MariaDB-variant binlog.index file\n"
             "    -o file        specify log output name\n"
             "    -p file        use procedure log to append additional queries (SELECT ...)\n"
-            "    -k columns     key columns (eg. user.id,article.id)\n"
+            "    -k columns     key columns (eg. user.id,article.id or orders.user_id+orders.item_id)\n"
             "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -r file        restore state and resume from given .ultchkpoint file\n"
             "    -d             force discard previous log and start over\n"
@@ -829,12 +831,27 @@ public:
     
     std::vector<std::string> buildKeyColumnList(std::string expression) {
         std::vector<std::string> keyColumns;
-        
+
+        auto trim = [](std::string value) {
+            const auto isSpace = [](unsigned char ch) { return std::isspace(ch); };
+            value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), isSpace));
+            value.erase(std::find_if_not(value.rbegin(), value.rend(), isSpace).base(), value.end());
+            return value;
+        };
+
         std::stringstream sstream(expression);
-        std::string column;
-        
-        while (std::getline(sstream, column, ',')) {
-            keyColumns.push_back(column);
+        std::string groupExpr;
+
+        while (std::getline(sstream, groupExpr, ',')) {
+            std::stringstream groupStream(groupExpr);
+            std::string column;
+
+            while (std::getline(groupStream, column, '+')) {
+                auto trimmed = trim(column);
+                if (!trimmed.empty()) {
+                    keyColumns.push_back(std::move(trimmed));
+                }
+            }
         }
         
         return keyColumns;

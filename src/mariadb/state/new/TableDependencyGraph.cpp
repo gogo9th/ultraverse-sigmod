@@ -58,8 +58,14 @@ namespace ultraverse::state::v2 {
             writeTableSet.insert(table);
         }
         
-        if (readTableSet.empty() || writeTableSet.empty()) {
+        if (writeTableSet.empty()) {
             return false;
+        }
+
+        if (readTableSet.empty()) {
+            // Write-only queries still affect their target tables (e.g., INSERT values, DROP/TRUNCATE).
+            // Model this as dependencies among written tables so they are tracked in the graph.
+            readTableSet = writeTableSet;
         }
         
         for (const auto &fromTable: readTableSet) {

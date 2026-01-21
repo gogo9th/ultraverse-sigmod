@@ -20,7 +20,7 @@ namespace ultraverse::state::v2 {
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 8000);
         
-        RowGraph rowGraph(_plan.keyColumns(), cachedResolver);
+        RowGraph rowGraph(_plan.keyColumns(), cachedResolver, _plan.keyColumnGroups());
         rowGraph.setRangeComparisonMethod(_plan.rangeComparisonMethod());
 
         const std::string replayPlanPath = _plan.stateLogPath() + "/" + _plan.stateLogName() + ".ultreplayplan";

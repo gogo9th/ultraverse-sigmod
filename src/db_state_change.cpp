@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <sstream>
 
@@ -110,7 +112,7 @@ namespace ultraverse {
             "    -d database    database name\n"
             "    -s gid         start gid\n"
             "    -e gid         end gid\n"
-            "    -k columns     key columns (eg. user.id,article.id)\n"
+            "    -k columns     key columns (eg. user.id,article.id or orders.user_id+orders.item_id)\n"
             "    -a colA=colB   column aliases (eg. user.name=user.id,...)\n"
             "    -C threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
             "    -S gid,gid,... list of gids to skip processing\n"
@@ -305,11 +307,8 @@ namespace ultraverse {
                 fail("key column(s) must be specified");
             }
         
-            auto keyColumns = buildKeyColumnList(getArg('k'));
-        
-            changePlan.keyColumns().insert(
-                keyColumns.begin(), keyColumns.end()
-            );
+            auto keyColumnGroups = buildKeyColumnGroups(getArg('k'));
+            changePlan.setKeyColumnGroups(std::move(keyColumnGroups));
         } // @end (keyColumns)
         
         { // @start(columnAliases)
@@ -501,17 +500,37 @@ namespace ultraverse {
         }
     }
     
-    std::vector<std::string> DBStateChangeApp::buildKeyColumnList(std::string expression) {
-        std::vector<std::string> keyColumns;
-        
+    std::vector<std::vector<std::string>> DBStateChangeApp::buildKeyColumnGroups(std::string expression) {
+        std::vector<std::vector<std::string>> groups;
+
+        auto trim = [](std::string value) {
+            const auto isSpace = [](unsigned char ch) { return std::isspace(ch); };
+            value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), isSpace));
+            value.erase(std::find_if_not(value.rbegin(), value.rend(), isSpace).base(), value.end());
+            return value;
+        };
+
         std::stringstream sstream(expression);
-        std::string column;
-        
-        while (std::getline(sstream, column, ',')) {
-            keyColumns.push_back(column);
+        std::string groupExpr;
+
+        while (std::getline(sstream, groupExpr, ',')) {
+            std::vector<std::string> group;
+            std::stringstream groupStream(groupExpr);
+            std::string column;
+
+            while (std::getline(groupStream, column, '+')) {
+                auto trimmed = trim(column);
+                if (!trimmed.empty()) {
+                    group.push_back(std::move(trimmed));
+                }
+            }
+
+            if (!group.empty()) {
+                groups.push_back(std::move(group));
+            }
         }
-        
-        return keyColumns;
+
+        return groups;
     }
     
     std::set<std::pair<std::string, std::string>> DBStateChangeApp::buildColumnAliasesList(std::string expression) {

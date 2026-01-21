@@ -20,8 +20,6 @@
 
 #include "utils/log.hpp"
 
-#define STATECLUSTER_USE_NEW_APPROACH
-#undef STATECLUSTER_USE_NEW_APPROACH
 
 namespace ultraverse::state::v2 {
 
@@ -92,7 +90,8 @@ namespace ultraverse::state::v2 {
                                                    const RelationshipResolver &resolver);
         };
     public:
-        StateCluster(const std::set<std::string> &keyColumns);
+        StateCluster(const std::set<std::string> &keyColumns,
+                     const std::vector<std::vector<std::string>> &keyColumnGroups = {});
         
         const std::set<std::string> &keyColumns() const;
         const std::unordered_map<std::string, Cluster> &clusters() const;
@@ -169,7 +168,6 @@ namespace ultraverse::state::v2 {
         };
         
     private:
-        static std::map<std::string, std::set<std::string>> buildKeyColumnsMap(const std::set<std::string> &keyColumns);
         
         /**
          * @brief 주어진 transaction의 readSet, writeSet으로부터 key column과 관련된 StateItem을 추출한다.
@@ -193,11 +191,10 @@ namespace ultraverse::state::v2 {
         LoggerPtr _logger;
         
         std::mutex _clusterInsertionLock;
-        
-        std::map<std::string, std::set<std::string>> _keyColumnsMapOriginal;
 
         std::set<std::string> _keyColumns;
-        std::map<std::string, std::set<std::string>> _keyColumnsMap;
+        std::vector<std::vector<std::string>> _keyColumnGroups;
+        std::unordered_map<std::string, std::vector<size_t>> _keyColumnGroupsByTable;
         std::unordered_map<std::string, Cluster> _clusters;
         
         std::shared_mutex _targetCacheLock;
@@ -205,10 +202,6 @@ namespace ultraverse::state::v2 {
         std::unordered_map<gid_t, TargetTransactionCache> _rollbackTargets;
         std::unordered_map<gid_t, TargetTransactionCache> _prependTargets;
 
-#ifdef STATECLUSTER_USE_NEW_APPROACH
-        // 새 접근법에서 사용되는 변수들
-        std::unordered_set<gid_t> _replayTargets;
-#endif
     };
 }
 

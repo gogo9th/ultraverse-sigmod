@@ -205,6 +205,24 @@ namespace ultraverse::state::v2 {
     std::set<std::string> &StateChangePlan::keyColumns() {
         return _keyColumns;
     }
+
+    std::vector<std::vector<std::string>> &StateChangePlan::keyColumnGroups() {
+        return _keyColumnGroups;
+    }
+
+    const std::vector<std::vector<std::string>> &StateChangePlan::keyColumnGroups() const {
+        return _keyColumnGroups;
+    }
+
+    void StateChangePlan::setKeyColumnGroups(std::vector<std::vector<std::string>> keyColumnGroups) {
+        _keyColumnGroups = std::move(keyColumnGroups);
+        _keyColumns.clear();
+        for (const auto &group : _keyColumnGroups) {
+            for (const auto &column : group) {
+                _keyColumns.insert(column);
+            }
+        }
+    }
     
     std::vector<std::pair<std::string, std::string>> &StateChangePlan::columnAliases() {
         return _columnAliases;

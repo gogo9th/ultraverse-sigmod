@@ -33,6 +33,9 @@ var parser_mutex sync.Mutex
 func get_parser_instance_for(threadId int64) *parser.Parser {
 	// returns a parser instance for the given threadId
 	parser_mutex.Lock()
+	if parser_instances == nil {
+		parser_instances = make(map[int64]*parser.Parser)
+	}
 
 	if parser_instances[threadId] == nil {
 		parser_instances[threadId] = parser.New()
@@ -87,10 +90,14 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 	}
 
 	if columnNameExpr, ok := (*expr).(*ast.ColumnNameExpr); ok {
+		identifier := columnNameExpr.Name.Name.O
+		if columnNameExpr.Name.Table.O != "" {
+			identifier = columnNameExpr.Name.Table.O + "." + identifier
+		}
 		return &pb.DMLQueryExpr{
 			Operator:   pb.DMLQueryExpr_VALUE,
 			ValueType:  pb.DMLQueryExpr_IDENTIFIER,
-			Identifier: columnNameExpr.Name.Name.O,
+			Identifier: identifier,
 		}
 	} else if valueExpr, ok := (*expr).(ast.ValueExpr); ok {
 		tp := valueExpr.GetType().GetType()
@@ -215,6 +222,46 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 		}
 
 		return &expr_out
+	} else if betweenExpr, ok := (*expr).(*ast.BetweenExpr); ok {
+		// Expand BETWEEN into AND/OR so downstream logic can handle simple comparisons.
+		leftA := process_expr_node(&betweenExpr.Expr)
+		leftB := process_expr_node(&betweenExpr.Expr)
+		low := process_expr_node(&betweenExpr.Left)
+		high := process_expr_node(&betweenExpr.Right)
+
+		if betweenExpr.Not {
+			return &pb.DMLQueryExpr{
+				Operator: pb.DMLQueryExpr_OR,
+				Expressions: []*pb.DMLQueryExpr{
+					{
+						Operator: pb.DMLQueryExpr_LT,
+						Left:     leftA,
+						Right:    low,
+					},
+					{
+						Operator: pb.DMLQueryExpr_GT,
+						Left:     leftB,
+						Right:    high,
+					},
+				},
+			}
+		}
+
+		return &pb.DMLQueryExpr{
+			Operator: pb.DMLQueryExpr_AND,
+			Expressions: []*pb.DMLQueryExpr{
+				{
+					Operator: pb.DMLQueryExpr_GTE,
+					Left:     leftA,
+					Right:    low,
+				},
+				{
+					Operator: pb.DMLQueryExpr_LTE,
+					Left:     leftB,
+					Right:    high,
+				},
+			},
+		}
 	} else if likeExpr, ok := (*expr).(*ast.PatternLikeOrIlikeExpr); ok {
 		op := pb.DMLQueryExpr_LIKE
 		if likeExpr.Not {
@@ -224,6 +271,34 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 			Operator: op,
 			Left:     process_expr_node(&likeExpr.Expr),
 			Right:    process_expr_node(&likeExpr.Pattern),
+		}
+	} else if inExpr, ok := (*expr).(*ast.PatternInExpr); ok {
+		op := pb.DMLQueryExpr_IN
+		if inExpr.Not {
+			op = pb.DMLQueryExpr_NOT_IN
+		}
+
+		valueList := make([]*pb.DMLQueryExpr, 0, len(inExpr.List))
+		for i := range inExpr.List {
+			item := inExpr.List[i]
+			if child := process_expr_node(&item); child != nil {
+				valueList = append(valueList, child)
+			}
+		}
+
+		if inExpr.Sel != nil {
+			// Subquery IN is not supported yet. Keep an empty list to avoid crashes downstream.
+			fmt.Printf("FIXME: Unsupported subquery in IN expression\n")
+		}
+
+		return &pb.DMLQueryExpr{
+			Operator: op,
+			Left:     process_expr_node(&inExpr.Expr),
+			Right: &pb.DMLQueryExpr{
+				Operator:  pb.DMLQueryExpr_VALUE,
+				ValueType: pb.DMLQueryExpr_LIST,
+				ValueList: valueList,
+			},
 		}
 	} else if parenExpr, ok := (*expr).(*ast.ParenthesesExpr); ok {
 		return process_expr_node(&parenExpr.Expr)

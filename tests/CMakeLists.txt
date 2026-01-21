@@ -70,6 +70,12 @@ target_link_libraries(naminghistory-test ultraverse Catch2::Catch2WithMain)
 add_executable(rowcluster-test rowcluster-test.cpp)
 target_link_libraries(rowcluster-test ultraverse Catch2::Catch2WithMain)
 
+add_executable(taintanalyzer-test taintanalyzer-test.cpp)
+target_link_libraries(taintanalyzer-test ultraverse Catch2::Catch2WithMain)
+
+add_executable(queryeventbase-rwset-test queryeventbase-rwset-test.cpp)
+target_link_libraries(queryeventbase-rwset-test ultraverse Catch2::Catch2WithMain)
+
 add_executable(statechanger-test
         statechanger-test.cpp
 
@@ -93,6 +99,8 @@ if (APPLE)
     target_link_options(tabledependencygraph-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(naminghistory-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(rowcluster-test PRIVATE "-L/opt/homebrew/lib")
+    target_link_options(taintanalyzer-test PRIVATE "-L/opt/homebrew/lib")
+    target_link_options(queryeventbase-rwset-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(statechanger-test PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
 endif()
 
@@ -105,4 +113,6 @@ add_test(NAME sqlparser-test COMMAND sqlparser-test)
 add_test(NAME tabledependencygraph-test COMMAND tabledependencygraph-test)
 add_test(NAME naminghistory-test COMMAND naminghistory-test)
 add_test(NAME rowcluster-test COMMAND rowcluster-test)
+add_test(NAME taintanalyzer-test COMMAND taintanalyzer-test)
+add_test(NAME queryeventbase-rwset-test COMMAND queryeventbase-rwset-test)
 add_test(NAME statechanger-test COMMAND statechanger-test)

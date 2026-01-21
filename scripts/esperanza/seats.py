@@ -9,7 +9,7 @@ DB_STATE_CHANGE_BASE_OPTIONS = [
     '-b', 'dbdump.sql',
     '-i', 'benchbase',
     '-d', 'benchbase',
-    '-k', 'customer2.c_id,flight.f_id,frequent_flyer.ff_c_id,reservation.r_c_id,reservation.r_f_id,airport.ap_id',
+    '-k', 'customer2.c_id,flight.f_id,frequent_flyer.ff_c_id,reservation.r_c_id+reservation.r_f_id,airport.ap_id',
     '-a', 'customer2.c_id_str=customer2.c_id,flight.f_id=flight.f_al_id,frequent_flyer.ff_c_id_str=frequent_flyer.ff_c_id,airport.ap_id=airport.ap_co_id'
 ]
 
@@ -190,7 +190,7 @@ if __name__ == "__main__":
     session.prepare()
 
     # statelogd를 실행해서 binary log에서 statelog를 생성한다.
-    session.run_statelogd(['-k', 'customer2.c_id,flight.f_id,frequent_flyer.ff_c_id,reservation.r_c_id,reservation.r_f_id,airport.ap_id',])
+    session.run_statelogd(['-k', 'customer2.c_id,flight.f_id,frequent_flyer.ff_c_id,reservation.r_c_id+reservation.r_f_id,airport.ap_id',])
 
     # db_state_change를 실행하기 위해 mysqld를 실행한다.
     logger.info("starting mysqld...")

@@ -117,7 +117,8 @@ namespace ultraverse::state::v2 {
             auto it = std::find_if(
                 _context.foreignKeys.cbegin(), _context.foreignKeys.cend(),
                 [&tableName, &columnName](auto &foreignKey) {
-                    return foreignKey.fromTable->getCurrentName() == tableName && columnName == foreignKey.fromColumn;
+                    return utility::toLower(foreignKey.fromTable->getCurrentName()) == tableName
+                        && utility::toLower(foreignKey.fromColumn) == columnName;
                 }
             );
             
@@ -228,7 +229,7 @@ namespace ultraverse::state::v2 {
     
     std::shared_ptr<StateItem> CachedRelationshipResolver::resolveRowAlias(const StateItem &item) const {
         size_t hash = item.MakeRange2().hash();
-        auto &cacheMap = _rowAliasCache[item.name];
+        auto &cacheMap = _rowChainCache[item.name];
         
         {
             std::shared_lock<std::shared_mutex> _lock(_cacheLock);
@@ -295,6 +296,7 @@ namespace ultraverse::state::v2 {
         _aliasCache.clear();
         _chainCache.clear();
         _rowAliasCache.clear();
+        _rowChainCache.clear();
     }
     
     bool CachedRelationshipResolver::isGCRequired(const CachedRelationshipResolver::RowCacheMap &rowCacheMap) const {
