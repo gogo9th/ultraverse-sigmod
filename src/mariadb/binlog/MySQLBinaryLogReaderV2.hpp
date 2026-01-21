@@ -43,7 +43,7 @@ namespace ultraverse::mariadb {
     private:
         bool readNextEventBuffer(std::vector<unsigned char> &buffer);
         std::shared_ptr<base::DBEvent> decodeEventBuffer(const std::vector<unsigned char> &buffer, bool fromPayload);
-        std::shared_ptr<TableMapEvent> decodeTableMapEvent(const mysql::binlog::event::Table_map_event &event);
+        std::shared_ptr<TableMapEvent> decodeTableMapEvent(mysql::binlog::event::Table_map_event &event);
         std::shared_ptr<base::DBEvent> decodeRowsQueryEvent(const std::vector<unsigned char> &buffer, bool fromPayload);
         std::shared_ptr<base::DBEvent> decodeRowsEvent(const std::vector<unsigned char> &buffer,
                                                        mysql::binlog::event::Log_event_type eventType,

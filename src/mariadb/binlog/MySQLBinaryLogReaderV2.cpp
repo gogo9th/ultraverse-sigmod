@@ -15,6 +15,12 @@
 namespace ultraverse::mariadb {
     namespace {
         constexpr const char *kDefaultServerVersion = "9.6.0";
+        constexpr uint16_t kBinlogVersion = BINLOG_VERSION;
+        constexpr size_t kLogEventMinimalHeaderLen = LOG_EVENT_MINIMAL_HEADER_LEN;
+        constexpr size_t kEventTypeOffset = EVENT_TYPE_OFFSET;
+        constexpr size_t kEventLenOffset = EVENT_LEN_OFFSET;
+        constexpr size_t kLogPosOffset = LOG_POS_OFFSET;
+        constexpr size_t kBinlogChecksumLen = BINLOG_CHECKSUM_LEN;
 
         uint16_t readUint16LE(const unsigned char *ptr) {
             return static_cast<uint16_t>(ptr[0]) |
@@ -80,7 +86,7 @@ namespace ultraverse::mariadb {
         }
 
         uint64_t eventTimestamp(const std::vector<unsigned char> &buffer) {
-            if (buffer.size() < mysql::binlog::event::LOG_EVENT_MINIMAL_HEADER_LEN) {
+            if (buffer.size() < kLogEventMinimalHeaderLen) {
                 return 0;
             }
             return readUint32LE(buffer.data());
@@ -100,7 +106,7 @@ namespace ultraverse::mariadb {
     void MySQLBinaryLogReaderV2::ensureDefaultFde() {
         if (_fde == nullptr) {
             _fde = std::make_unique<mysql::binlog::event::Format_description_event>(
-                mysql::binlog::event::BINLOG_VERSION,
+                kBinlogVersion,
                 kDefaultServerVersion
             );
             _checksumAlg = _fde->footer()->checksum_alg;
@@ -139,15 +145,15 @@ namespace ultraverse::mariadb {
 
     bool MySQLBinaryLogReaderV2::readNextEventBuffer(std::vector<unsigned char> &buffer) {
         buffer.clear();
-        unsigned char header[mysql::binlog::event::LOG_EVENT_MINIMAL_HEADER_LEN];
+        unsigned char header[kLogEventMinimalHeaderLen];
 
         _stream.read(reinterpret_cast<char *>(header), sizeof(header));
         if (!_stream.good()) {
             return false;
         }
 
-        uint32_t eventSize = readUint32LE(header + mysql::binlog::event::EVENT_LEN_OFFSET);
-        if (eventSize < mysql::binlog::event::LOG_EVENT_MINIMAL_HEADER_LEN) {
+        uint32_t eventSize = readUint32LE(header + kEventLenOffset);
+        if (eventSize < kLogEventMinimalHeaderLen) {
             _logger->warn("invalid event size: {}", eventSize);
             return false;
         }
@@ -155,14 +161,14 @@ namespace ultraverse::mariadb {
         buffer.resize(eventSize);
         std::memcpy(buffer.data(), header, sizeof(header));
 
-        auto bodySize = eventSize - mysql::binlog::event::LOG_EVENT_MINIMAL_HEADER_LEN;
+        auto bodySize = eventSize - kLogEventMinimalHeaderLen;
         _stream.read(reinterpret_cast<char *>(buffer.data() + sizeof(header)), bodySize);
         if (!_stream.good()) {
             _logger->warn("failed to read event body (size={})", eventSize);
             return false;
         }
 
-        uint32_t logPos = readUint32LE(buffer.data() + mysql::binlog::event::LOG_POS_OFFSET);
+        uint32_t logPos = readUint32LE(buffer.data() + kLogPosOffset);
         auto tellPos = static_cast<int>(_stream.tellg());
         _pos = (logPos != 0) ? static_cast<int>(logPos) : tellPos;
 
@@ -184,13 +190,13 @@ namespace ultraverse::mariadb {
             return false;
         }
 
-        if (buffer.size() < mysql::binlog::event::LOG_EVENT_MINIMAL_HEADER_LEN) {
+        if (buffer.size() < kLogEventMinimalHeaderLen) {
             _logger->warn("skipping truncated event");
             return true;
         }
 
         auto eventType = static_cast<mysql::binlog::event::Log_event_type>(
-            buffer[mysql::binlog::event::EVENT_TYPE_OFFSET]
+            buffer[kEventTypeOffset]
         );
 
         if (eventType == mysql::binlog::event::TRANSACTION_PAYLOAD_EVENT) {
@@ -216,17 +222,17 @@ namespace ultraverse::mariadb {
         const std::vector<unsigned char> &buffer,
         bool fromPayload
     ) {
-        if (buffer.size() < mysql::binlog::event::LOG_EVENT_MINIMAL_HEADER_LEN) {
+        if (buffer.size() < kLogEventMinimalHeaderLen) {
             return nullptr;
         }
 
         ensureDefaultFde();
 
         auto eventType = static_cast<mysql::binlog::event::Log_event_type>(
-            buffer[mysql::binlog::event::EVENT_TYPE_OFFSET]
+            buffer[kEventTypeOffset]
         );
 
-        auto eventSize = readUint32LE(buffer.data() + mysql::binlog::event::EVENT_LEN_OFFSET);
+        auto eventSize = readUint32LE(buffer.data() + kEventLenOffset);
         if (eventSize != buffer.size()) {
             eventSize = buffer.size();
         }
@@ -281,7 +287,8 @@ namespace ultraverse::mariadb {
             case mysql::binlog::event::QUERY_EVENT: {
                 mysql::binlog::event::Query_event event(
                     reinterpret_cast<const char *>(buffer.data()),
-                    &fdeForEvent
+                    &fdeForEvent,
+                    eventType
                 );
                 if (!event.header()->get_is_valid()) {
                     _logger->warn("invalid query event, skipping");
@@ -333,7 +340,7 @@ namespace ultraverse::mariadb {
     }
 
     std::shared_ptr<TableMapEvent> MySQLBinaryLogReaderV2::decodeTableMapEvent(
-        const mysql::binlog::event::Table_map_event &event
+        mysql::binlog::event::Table_map_event &event
     ) {
         if (event.m_colcnt == 0) {
             _logger->warn("table map event has zero columns, skipping");
@@ -533,7 +540,9 @@ namespace ultraverse::mariadb {
                     columnDefs.emplace_back(column_type::INTEGER, packLen == 0 ? 1 : packLen);
                 }
                     break;
+#ifdef MYSQL_TYPE_VECTOR
                 case MYSQL_TYPE_VECTOR:
+#endif
                 case MYSQL_TYPE_TYPED_ARRAY:
                 case MYSQL_TYPE_NULL:
                 case MYSQL_TYPE_INVALID:
@@ -564,7 +573,7 @@ namespace ultraverse::mariadb {
 
         size_t eventSize = buffer.size();
         size_t checksumLen = (!fromPayload && _checksumAlg == mysql::binlog::event::BINLOG_CHECKSUM_ALG_CRC32)
-            ? mysql::binlog::event::BINLOG_CHECKSUM_LEN
+            ? kBinlogChecksumLen
             : 0;
         if (eventSize < checksumLen) {
             return nullptr;
@@ -594,9 +603,9 @@ namespace ultraverse::mariadb {
 
         size_t eventSize = buffer.size();
         size_t checksumLen = (!fromPayload && _checksumAlg == mysql::binlog::event::BINLOG_CHECKSUM_ALG_CRC32)
-            ? mysql::binlog::event::BINLOG_CHECKSUM_LEN
+            ? kBinlogChecksumLen
             : 0;
-        if (eventSize < checksumLen + mysql::binlog::event::LOG_EVENT_MINIMAL_HEADER_LEN) {
+        if (eventSize < checksumLen + kLogEventMinimalHeaderLen) {
             return nullptr;
         }
 
