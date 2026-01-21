@@ -20,8 +20,6 @@
 
 #include "utils/log.hpp"
 
-#define STATECLUSTER_USE_NEW_APPROACH
-#undef STATECLUSTER_USE_NEW_APPROACH
 
 namespace ultraverse::state::v2 {
 
@@ -205,10 +203,6 @@ namespace ultraverse::state::v2 {
         std::unordered_map<gid_t, TargetTransactionCache> _rollbackTargets;
         std::unordered_map<gid_t, TargetTransactionCache> _prependTargets;
 
-#ifdef STATECLUSTER_USE_NEW_APPROACH
-        // 새 접근법에서 사용되는 변수들
-        std::unordered_set<gid_t> _replayTargets;
-#endif
     };
 }
 

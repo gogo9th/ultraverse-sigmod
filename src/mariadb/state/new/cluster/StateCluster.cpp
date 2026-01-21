@@ -525,66 +525,6 @@ namespace ultraverse::state::v2 {
     }
     
     void StateCluster::invalidateTargetCache(const RelationshipResolver &resolver) {
-    
-#ifdef STATECLUSTER_USE_NEW_APPROACH
-        _logger->debug("invalidateTargetCache() called");
-        _replayTargets.clear();
-
-        auto rebuildTargets = [&](auto &targets) {
-            for (auto &pair: targets) {
-                gid_t gid = pair.first;
-                auto &cache = pair.second;
-                cache.read.clear();
-                cache.write.clear();
-
-                for (const auto &cluster: _clusters) {
-                    if (keyColumns().find(cluster.first) == keyColumns().end()) {
-                        continue;
-                    }
-
-                    const auto &read = cluster.second.read;
-                    const auto &write = cluster.second.write;
-
-                    for (const auto &writePair: write) {
-                        const auto &range = writePair.first;
-                        const auto &gids = writePair.second;
-
-                        if (gids.find(gid) == gids.end()) {
-                            continue;
-                        }
-
-                        cache.write.emplace(cluster.first, range);
-                        _replayTargets.insert(gids.begin(), gids.end());
-
-                        const auto &depRangeIt = std::find_if(read.begin(), read.end(), [&range](const auto &pair) {
-                            return pair.first == range || StateRange::isIntersects(pair.first, range);
-                        });
-
-                        if (depRangeIt == read.end()) {
-                            continue;
-                        }
-
-                        cache.read.emplace(cluster.first, depRangeIt->first);
-
-                        const auto &depGids = depRangeIt->second;
-                        _replayTargets.insert(depGids.begin(), depGids.end());
-                    }
-                }
-            }
-        };
-
-        rebuildTargets(_rollbackTargets);
-        rebuildTargets(_prependTargets);
-
-        for (auto &pair: _rollbackTargets) {
-            _replayTargets.erase(pair.first);
-        }
-        for (auto &pair: _prependTargets) {
-            _replayTargets.erase(pair.first);
-        }
-        
-        _logger->debug("invalidateTargetCache() end");
-#else
         _targetCache.clear();
 
         auto rebuildTargets = [&](auto &targets) {
@@ -645,7 +585,6 @@ namespace ultraverse::state::v2 {
 
         rebuildTargets(_rollbackTargets);
         rebuildTargets(_prependTargets);
-#endif
     }
     
     bool StateCluster::shouldReplay(gid_t gid) {
@@ -654,10 +593,6 @@ namespace ultraverse::state::v2 {
             // 롤백 타겟 자신은 재실행되어선 안된다
             return false;
         }
-
-#ifdef STATECLUSTER_USE_NEW_APPROACH
-        return _replayTargets.find(gid) != _replayTargets.end();
-#else
         size_t matched = 0;
         
         for (const auto &pair: _keyColumnsMap) {
@@ -689,7 +624,6 @@ namespace ultraverse::state::v2 {
         }
         
         return matched > 0;
-#endif
     }
     
     std::string StateCluster::generateReplaceQuery(const std::string &targetDB, const std::string &intermediateDB, const RelationshipResolver &resolver) {
