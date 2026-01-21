@@ -54,8 +54,18 @@ CREATE PROCEDURE test_complex()
 BEGIN
     SET @a = 1;
     SET @b = 2;
-    SET @x = @a + @b;
+    SET @x = CONCAT(@a, @b);
     SELECT * FROM items WHERE id = @x;
+END
+)SQL";
+
+static const char *ARITHMETIC_PROC = R"SQL(
+CREATE PROCEDURE test_arithmetic()
+BEGIN
+    SET @a = 10;
+    SET @b = 3;
+    SET @sum = @a + @b;
+    SELECT * FROM items WHERE id = @sum;
 END
 )SQL";
 
@@ -93,6 +103,15 @@ TEST_CASE("ProcMatcher trace - complex expression becomes wildcard", "[procmatch
     auto result = matcher.trace(vars);
 
     REQUIRE(hasWildcardItem(result.readSet, "items.id"));
+}
+
+TEST_CASE("ProcMatcher trace - arithmetic with known variables", "[procmatcher][trace]") {
+    ProcMatcher matcher(ARITHMETIC_PROC);
+
+    std::map<std::string, StateData> vars;
+    auto result = matcher.trace(vars);
+
+    REQUIRE(hasEqItem(result.readSet, "items.id", StateData(int64_t{13})));
 }
 
 TEST_CASE("ProcMatcher trace - undefined variable in unresolvedVars", "[procmatcher][trace]") {

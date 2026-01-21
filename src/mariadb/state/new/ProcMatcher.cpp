@@ -4,6 +4,8 @@
 
 #include <array>
 #include <cstdint>
+#include <cmath>
+#include <optional>
 
 #include <libultparser/libultparser.h>
 #include <ultparser_query.pb.h>
@@ -18,6 +20,118 @@
 
 
 namespace ultraverse::state::v2 {
+
+    namespace {
+        // 두 KNOWN StateData에 대해 산술 연산 수행
+        // 지원 타입: INTEGER(int64_t), DOUBLE
+        // 반환: 계산 성공 시 StateData, 실패 시 std::nullopt
+        std::optional<StateData> computeArithmetic(
+            ultparser::DMLQueryExpr::Operator op,
+            const StateData& left,
+            const StateData& right
+        ) {
+            const auto leftType = left.Type();
+            const auto rightType = right.Type();
+
+            const bool leftIsInt = leftType == en_column_data_int || leftType == en_column_data_uint;
+            const bool rightIsInt = rightType == en_column_data_int || rightType == en_column_data_uint;
+            const bool leftIsDouble = leftType == en_column_data_double;
+            const bool rightIsDouble = rightType == en_column_data_double;
+
+            if ((!leftIsInt && !leftIsDouble) || (!rightIsInt && !rightIsDouble)) {
+                return std::nullopt;
+            }
+
+            const bool useDouble = leftIsDouble || rightIsDouble;
+
+            if (useDouble) {
+                double lhs = 0.0;
+                double rhs = 0.0;
+                if (leftIsDouble) {
+                    if (!left.Get(lhs)) {
+                        return std::nullopt;
+                    }
+                } else {
+                    int64_t tmp = 0;
+                    if (!left.Get(tmp)) {
+                        return std::nullopt;
+                    }
+                    lhs = static_cast<double>(tmp);
+                }
+                if (rightIsDouble) {
+                    if (!right.Get(rhs)) {
+                        return std::nullopt;
+                    }
+                } else {
+                    int64_t tmp = 0;
+                    if (!right.Get(tmp)) {
+                        return std::nullopt;
+                    }
+                    rhs = static_cast<double>(tmp);
+                }
+
+                if ((op == ultparser::DMLQueryExpr::DIV || op == ultparser::DMLQueryExpr::MOD) && rhs == 0.0) {
+                    return std::nullopt;
+                }
+
+                double result = 0.0;
+                switch (op) {
+                    case ultparser::DMLQueryExpr::PLUS:
+                        result = lhs + rhs;
+                        break;
+                    case ultparser::DMLQueryExpr::MINUS:
+                        result = lhs - rhs;
+                        break;
+                    case ultparser::DMLQueryExpr::MUL:
+                        result = lhs * rhs;
+                        break;
+                    case ultparser::DMLQueryExpr::DIV:
+                        result = lhs / rhs;
+                        break;
+                    case ultparser::DMLQueryExpr::MOD:
+                        result = std::fmod(lhs, rhs);
+                        break;
+                    default:
+                        return std::nullopt;
+                }
+
+                return StateData(result);
+            }
+
+            int64_t lhs = 0;
+            int64_t rhs = 0;
+            if (!left.Get(lhs) || !right.Get(rhs)) {
+                return std::nullopt;
+            }
+
+            if ((op == ultparser::DMLQueryExpr::DIV || op == ultparser::DMLQueryExpr::MOD) && rhs == 0) {
+                return std::nullopt;
+            }
+
+            int64_t result = 0;
+            switch (op) {
+                case ultparser::DMLQueryExpr::PLUS:
+                    result = lhs + rhs;
+                    break;
+                case ultparser::DMLQueryExpr::MINUS:
+                    result = lhs - rhs;
+                    break;
+                case ultparser::DMLQueryExpr::MUL:
+                    result = lhs * rhs;
+                    break;
+                case ultparser::DMLQueryExpr::DIV:
+                    result = lhs / rhs;
+                    break;
+                case ultparser::DMLQueryExpr::MOD:
+                    result = lhs % rhs;
+                    break;
+                default:
+                    return std::nullopt;
+            }
+
+            return StateData(result);
+        }
+    } // namespace
     
     void ProcMatcher::load(const std::string &procedureDefinition, ProcMatcher &instance) {
         static const auto logger = createLogger("ProcMatcher");
@@ -408,13 +522,39 @@ namespace ultraverse::state::v2 {
         const ultparser::DMLQueryExpr& expr,
         const SymbolTable& symbols
     ) const {
-        // 복잡한 표현식 (연산자 포함)은 UNKNOWN 반환
+        auto op = expr.operator_();
+        
+        // 사칙연산 처리
+        if (op == ultparser::DMLQueryExpr::PLUS ||
+            op == ultparser::DMLQueryExpr::MINUS ||
+            op == ultparser::DMLQueryExpr::MUL ||
+            op == ultparser::DMLQueryExpr::DIV ||
+            op == ultparser::DMLQueryExpr::MOD) {
+            auto leftVal = evaluateExpr(expr.left(), symbols);
+            auto rightVal = evaluateExpr(expr.right(), symbols);
+            
+            if (leftVal.state == VariableValue::KNOWN &&
+                rightVal.state == VariableValue::KNOWN) {
+                auto result = computeArithmetic(op, leftVal.data, rightVal.data);
+                if (result.has_value()) {
+                    return VariableValue::known(*result);
+                }
+            }
+            return VariableValue::unknown();
+        }
+        
+        // 함수 호출은 UNKNOWN
+        if (expr.value_type() == ultparser::DMLQueryExpr::FUNCTION) {
+            return VariableValue::unknown();
+        }
+        
+        // 복잡한 표현식은 UNKNOWN 반환
         if (isComplexExpression(expr)) {
             return VariableValue::unknown();
         }
         
         // VALUE 타입인 경우
-        if (expr.operator_() == ultparser::DMLQueryExpr::VALUE) {
+        if (op == ultparser::DMLQueryExpr::VALUE) {
             switch (expr.value_type()) {
                 case ultparser::DMLQueryExpr::INTEGER:
                     return VariableValue::known(StateData(expr.integer()));
