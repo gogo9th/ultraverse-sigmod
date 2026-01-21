@@ -118,7 +118,7 @@ func processSelectStmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 
 	if stmt.From != nil {
 		tableRefs := stmt.From.TableRefs
-		primaryTable, joinedTables := selectGetTables(tableRefs)
+		primaryTable, joinedTables, derivedTables := selectGetTables(tableRefs)
 
 		if primaryTable != nil {
 			query.Table = &pb.AliasedIdentifier{
@@ -142,6 +142,9 @@ func processSelectStmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 				},
 			}
 		}
+
+		// Store derived tables (subqueries in FROM clause)
+		query.Subqueries = append(query.Subqueries, derivedTables...)
 	}
 
 	if stmt.Where != nil {
@@ -169,18 +172,25 @@ func processSelectStmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 	}
 }
 
-// selectGetTables extracts the primary table and joined tables from a JOIN clause.
-func selectGetTables(tableRefs *ast.Join) (*ast.TableName, []*ast.TableName) {
+// selectGetTables extracts the primary table, joined tables, and derived tables from a JOIN clause.
+func selectGetTables(tableRefs *ast.Join) (*ast.TableName, []*ast.TableName, []*pb.DMLQuery) {
 	var primaryTable *ast.TableName
 	var joinedTables []*ast.TableName
+	var derivedTables []*pb.DMLQuery
 
 	if tableRefs.Left != nil {
 		switch left := tableRefs.Left.(type) {
 		case *ast.Join:
-			primaryTable, joinedTables = selectGetTables(left)
+			primaryTable, joinedTables, derivedTables = selectGetTables(left)
 		case *ast.TableSource:
-			if tn, ok := left.Source.(*ast.TableName); ok {
-				primaryTable = tn
+			switch source := left.Source.(type) {
+			case *ast.TableName:
+				primaryTable = source
+			case *ast.SelectStmt:
+				// Derived table (subquery in FROM clause)
+				derivedQuery := &pb.DMLQuery{}
+				processSelectStmt(derivedQuery, source)
+				derivedTables = append(derivedTables, derivedQuery)
 			}
 		}
 	}
@@ -188,16 +198,23 @@ func selectGetTables(tableRefs *ast.Join) (*ast.TableName, []*ast.TableName) {
 	if tableRefs.Right != nil {
 		switch right := tableRefs.Right.(type) {
 		case *ast.Join:
-			_, rightJoined := selectGetTables(right)
+			_, rightJoined, rightDerived := selectGetTables(right)
 			joinedTables = append(joinedTables, rightJoined...)
+			derivedTables = append(derivedTables, rightDerived...)
 		case *ast.TableSource:
-			if tn, ok := right.Source.(*ast.TableName); ok {
-				joinedTables = append(joinedTables, tn)
+			switch source := right.Source.(type) {
+			case *ast.TableName:
+				joinedTables = append(joinedTables, source)
+			case *ast.SelectStmt:
+				// Derived table (subquery in FROM clause)
+				derivedQuery := &pb.DMLQuery{}
+				processSelectStmt(derivedQuery, source)
+				derivedTables = append(derivedTables, derivedQuery)
 			}
 		}
 	}
 
-	return primaryTable, joinedTables
+	return primaryTable, joinedTables, derivedTables
 }
 
 // processInsertStmt processes an INSERT statement.

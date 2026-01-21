@@ -54,6 +54,7 @@ message DMLQueryExpr {
     MAP = 8;
     FUNCTION = 9;
     DECIMAL = 10;
+    SUBQUERY = 11;
   }
 
   Operator operator = 1;
@@ -80,6 +81,15 @@ message DMLQueryExpr {
 
   string function = 14;
   string decimal = 15;
+
+  /* Subquery 지원 (ValueType == SUBQUERY 일 때) */
+  DMLQuery subquery = 16;
+  bool subquery_exists = 17;        // EXISTS 서브쿼리 여부
+  bool subquery_not = 18;           // NOT EXISTS / NOT IN
+
+  /* Aggregate 함수 지원 (ValueType == FUNCTION 일 때) */
+  bool is_aggregate = 19;
+  bool is_distinct = 20;
 }
 
 message AliasedIdentifier {

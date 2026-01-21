@@ -347,3 +347,229 @@ func TestParseSetWithExpression(t *testing.T) {
 		t.Fatalf("expected MUL operator, got %v", value.Operator)
 	}
 }
+
+func TestParseSubqueryInWhere(t *testing.T) {
+	p := New()
+	result := p.Parse("SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	dml := result.Statements[0].Dml
+	if dml.Where == nil {
+		t.Fatal("expected WHERE clause")
+	}
+
+	// IN operator with subquery on the right
+	if dml.Where.Operator != pb.DMLQueryExpr_IN {
+		t.Fatalf("expected IN operator, got %v", dml.Where.Operator)
+	}
+
+	// Right side should be a SUBQUERY
+	if dml.Where.Right == nil {
+		t.Fatal("expected right side of IN")
+	}
+
+	if dml.Where.Right.ValueType != pb.DMLQueryExpr_SUBQUERY {
+		t.Fatalf("expected SUBQUERY, got %v", dml.Where.Right.ValueType)
+	}
+
+	// Subquery should be a SELECT from orders
+	subquery := dml.Where.Right.Subquery
+	if subquery == nil {
+		t.Fatal("expected subquery")
+	}
+
+	if subquery.Type != pb.DMLQuery_SELECT {
+		t.Fatalf("expected SELECT, got %v", subquery.Type)
+	}
+
+	if subquery.Table.Real.Identifier != "orders" {
+		t.Fatalf("expected table 'orders', got %s", subquery.Table.Real.Identifier)
+	}
+}
+
+func TestParseExistsSubquery(t *testing.T) {
+	p := New()
+	result := p.Parse("SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	dml := result.Statements[0].Dml
+	if dml.Where == nil {
+		t.Fatal("expected WHERE clause")
+	}
+
+	// Should be a SUBQUERY with SubqueryExists = true
+	if dml.Where.ValueType != pb.DMLQueryExpr_SUBQUERY {
+		t.Fatalf("expected SUBQUERY, got %v", dml.Where.ValueType)
+	}
+
+	if !dml.Where.SubqueryExists {
+		t.Fatal("expected SubqueryExists to be true")
+	}
+
+	if dml.Where.Subquery == nil {
+		t.Fatal("expected subquery")
+	}
+}
+
+func TestParseNotExistsSubquery(t *testing.T) {
+	p := New()
+	result := p.Parse("SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	dml := result.Statements[0].Dml
+	if dml.Where == nil {
+		t.Fatal("expected WHERE clause")
+	}
+
+	if !dml.Where.SubqueryExists {
+		t.Fatal("expected SubqueryExists to be true")
+	}
+
+	if !dml.Where.SubqueryNot {
+		t.Fatal("expected SubqueryNot to be true for NOT EXISTS")
+	}
+}
+
+func TestParseDerivedTable(t *testing.T) {
+	p := New()
+	result := p.Parse("SELECT * FROM (SELECT id, name FROM users) AS t WHERE t.id = 1")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	dml := result.Statements[0].Dml
+	if len(dml.Subqueries) != 1 {
+		t.Fatalf("expected 1 subquery (derived table), got %d", len(dml.Subqueries))
+	}
+
+	derivedTable := dml.Subqueries[0]
+	if derivedTable.Type != pb.DMLQuery_SELECT {
+		t.Fatalf("expected SELECT, got %v", derivedTable.Type)
+	}
+
+	if derivedTable.Table.Real.Identifier != "users" {
+		t.Fatalf("expected table 'users', got %s", derivedTable.Table.Real.Identifier)
+	}
+}
+
+func TestParseScalarSubquery(t *testing.T) {
+	p := New()
+	result := p.Parse("SELECT name, (SELECT COUNT(*) FROM orders WHERE orders.user_id = users.id) AS order_count FROM users")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	dml := result.Statements[0].Dml
+	if len(dml.Select) != 2 {
+		t.Fatalf("expected 2 select fields, got %d", len(dml.Select))
+	}
+
+	// Second field should be a scalar subquery
+	scalarSubquery := dml.Select[1]
+	if scalarSubquery.Alias != "order_count" {
+		t.Fatalf("expected alias 'order_count', got %s", scalarSubquery.Alias)
+	}
+
+	if scalarSubquery.Real.ValueType != pb.DMLQueryExpr_SUBQUERY {
+		t.Fatalf("expected SUBQUERY, got %v", scalarSubquery.Real.ValueType)
+	}
+
+	if scalarSubquery.Real.Subquery == nil {
+		t.Fatal("expected subquery")
+	}
+}
+
+func TestParseAggregate(t *testing.T) {
+	p := New()
+	result := p.Parse("SELECT COUNT(*), SUM(amount) FROM orders")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	dml := result.Statements[0].Dml
+	if len(dml.Select) != 2 {
+		t.Fatalf("expected 2 select fields, got %d", len(dml.Select))
+	}
+
+	// COUNT(*)
+	countExpr := dml.Select[0].Real
+	if countExpr.ValueType != pb.DMLQueryExpr_FUNCTION {
+		t.Fatalf("expected FUNCTION, got %v", countExpr.ValueType)
+	}
+
+	if countExpr.Function != "COUNT" {
+		t.Fatalf("expected function 'COUNT', got %s", countExpr.Function)
+	}
+
+	if !countExpr.IsAggregate {
+		t.Fatal("expected IsAggregate to be true for COUNT")
+	}
+
+	// SUM(amount)
+	sumExpr := dml.Select[1].Real
+	if sumExpr.Function != "SUM" {
+		t.Fatalf("expected function 'SUM', got %s", sumExpr.Function)
+	}
+
+	if !sumExpr.IsAggregate {
+		t.Fatal("expected IsAggregate to be true for SUM")
+	}
+}
+
+func TestParseAggregateDistinct(t *testing.T) {
+	p := New()
+	result := p.Parse("SELECT COUNT(DISTINCT user_id) FROM orders")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	dml := result.Statements[0].Dml
+	countExpr := dml.Select[0].Real
+
+	if countExpr.Function != "COUNT" {
+		t.Fatalf("expected function 'COUNT', got %s", countExpr.Function)
+	}
+
+	if !countExpr.IsAggregate {
+		t.Fatal("expected IsAggregate to be true")
+	}
+
+	if !countExpr.IsDistinct {
+		t.Fatal("expected IsDistinct to be true for COUNT(DISTINCT ...)")
+	}
+}
+
+func TestParseNotInSubquery(t *testing.T) {
+	p := New()
+	result := p.Parse("SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM banned_users)")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	dml := result.Statements[0].Dml
+	if dml.Where == nil {
+		t.Fatal("expected WHERE clause")
+	}
+
+	if dml.Where.Operator != pb.DMLQueryExpr_NOT_IN {
+		t.Fatalf("expected NOT_IN operator, got %v", dml.Where.Operator)
+	}
+
+	if dml.Where.Right.ValueType != pb.DMLQueryExpr_SUBQUERY {
+		t.Fatalf("expected SUBQUERY, got %v", dml.Where.Right.ValueType)
+	}
+}

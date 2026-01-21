@@ -25,6 +25,8 @@ func processExprNode(expr *ast.ExprNode) *pb.DMLQueryExpr {
 		return processValueExpr(e)
 	case *ast.FuncCallExpr:
 		return processFuncCallExpr(e)
+	case *ast.AggregateFuncExpr:
+		return processAggregateFuncExpr(e)
 	case *ast.BinaryOperationExpr:
 		return processBinaryOperationExpr(e)
 	case *ast.BetweenExpr:
@@ -39,6 +41,10 @@ func processExprNode(expr *ast.ExprNode) *pb.DMLQueryExpr {
 		return processUnaryOperationExpr(e)
 	case *ast.VariableExpr:
 		return processVariableExpr(e)
+	case *ast.SubqueryExpr:
+		return processSubqueryExpr(e)
+	case *ast.ExistsSubqueryExpr:
+		return processExistsSubqueryExpr(e)
 	default:
 		fmt.Printf("FIXME: Unsupported expression type: %T\n", *expr)
 		return &pb.DMLQueryExpr{
@@ -114,6 +120,21 @@ func processFuncCallExpr(e *ast.FuncCallExpr) *pb.DMLQueryExpr {
 		ValueType: pb.DMLQueryExpr_FUNCTION,
 		Function:  e.FnName.O,
 		ValueList: exprList,
+	}
+}
+
+func processAggregateFuncExpr(e *ast.AggregateFuncExpr) *pb.DMLQueryExpr {
+	exprList := make([]*pb.DMLQueryExpr, len(e.Args))
+	for i, arg := range e.Args {
+		exprList[i] = processExprNode(&arg)
+	}
+	return &pb.DMLQueryExpr{
+		Operator:    pb.DMLQueryExpr_VALUE,
+		ValueType:   pb.DMLQueryExpr_FUNCTION,
+		Function:    e.F,
+		ValueList:   exprList,
+		IsAggregate: true,
+		IsDistinct:  e.Distinct,
 	}
 }
 
@@ -213,16 +234,26 @@ func processPatternInExpr(e *ast.PatternInExpr) *pb.DMLQueryExpr {
 		op = pb.DMLQueryExpr_NOT_IN
 	}
 
+	// Handle IN subquery
+	if e.Sel != nil {
+		subExpr := processSubqueryExpr(e.Sel.(*ast.SubqueryExpr))
+		if subExpr != nil {
+			subExpr.SubqueryNot = e.Not
+		}
+		return &pb.DMLQueryExpr{
+			Operator: op,
+			Left:     processExprNode(&e.Expr),
+			Right:    subExpr,
+		}
+	}
+
+	// Handle IN list (e.g., IN (1, 2, 3))
 	valueList := make([]*pb.DMLQueryExpr, 0, len(e.List))
 	for i := range e.List {
 		item := e.List[i]
 		if child := processExprNode(&item); child != nil {
 			valueList = append(valueList, child)
 		}
-	}
-
-	if e.Sel != nil {
-		fmt.Printf("FIXME: Unsupported subquery in IN expression\n")
 	}
 
 	return &pb.DMLQueryExpr{
@@ -280,4 +311,30 @@ func processVariableExpr(e *ast.VariableExpr) *pb.DMLQueryExpr {
 		ValueType:  pb.DMLQueryExpr_IDENTIFIER,
 		Identifier: identifier,
 	}
+}
+
+func processSubqueryExpr(e *ast.SubqueryExpr) *pb.DMLQueryExpr {
+	subQuery := &pb.DMLQuery{}
+
+	// e.Query is a ResultSetNode (typically a SelectStmt)
+	if selectStmt, ok := e.Query.(*ast.SelectStmt); ok {
+		processSelectStmt(subQuery, selectStmt)
+	}
+
+	return &pb.DMLQueryExpr{
+		Operator:       pb.DMLQueryExpr_VALUE,
+		ValueType:      pb.DMLQueryExpr_SUBQUERY,
+		Subquery:       subQuery,
+		SubqueryExists: e.Exists,
+	}
+}
+
+func processExistsSubqueryExpr(e *ast.ExistsSubqueryExpr) *pb.DMLQueryExpr {
+	// e.Sel is a SubqueryExpr
+	subExpr := processSubqueryExpr(e.Sel.(*ast.SubqueryExpr))
+	if subExpr != nil {
+		subExpr.SubqueryExists = true
+		subExpr.SubqueryNot = e.Not
+	}
+	return subExpr
 }
