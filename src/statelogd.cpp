@@ -908,10 +908,6 @@ void sigintHandler(int param) {
 
 int main(int argc, char **argv) {
     signal(SIGINT, sigintHandler);
-    
-    ult_sql_parser_init();
     int retval = application.exec(argc, argv);
-    
-    ult_sql_parser_deinit();
     return retval;
 }

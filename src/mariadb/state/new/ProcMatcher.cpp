@@ -2,7 +2,8 @@
 // Created by cheesekun on 3/16/23.
 //
 
-#include <thread>
+#include <array>
+#include <cstdint>
 
 #include <libultparser/libultparser.h>
 #include <ultparser_query.pb.h>
@@ -18,39 +19,22 @@
 
 namespace ultraverse::state::v2 {
     
-    std::string ProcMatcher::sanitizeSelectInto(const std::string &procedureDefinition) {
-        auto *result = ult_sanitize_select_into((char *) procedureDefinition.c_str());
-        std::string resultStr(result);
-        free(result);
-        
-        return resultStr;
-    }
-    
-    std::string ProcMatcher::normalizeProcedureCode(const std::string &procedureDefinition) {
-        auto *result = ult_normalize_procedure_code((char *) procedureDefinition.c_str());
-        std::string resultStr(result);
-        free(result);
-        
-        return resultStr;
-    }
-    
     void ProcMatcher::load(const std::string &procedureDefinition, ProcMatcher &instance) {
         static const auto logger = createLogger("ProcMatcher");
-        int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
+        static thread_local uintptr_t s_parser = 0;
+        if (s_parser == 0) {
+            s_parser = ult_sql_parser_create();
+        }
         
-        // normalize 후 sanitize 해야 함
-        // 왜냐하면 SELECT colX
-        //        INTO varX 가
-        // SELECT colX INTO varX 로 바뀌기 때문
-        std::string normalizedDefinition = sanitizeSelectInto(normalizeProcedureCode(procedureDefinition));
-        logger->debug(normalizedDefinition);
+        logger->debug(procedureDefinition);
         ultparser::ParseResult parseResult;
         
         char *parseResultCStr = nullptr;
         
-        int64_t parseResultCStrSize = ult_sql_parse(
-            (char *) normalizedDefinition.c_str(),
-            threadId,
+        int64_t parseResultCStrSize = ult_sql_parse_new(
+            s_parser,
+            (char *) procedureDefinition.c_str(),
+            static_cast<int64_t>(procedureDefinition.size()),
             &parseResultCStr
         );
         
@@ -153,47 +137,10 @@ namespace ultraverse::state::v2 {
         return std::move(columns);
     }
     
-    std::vector<std::unordered_map<std::string, std::string>>
-    ProcMatcher::extractVariableAssignments(const std::string &procedureDefinition) {
-        char *resultCStr = nullptr;
-        int size = ult_extract_select_info((char *) procedureDefinition.c_str(), &resultCStr);
-        
-        if (size <= 0 || resultCStr == nullptr) {
-            goto FAILURE;
-        }
-        
-        {
-            std::vector<std::unordered_map<std::string, std::string>> assignments_list;
-            ultparser::SelectIntoExtractionResult results;
-            if (!results.ParseFromArray(resultCStr, size)) {
-                free(resultCStr);
-                goto FAILURE;
-            }
-            
-            free(resultCStr);
-            
-            for (const auto &result: results.results()) {
-                std::unordered_map<std::string, std::string> assignments;
-                
-                for (const auto &assignment: result.assignments()) {
-                    assignments[assignment.first] = assignment.second;
-                }
-                
-                assignments_list.push_back(std::move(assignments));
-            }
-            
-            return std::move(assignments_list);
-        }
-        
-        FAILURE:
-        return {};
-    }
-    
     ProcMatcher::ProcMatcher(const std::string &procedureDefinition):
         _logger(createLogger("ProcMatcher")),
         _definition(procedureDefinition),
-        _codes(),
-        _variableAssignments(extractVariableAssignments(procedureDefinition))
+        _codes()
     {
         load(procedureDefinition, *this);
         extractRWSets();
@@ -256,13 +203,36 @@ namespace ultraverse::state::v2 {
     }
     
     int ProcMatcher::matchForward(const std::string &statement, int fromIndex) {
-        int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
+        static thread_local uintptr_t s_parser = 0;
+        if (s_parser == 0) {
+            s_parser = ult_sql_parser_create();
+        }
+
+        std::array<unsigned char, 20> statementHash{};
+        if (ult_query_hash_new(
+                s_parser,
+                (char *) statement.c_str(),
+                static_cast<int64_t>(statement.size()),
+                reinterpret_cast<char *>(statementHash.data())
+            ) != 20) {
+            return -1;
+        }
         
         for (int i = fromIndex; i < _codes.size(); i++) {
             // DML일때만 매칭을 시도한다.
-            // TODO: sanitizeSelectInto() 콜해야한다
             if (_codes[i]->type() == ultparser::Query::DML) {
-                if (ult_query_match((char *) statement.c_str(), (char *) _codes[i]->dml().statement().c_str(), threadId)) {
+                const auto &codeStatement = _codes[i]->dml().statement();
+                std::array<unsigned char, 20> codeHash{};
+                if (ult_query_hash_new(
+                        s_parser,
+                        (char *) codeStatement.c_str(),
+                        static_cast<int64_t>(codeStatement.size()),
+                        reinterpret_cast<char *>(codeHash.data())
+                    ) != 20) {
+                    continue;
+                }
+
+                if (statementHash == codeHash) {
                     return i;
                 }
             }

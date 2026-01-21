@@ -3,13 +3,14 @@
 //
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <string>
-#include <thread>
 
 #include <libultparser/libultparser.h>
 #include <ultparser_query.pb.h>
@@ -41,15 +42,20 @@ static std::string toLower(const std::string &value) {
     return out;
 }
 
+static uintptr_t g_parser = 0;
+
 bool parseSQL(const std::string &sqlString, ultparser::ParseResult *out = nullptr) {
     std::cerr << "testing " << sqlString << " ... ";
 
-    int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
+    if (g_parser == 0) {
+        g_parser = ult_sql_parser_create();
+    }
     ultparser::ParseResult parseResult;
     char *parseResultCStr = nullptr;
-    int64_t parseResultCStrSize = ult_sql_parse(
+    int64_t parseResultCStrSize = ult_sql_parse_new(
+        g_parser,
         (char *) sqlString.c_str(),
-        threadId,
+        static_cast<int64_t>(sqlString.size()),
         &parseResultCStr
     );
 
@@ -87,6 +93,31 @@ bool parseSQL(const std::string &sqlString, ultparser::ParseResult *out = nullpt
     }
 
     return isSuccessful;
+}
+
+bool hashSQL(const std::string &sqlString, std::array<unsigned char, 20> *out) {
+    if (g_parser == 0) {
+        g_parser = ult_sql_parser_create();
+    }
+
+    std::array<unsigned char, 20> hash{};
+    int64_t hashSize = ult_query_hash_new(
+        g_parser,
+        (char *) sqlString.c_str(),
+        static_cast<int64_t>(sqlString.size()),
+        reinterpret_cast<char *>(hash.data())
+    );
+
+    if (hashSize != 20) {
+        std::cerr << "hash FAIL: " << sqlString << "\n";
+        return false;
+    }
+
+    if (out != nullptr) {
+        *out = hash;
+    }
+
+    return true;
 }
 
 bool runTests() {
@@ -277,13 +308,204 @@ bool runTests() {
     SQL_OK("UPDATE orders SET checksum = MD5(CONCAT(user_id, '-', order_id)), score = (score + 5) * 3 WHERE (status = 'paid' OR status = 'shipped') AND total >= 1000;")
     SQL_OK("DELETE FROM logs WHERE (level = 'debug' OR level = 'trace') AND (retry_count % 3 = 0);")
     SQL_OK("INSERT INTO pricing (sku, price, discount, note) VALUES ('SKU-1', 19.9900, -0.05, CONCAT('promo-', 2026));")
-    
+
+    // SELECT ... INTO (procedure-style variable assignment)
+    SQL_OK("SELECT score INTO game_score FROM game_records WHERE user_id = 1;")
+
+    {
+        std::string sqlString = "SELECT score INTO game_score FROM game_records WHERE user_id = 1;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 1, "statements_size must be 1");
+
+        const auto &statement = parseResult.statements(0);
+        OK(statement.has_dml(), "statement must be DML");
+
+        const auto &dml = statement.dml();
+        OK(dml.type() == ultparser::DMLQuery::SELECT, "statement type must be SELECT");
+        OK(dml.select_size() == 1, "select size must be 1");
+
+        OK(dml.table().real().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "table must be identifier");
+        OK(toLower(dml.table().real().identifier()) == "game_records", "table must be game_records");
+
+        OK(dml.select(0).real().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "select expr must be identifier");
+        OK(toLower(dml.select(0).real().identifier()) == "score", "select expr must be score");
+
+        OK(dml.has_where(), "where clause must exist");
+        const auto &where = dml.where();
+        OK(where.operator_() == ultparser::DMLQueryExpr::EQ, "where operator must be EQ");
+        OK(where.has_left(), "where must have left");
+        OK(where.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "where left must be identifier");
+        OK(toLower(where.left().identifier()) == "user_id", "where left must be user_id");
+        OK(where.has_right(), "where must have right");
+        OK(where.right().value_type() == ultparser::DMLQueryExpr::INTEGER, "where right must be integer");
+        OK(where.right().integer() == 1, "where right must be 1");
+    }
+
+    {
+        std::string sqlString =
+            "CREATE PROCEDURE test_select_into()\n"
+            "BEGIN\n"
+            "  SELECT score INTO game_score FROM game_records WHERE user_id = 1;\n"
+            "END;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 1, "statements_size must be 1");
+
+        const auto &statement = parseResult.statements(0);
+        OK(statement.type() == ultparser::Query::PROCEDURE, "statement type must be PROCEDURE");
+        OK(statement.has_procedure(), "statement must have procedure");
+
+        const auto &procedure = statement.procedure();
+        OK(toLower(procedure.name()) == "test_select_into", "procedure name must be test_select_into");
+        OK(procedure.statements_size() == 1, "procedure statements_size must be 1");
+
+        const auto &procStatement = procedure.statements(0);
+        OK(procStatement.has_dml(), "procedure statement must be DML");
+
+        const auto &dml = procStatement.dml();
+        OK(dml.type() == ultparser::DMLQuery::SELECT, "procedure statement type must be SELECT");
+        OK(dml.select_size() == 1, "procedure select size must be 1");
+    }
+
+    // SET variable tests
+    SQL_OK("SET @x = 1;")
+    SQL_OK("SET @user_id = 42, @name = 'test';")
+    SQL_OK("SET @total = @price * @quantity;")
+
+    {
+        std::string sqlString = "SET @x = 1;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 1, "SET statements_size must be 1");
+
+        const auto &statement = parseResult.statements(0);
+        OK(statement.type() == ultparser::Query::SET, "statement type must be SET");
+        OK(statement.has_set(), "statement must have set");
+
+        const auto &setQuery = statement.set();
+        OK(setQuery.assignments_size() == 1, "SET assignments_size must be 1");
+
+        const auto &assignment = setQuery.assignments(0);
+        OK(assignment.name() == "x", "SET variable name must be x");
+        OK(!assignment.is_global(), "SET is_global must be false");
+        OK(!assignment.is_system(), "SET is_system must be false");
+        OK(assignment.has_value(), "SET must have value");
+        OK(assignment.value().value_type() == ultparser::DMLQueryExpr::INTEGER, "SET value type must be INTEGER");
+        OK(assignment.value().integer() == 1, "SET value must be 1");
+    }
+
+    {
+        std::string sqlString = "SET @user_id = 42, @name = 'test';";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 1, "SET multiple statements_size must be 1");
+
+        const auto &setQuery = parseResult.statements(0).set();
+        OK(setQuery.assignments_size() == 2, "SET multiple assignments_size must be 2");
+
+        OK(setQuery.assignments(0).name() == "user_id", "first variable name must be user_id");
+        OK(setQuery.assignments(0).value().integer() == 42, "first value must be 42");
+
+        OK(setQuery.assignments(1).name() == "name", "second variable name must be name");
+        OK(setQuery.assignments(1).value().string() == "test", "second value must be test");
+    }
+
+    {
+        std::string sqlString = "SET @total = @price * @quantity;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        const auto &setQuery = parseResult.statements(0).set();
+        OK(setQuery.assignments_size() == 1, "SET expr assignments_size must be 1");
+        OK(setQuery.assignments(0).name() == "total", "SET expr variable name must be total");
+
+        const auto &value = setQuery.assignments(0).value();
+        OK(value.operator_() == ultparser::DMLQueryExpr::MUL, "SET expr operator must be MUL");
+        OK(value.has_left(), "SET expr must have left");
+        OK(value.has_right(), "SET expr must have right");
+        OK(value.left().identifier() == "@price", "SET expr left must be @price");
+        OK(value.right().identifier() == "@quantity", "SET expr right must be @quantity");
+    }
+
+    {
+        std::string sqlString = "SELECT * FROM users; INSERT INTO users (id) VALUES (1);";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 2, "multi statement size must be 2");
+        OK(parseResult.statements(0).has_dml(), "first statement must be DML");
+        OK(parseResult.statements(0).dml().type() == ultparser::DMLQuery::SELECT,
+           "first statement must be SELECT");
+        OK(parseResult.statements(1).has_dml(), "second statement must be DML");
+        OK(parseResult.statements(1).dml().type() == ultparser::DMLQuery::INSERT,
+           "second statement must be INSERT");
+    }
+
+    {
+        std::string sqlString = "SELECT * FROM /* comment */ users;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 1, "commented SELECT statements_size must be 1");
+        const auto &statement = parseResult.statements(0);
+        OK(statement.has_dml(), "commented SELECT must be DML");
+        const auto &dml = statement.dml();
+        OK(dml.type() == ultparser::DMLQuery::SELECT, "commented SELECT type must be SELECT");
+        OK(dml.table().real().value_type() == ultparser::DMLQueryExpr::IDENTIFIER,
+           "commented SELECT table must be identifier");
+        OK(toLower(dml.table().real().identifier()) == "users", "commented SELECT table must be users");
+    }
+
+    {
+        std::string sqlA = "SELECT * FROM users;";
+        std::string sqlB =
+            "SELECT\n"
+            "    *\n"
+            "FROM\n"
+            "    users\n"
+            ";\n";
+        std::array<unsigned char, 20> hashA{};
+        std::array<unsigned char, 20> hashB{};
+
+        OK(hashSQL(sqlA, &hashA), "hash for single-line SELECT");
+        OK(hashSQL(sqlB, &hashB), "hash for multi-line SELECT");
+        OK(std::equal(hashA.begin(), hashA.end(), hashB.begin()),
+           "hash must match for equivalent queries");
+    }
+
     return true;
 }
 
 int main() {
-    ult_sql_parser_init();
+    g_parser = ult_sql_parser_create();
     bool ok = runTests();
-    ult_sql_parser_deinit();
+    ult_sql_parser_destroy(g_parser);
+    g_parser = 0;
     return ok ? 0 : 1;
 }
