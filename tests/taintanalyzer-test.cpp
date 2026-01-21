@@ -45,6 +45,43 @@ TEST_CASE("TaintAnalyzer isColumnRelated resolves direct, FK, and wildcard") {
     }
 }
 
+TEST_CASE("TaintAnalyzer isColumnRelated handles non-related and wildcard edge cases") {
+    std::vector<ForeignKey> foreignKeys{
+        makeForeignKey("posts", "author_id", "users", "id"),
+        makeForeignKey("comments", "post_id", "posts", "id")
+    };
+
+    SECTION("same table different columns without wildcard are not related") {
+        REQUIRE_FALSE(TaintAnalyzer::isColumnRelated("users.id", "users.name", foreignKeys));
+    }
+
+    SECTION("wildcard matches any column within the same table") {
+        REQUIRE(TaintAnalyzer::isColumnRelated("users.*", "users.name", foreignKeys));
+        REQUIRE(TaintAnalyzer::isColumnRelated("users.id", "users.*", foreignKeys));
+    }
+
+    SECTION("wildcard across tables without FK is not related") {
+        REQUIRE_FALSE(TaintAnalyzer::isColumnRelated("users.*", "orders.id", foreignKeys));
+        REQUIRE_FALSE(TaintAnalyzer::isColumnRelated("orders.*", "users.id", foreignKeys));
+    }
+
+    SECTION("wildcard across tables with FK matches the FK column") {
+        REQUIRE(TaintAnalyzer::isColumnRelated("users.*", "posts.author_id", foreignKeys));
+    }
+
+    SECTION("wildcard across tables with FK does not match non-FK columns") {
+        REQUIRE_FALSE(TaintAnalyzer::isColumnRelated("users.*", "posts.slug", foreignKeys));
+    }
+
+    SECTION("wildcard on both tables with FK is related") {
+        REQUIRE(TaintAnalyzer::isColumnRelated("users.*", "posts.*", foreignKeys));
+    }
+
+    SECTION("case-insensitive input is normalized through FK resolution") {
+        REQUIRE(TaintAnalyzer::isColumnRelated("USERS.ID", "posts.author_id", foreignKeys));
+    }
+}
+
 TEST_CASE("TaintAnalyzer columnSetsRelated detects related columns") {
     ColumnSet taintedWrites{"users.id"};
     ColumnSet candidateColumns{"posts.author_id"};
@@ -63,6 +100,35 @@ TEST_CASE("TaintAnalyzer columnSetsRelated returns false for disjoint sets") {
     };
 
     REQUIRE_FALSE(TaintAnalyzer::columnSetsRelated(taintedWrites, candidateColumns, foreignKeys));
+}
+
+TEST_CASE("TaintAnalyzer columnSetsRelated handles FK chains and empty sets") {
+    std::vector<ForeignKey> foreignKeys{
+        makeForeignKey("posts", "author_id", "users", "id"),
+        makeForeignKey("comments", "author_id", "posts", "author_id")
+    };
+
+    SECTION("foreign key chain matches through intermediate table") {
+        ColumnSet taintedWrites{"users.id"};
+        ColumnSet candidateColumns{"comments.author_id"};
+        REQUIRE(TaintAnalyzer::columnSetsRelated(taintedWrites, candidateColumns, foreignKeys));
+    }
+
+    SECTION("wildcard in tainted writes still honors FK columns") {
+        ColumnSet taintedWrites{"users.*"};
+        ColumnSet candidateColumns{"posts.author_id"};
+        REQUIRE(TaintAnalyzer::columnSetsRelated(taintedWrites, candidateColumns, foreignKeys));
+    }
+
+    SECTION("empty taint or candidate set returns false") {
+        ColumnSet emptyWrites{};
+        ColumnSet candidateColumns{"users.id"};
+        REQUIRE_FALSE(TaintAnalyzer::columnSetsRelated(emptyWrites, candidateColumns, foreignKeys));
+
+        ColumnSet taintedWrites{"users.id"};
+        ColumnSet emptyCandidates{};
+        REQUIRE_FALSE(TaintAnalyzer::columnSetsRelated(taintedWrites, emptyCandidates, foreignKeys));
+    }
 }
 
 TEST_CASE("TaintAnalyzer collectColumnRW skips DDL and aggregates columns") {
@@ -90,6 +156,28 @@ TEST_CASE("TaintAnalyzer collectColumnRW skips DDL and aggregates columns") {
     REQUIRE(rw.write.count("ddl.column") == 0);
 }
 
+TEST_CASE("TaintAnalyzer collectColumnRW aggregates across queries and deduplicates") {
+    auto txn = std::make_shared<Transaction>();
+    txn->setGid(2);
+
+    auto q1 = makeQuery("test", {makeEq("users.id", 1)}, {makeEq("posts.id", 1)});
+    auto q2 = makeQuery("test", {makeEq("users.id", 2)}, {makeEq("posts.id", 2)});
+    auto q3 = makeQuery("test", {makeEq("users.name", 3)}, {});
+
+    *txn << q1;
+    *txn << q2;
+    *txn << q3;
+
+    auto rw = TaintAnalyzer::collectColumnRW(*txn);
+
+    REQUIRE(rw.read.size() == 2);
+    REQUIRE(rw.read.count("users.id") == 1);
+    REQUIRE(rw.read.count("users.name") == 1);
+
+    REQUIRE(rw.write.size() == 1);
+    REQUIRE(rw.write.count("posts.id") == 1);
+}
+
 TEST_CASE("TaintAnalyzer hasKeyColumnItems detects key column items") {
     {
         NoopRelationshipResolver resolver;
@@ -112,6 +200,27 @@ TEST_CASE("TaintAnalyzer hasKeyColumnItems detects key column items") {
     }
 }
 
+TEST_CASE("TaintAnalyzer hasKeyColumnItems resolves alias and FK chains") {
+    MockedRelationshipResolver resolver;
+    resolver.addColumnAlias("posts.author", "users.handle");
+    resolver.addForeignKey("users.handle", "users.id");
+
+    StateCluster cluster({"users.id"});
+    auto aliasFkTxn = makeTxn(4, "test", {makeEqStr("posts.author", "@alice")}, {});
+    REQUIRE(TaintAnalyzer::hasKeyColumnItems(*aliasFkTxn, cluster, resolver));
+}
+
+TEST_CASE("TaintAnalyzer hasKeyColumnItems supports multiple key columns") {
+    NoopRelationshipResolver resolver;
+    StateCluster cluster({"users.id", "orders.id"});
+
+    auto ordersTxn = makeTxn(5, "test", {makeEq("orders.id", 42)}, {});
+    REQUIRE(TaintAnalyzer::hasKeyColumnItems(*ordersTxn, cluster, resolver));
+
+    auto unrelatedTxn = makeTxn(6, "test", {makeEq("payments.id", 99)}, {});
+    REQUIRE_FALSE(TaintAnalyzer::hasKeyColumnItems(*unrelatedTxn, cluster, resolver));
+}
+
 TEST_CASE("TaintAnalyzer hasKeyColumnItems ignores DDL queries") {
     NoopRelationshipResolver resolver;
     StateCluster cluster({"users.id"});
@@ -124,4 +233,21 @@ TEST_CASE("TaintAnalyzer hasKeyColumnItems ignores DDL queries") {
     *txn << ddl;
 
     REQUIRE_FALSE(TaintAnalyzer::hasKeyColumnItems(*txn, cluster, resolver));
+}
+
+TEST_CASE("TaintAnalyzer hasKeyColumnItems ignores DDL but considers other queries") {
+    NoopRelationshipResolver resolver;
+    StateCluster cluster({"users.id"});
+
+    auto txn = std::make_shared<Transaction>();
+    txn->setGid(11);
+
+    auto ddl = makeQuery("test", {makeEq("users.id", 1)}, {});
+    ddl->setFlags(Query::FLAG_IS_DDL);
+    auto readQuery = makeQuery("test", {makeEq("users.id", 2)}, {});
+
+    *txn << ddl;
+    *txn << readQuery;
+
+    REQUIRE(TaintAnalyzer::hasKeyColumnItems(*txn, cluster, resolver));
 }
