@@ -1,8 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
+
+#include <cereal/archives/binary.hpp>
 
 #include "mariadb/state/new/TableDependencyGraph.hpp"
 #include "mariadb/state/new/StateChangeContext.hpp"
@@ -62,12 +65,13 @@ TEST_CASE("TableDependencyGraph addRelationship from ColumnSet builds cartesian 
     REQUIRE_FALSE(graph.addRelationship(readSet, writeSet));
 }
 
-TEST_CASE("TableDependencyGraph addRelationship handles empty sets", "[table-dependency-graph]") {
+TEST_CASE("TableDependencyGraph addRelationship handles write-only sets", "[table-dependency-graph]") {
     TableDependencyGraph graph;
     ColumnSet readSet{"users.id"};
     ColumnSet emptySet;
 
-    REQUIRE_FALSE(graph.addRelationship(emptySet, readSet));
+    REQUIRE(graph.addRelationship(emptySet, readSet));
+    REQUIRE(asSet(graph.getDependencies("users")) == std::set<std::string>{"users"});
     REQUIRE_FALSE(graph.addRelationship(readSet, emptySet));
 }
 
@@ -87,6 +91,103 @@ TEST_CASE("TableDependencyGraph addRelationship from foreign keys", "[table-depe
 
     REQUIRE(graph.addRelationship(foreignKeys));
     REQUIRE(asSet(graph.getDependencies("orders")) == std::set<std::string>{"users"});
+}
+
+TEST_CASE("TableDependencyGraph addRelationship ignores read-only query (SELECT)", "[table-dependency-graph]") {
+    TableDependencyGraph graph;
+    ColumnSet readSet{"users.id", "accounts.balance"};
+    ColumnSet writeSet;
+
+    REQUIRE_FALSE(graph.addRelationship(readSet, writeSet));
+    REQUIRE(graph.getDependencies("users").empty());
+    REQUIRE(graph.getDependencies("accounts").empty());
+}
+
+TEST_CASE("TableDependencyGraph Table A INSERT policy maps reads to target writes", "[table-dependency-graph]") {
+    TableDependencyGraph graph;
+    ColumnSet readSet{"users.id", "accounts.id"};
+    ColumnSet writeSet{"transactions.id", "transactions.amount"};
+
+    REQUIRE(graph.addRelationship(readSet, writeSet));
+
+    REQUIRE(asSet(graph.getDependencies("users")) == std::set<std::string>{"transactions"});
+    REQUIRE(asSet(graph.getDependencies("accounts")) == std::set<std::string>{"transactions"});
+}
+
+TEST_CASE("TableDependencyGraph Table A UPDATE/DELETE policy includes self and referencing tables", "[table-dependency-graph]") {
+    TableDependencyGraph graph;
+    ColumnSet readSet{"users.id", "users.email"};
+    ColumnSet writeSet{"users.email", "orders.user_id"};
+
+    REQUIRE(graph.addRelationship(readSet, writeSet));
+
+    REQUIRE(asSet(graph.getDependencies("users")) == std::set<std::string>{"orders", "users"});
+    REQUIRE(graph.isRelated("users", "users"));
+    REQUIRE(graph.isRelated("users", "orders"));
+    REQUIRE_FALSE(graph.isRelated("orders", "users"));
+}
+
+TEST_CASE("TableDependencyGraph Table A CREATE/ALTER policy uses FK reads", "[table-dependency-graph]") {
+    TableDependencyGraph graph;
+    ColumnSet readSet{"accounts.id"};
+    ColumnSet writeSet{"transfers.id", "transfers.amount"};
+
+    REQUIRE(graph.addRelationship(readSet, writeSet));
+    REQUIRE(asSet(graph.getDependencies("accounts")) == std::set<std::string>{"transfers"});
+}
+
+TEST_CASE("TableDependencyGraph Table A DROP/TRUNCATE write-only set creates dependencies", "[table-dependency-graph]") {
+    TableDependencyGraph graph;
+    ColumnSet readSet;
+    ColumnSet writeSet{"accounts.id", "transactions.account_id"};
+
+    REQUIRE(graph.addRelationship(readSet, writeSet));
+    REQUIRE(asSet(graph.getDependencies("accounts")) ==
+            std::set<std::string>{"accounts", "transactions"});
+    REQUIRE(asSet(graph.getDependencies("transactions")) ==
+            std::set<std::string>{"accounts", "transactions"});
+    REQUIRE(graph.isRelated("accounts", "accounts"));
+    REQUIRE(graph.isRelated("transactions", "transactions"));
+}
+
+TEST_CASE("TableDependencyGraph addRelationship from foreign keys uses current names", "[table-dependency-graph]") {
+    TableDependencyGraph graph;
+    std::vector<ForeignKey> foreignKeys;
+
+    ForeignKey fkOrders = makeFK("orders", "users");
+    foreignKeys.emplace_back(fkOrders);
+
+    ForeignKey fkPayments = makeFK("payments", "users");
+    fkPayments.fromTable->addRenameHistory("invoices", 10);
+    fkPayments.toTable->addRenameHistory("members", 10);
+    foreignKeys.emplace_back(fkPayments);
+
+    REQUIRE(graph.addRelationship(foreignKeys));
+    REQUIRE(asSet(graph.getDependencies("orders")) == std::set<std::string>{"users"});
+    REQUIRE(asSet(graph.getDependencies("invoices")) == std::set<std::string>{"members"});
+}
+
+TEST_CASE("TableDependencyGraph cereal round-trip preserves dependencies", "[table-dependency-graph]") {
+    TableDependencyGraph graph;
+    graph.addRelationship("users", "orders");
+    graph.addRelationship("orders", "payments");
+
+    std::stringstream buffer;
+    {
+        cereal::BinaryOutputArchive outputArchive(buffer);
+        outputArchive(graph);
+    }
+
+    TableDependencyGraph restored;
+    buffer.seekg(0);
+    {
+        cereal::BinaryInputArchive inputArchive(buffer);
+        inputArchive(restored);
+    }
+
+    REQUIRE(restored.isRelated("users", "orders"));
+    REQUIRE(restored.isRelated("orders", "payments"));
+    REQUIRE_FALSE(restored.isRelated("users", "payments"));
 }
 
 TEST_CASE("TableDependencyGraph getDependencies for missing table is empty", "[table-dependency-graph]") {
