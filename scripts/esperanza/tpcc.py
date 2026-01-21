@@ -9,7 +9,7 @@ DB_STATE_CHANGE_BASE_OPTIONS = [
     '-b', 'dbdump.sql',
     '-i', 'benchbase',
     '-d', 'benchbase',
-    '-k', 'warehouse.w_id,customer.c_w_id,stocks.s_w_id,order_line.ol_w_id,district.d_w_id,order.o_w_id,history.h_c_w_id,item.i_id',
+    '-k', 'warehouse.w_id,customer.c_w_id,stock.s_w_id,order_line.ol_w_id,district.d_w_id,oorder.o_w_id,history.h_c_w_id,item.i_id',
 ]
 
 DB_TABLE_DIFF_OPTIONS = {
