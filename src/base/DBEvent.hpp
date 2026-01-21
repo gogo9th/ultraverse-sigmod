@@ -34,6 +34,10 @@ namespace ultraverse::event_type {
         ROW_EVENT = 20,
         ROW_QUERY = 21,
         TABLE_MAP = 22,
+
+        INTVAR = 30,
+        RAND = 31,
+        USER_VAR = 32,
     };
 }
 

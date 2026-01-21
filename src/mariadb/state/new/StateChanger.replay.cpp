@@ -251,6 +251,7 @@ namespace ultraverse::state::v2 {
                                 goto NEXT_QUERY;
                             }
                             
+                            applyStatementContext(handle, *query);
                             if (handle.executeQuery(query->statement()) != 0) {
                                 logger->error("query execution failed: {} / {}", handle.lastError(), query->statement());
                             }
