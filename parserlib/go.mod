@@ -9,6 +9,8 @@ require (
 	google.golang.org/protobuf v1.36.10
 )
 
+replace github.com/pingcap/tidb/pkg/parser => github.com/unstabler/tidb/pkg/parser v0.0.0-20260121094910-612b9aa21b71
+
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/HdrHistogram/hdrhistogram-go v1.2.0 // indirect

@@ -283,8 +283,6 @@ github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeA
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
 github.com/pingcap/tidb v1.1.0-beta.0.20260121072752-93c65e2234ad h1:ycKBbJQjydAluERXzisxQGtoKwoFV5OTpKVMBTa77GU=
 github.com/pingcap/tidb v1.1.0-beta.0.20260121072752-93c65e2234ad/go.mod h1:1fAVmrh3JLUJrEqC6o9OmZXUh7EFOftuf8jxq+7Sbuc=
-github.com/pingcap/tidb/pkg/parser v0.0.0-20260121072752-93c65e2234ad h1:l8lO2dCiOixfMtBkKDOzkMSPBSsyEcoGuKP6MDRoqIc=
-github.com/pingcap/tidb/pkg/parser v0.0.0-20260121072752-93c65e2234ad/go.mod h1:oHE+ub2QaDERd+UNHe4z2BhFV2jZrm7VNOe6atR9AF4=
 github.com/pingcap/tipb v0.0.0-20251230094608-1374320b4bd8 h1:KT/h7b+7lP/P+5OuczNNV+/wsHj9d0L7Eu4ktB5VRIg=
 github.com/pingcap/tipb v0.0.0-20251230094608-1374320b4bd8/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
@@ -361,6 +359,8 @@ github.com/uber/jaeger-client-go v2.22.1+incompatible h1:NHcubEkVbahf9t3p75TOCR8
 github.com/uber/jaeger-client-go v2.22.1+incompatible/go.mod h1:WVhlPFC8FDjOFMMWRy2pZqQJSXxYSwNYOkTr/Z6d3Kk=
 github.com/uber/jaeger-lib v2.4.1+incompatible h1:td4jdvLcExb4cBISKIpHuGoVXh+dVKhn2Um6rjCsSsg=
 github.com/uber/jaeger-lib v2.4.1+incompatible/go.mod h1:ComeNDZlWwrWnDv8aPp0Ba6+uUTzImX/AauajbLI56U=
+github.com/unstabler/tidb/pkg/parser v0.0.0-20260121094910-612b9aa21b71 h1:TNGcyHlKSWK4xb+JkRd3bnmknSDSQuso2pgWEEyYdGM=
+github.com/unstabler/tidb/pkg/parser v0.0.0-20260121094910-612b9aa21b71/go.mod h1:oHE+ub2QaDERd+UNHe4z2BhFV2jZrm7VNOe6atR9AF4=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yusufpapurcu/wmi v1.2.2/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
