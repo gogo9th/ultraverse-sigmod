@@ -19,6 +19,7 @@
 #include "mariadb/state/new/StateChangeContext.hpp"
 
 #include "StateRelationshipResolver.hpp"
+#include "mariadb/state/new/graph/RowGraph.hpp"
 
 #include "utils/log.hpp"
 
@@ -28,8 +29,8 @@ namespace ultraverse::state::v2 {
         using AliasMap = std::unordered_map<std::string,
             std::unordered_map<StateData, RowAlias>
         >;
-        using CompositeRange = std::vector<std::shared_ptr<StateRange>>;
-        
+        using CompositeRange = RowGraph::CompositeRange;
+
         /**
          * @deprecated
          */
@@ -60,7 +61,7 @@ namespace ultraverse::state::v2 {
         const std::unordered_map<std::string, std::vector<std::pair<CompositeRange, std::vector<gid_t>>>> &compositeKeyMap() const;
     
         static bool isQueryRelated(std::map<std::string, std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>>> &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables = nullptr);
-        static bool isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> keyRange, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables = nullptr);
+        static bool isQueryRelated(std::string keyColumn, const StateRange &keyRange, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables = nullptr);
         static bool isQueryRelatedComposite(const std::vector<std::string> &keyColumns, const CompositeRange &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables = nullptr);
         
         bool isTransactionRelated(Transaction &transaction, const std::map<std::string, std::vector<std::pair<std::shared_ptr<StateRange>, std::vector<gid_t>>>> &keyRanges);
@@ -85,7 +86,7 @@ namespace ultraverse::state::v2 {
             boost::adjacency_list<boost::vecS, boost::vecS, boost::undirectedS, std::pair<int, bool>>;
         
         
-        static bool isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables);
+        static bool isExprRelated(const std::string &keyColumn, const StateRange &keyRange, StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables);
         static std::optional<StateItem> resolveAliasWithCoercion(const StateItem &alias, const AliasMap &aliasMap);
         static bool compositeIntersects(const CompositeRange &lhs, const CompositeRange &rhs);
         static void compositeMerge(CompositeRange &dst, const CompositeRange &src);

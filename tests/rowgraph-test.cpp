@@ -159,6 +159,44 @@ TEST_CASE("RowGraph resolves row aliases to key columns") {
     REQUIRE(entryGids.find(2) == entryGids.end());
 }
 
+TEST_CASE("RowGraph resolves column alias through foreign key chain") {
+    MockedRelationshipResolver resolver;
+    resolver.addColumnAlias("orders.user_id_str", "orders.user_id");
+    resolver.addForeignKey("orders.user_id", "users.id");
+    RowGraph graph({"users.id"}, resolver);
+
+    auto txn1 = makeTxn(1, "test", {}, {makeEq("users.id", 42)});
+    auto txn2 = makeTxn(2, "test", {makeEq("orders.user_id_str", 42)}, {});
+
+    auto n1 = graph.addNode(txn1);
+    auto n2 = graph.addNode(txn2);
+
+    REQUIRE(waitUntilAllReady(graph, {n1, n2}, std::chrono::milliseconds(5000)));
+
+    auto entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(1) != entryGids.end());
+    REQUIRE(entryGids.find(2) == entryGids.end());
+}
+
+TEST_CASE("RowGraph resolves row alias through foreign key chain") {
+    MockedRelationshipResolver resolver;
+    resolver.addRowAlias(makeEqStr("orders.user_id_str", "000042"), makeEq("orders.user_id", 42));
+    resolver.addForeignKey("orders.user_id", "users.id");
+    RowGraph graph({"users.id"}, resolver);
+
+    auto txn1 = makeTxn(1, "test", {}, {makeEq("users.id", 42)});
+    auto txn2 = makeTxn(2, "test", {makeEqStr("orders.user_id_str", "000042")}, {});
+
+    auto n1 = graph.addNode(txn1);
+    auto n2 = graph.addNode(txn2);
+
+    REQUIRE(waitUntilAllReady(graph, {n1, n2}, std::chrono::milliseconds(5000)));
+
+    auto entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(1) != entryGids.end());
+    REQUIRE(entryGids.find(2) == entryGids.end());
+}
+
 TEST_CASE("RowGraph applies wildcard for keyless table access") {
     NoopRelationshipResolver resolver;
     RowGraph graph({"users.id"}, resolver);
@@ -174,6 +212,23 @@ TEST_CASE("RowGraph applies wildcard for keyless table access") {
     auto entryGids = entrypointGids(graph);
     REQUIRE(entryGids.find(1) != entryGids.end());
     REQUIRE(entryGids.find(2) == entryGids.end());
+}
+
+TEST_CASE("RowGraph treats multi-dimensional keys as conjunction (paper spec)") {
+    NoopRelationshipResolver resolver;
+    RowGraph graph({"orders.user_id", "orders.item_id"}, resolver, {{"orders.user_id", "orders.item_id"}});
+
+    auto txn1 = makeTxn(1, "test", {}, {makeEq("orders.user_id", 1), makeEq("orders.item_id", 10)});
+    auto txn2 = makeTxn(2, "test", {makeEq("orders.user_id", 1), makeEq("orders.item_id", 11)}, {});
+
+    auto n1 = graph.addNode(txn1);
+    auto n2 = graph.addNode(txn2);
+
+    REQUIRE(waitUntilAllReady(graph, {n1, n2}, std::chrono::milliseconds(5000)));
+
+    auto entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(1) != entryGids.end());
+    REQUIRE(entryGids.find(2) != entryGids.end());
 }
 
 TEST_CASE("RowGraph separates dependencies by key column") {

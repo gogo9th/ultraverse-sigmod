@@ -119,7 +119,7 @@ TEST_CASE("RowCluster detects related query via alias map") {
     query.readSet().push_back(alias);
 
     auto range = std::make_shared<StateRange>(1);
-    REQUIRE(RowCluster::isQueryRelated("users.id", range, query, {}, cluster.aliasMap()));
+    REQUIRE(RowCluster::isQueryRelated("users.id", *range, query, {}, cluster.aliasMap()));
 }
 
 TEST_CASE("RowCluster getKeyRangeOf2 matches gid list") {
@@ -216,7 +216,7 @@ TEST_CASE("RowCluster detects related query via foreign key chain") {
     foreignKeys.emplace_back(makeFK("posts", "author", "users", "uid"));
     foreignKeys.emplace_back(makeFK("users", "uid", "accounts", "user_id"));
 
-    REQUIRE(RowCluster::isQueryRelated("accounts.user_id", range, query, foreignKeys, cluster.aliasMap()));
+    REQUIRE(RowCluster::isQueryRelated("accounts.user_id", *range, query, foreignKeys, cluster.aliasMap()));
 }
 
 TEST_CASE("RowCluster detects related query via write set") {
@@ -229,7 +229,7 @@ TEST_CASE("RowCluster detects related query via write set") {
     query.writeSet().push_back(alias);
 
     auto range = std::make_shared<StateRange>(5);
-    REQUIRE(RowCluster::isQueryRelated("users.uid", range, query, {}, cluster.aliasMap()));
+    REQUIRE(RowCluster::isQueryRelated("users.uid", *range, query, {}, cluster.aliasMap()));
 }
 
 TEST_CASE("RowCluster ignores alias mapping when value does not match") {
@@ -242,7 +242,7 @@ TEST_CASE("RowCluster ignores alias mapping when value does not match") {
     query.readSet().push_back(makeEq("accounts.aid", 11));
 
     auto range = std::make_shared<StateRange>(5);
-    REQUIRE_FALSE(RowCluster::isQueryRelated("users.uid", range, query, {}, cluster.aliasMap()));
+    REQUIRE_FALSE(RowCluster::isQueryRelated("users.uid", *range, query, {}, cluster.aliasMap()));
 }
 
 TEST_CASE("RowCluster handles OR expressions with mixed columns") {
@@ -258,8 +258,8 @@ TEST_CASE("RowCluster handles OR expressions with mixed columns") {
     auto matching = std::make_shared<StateRange>(2);
     auto nonMatching = std::make_shared<StateRange>(3);
 
-    REQUIRE(RowCluster::isQueryRelated("users.id", matching, query, {}, cluster.aliasMap()));
-    REQUIRE_FALSE(RowCluster::isQueryRelated("users.id", nonMatching, query, {}, cluster.aliasMap()));
+    REQUIRE(RowCluster::isQueryRelated("users.id", *matching, query, {}, cluster.aliasMap()));
+    REQUIRE_FALSE(RowCluster::isQueryRelated("users.id", *nonMatching, query, {}, cluster.aliasMap()));
 }
 
 TEST_CASE("RowCluster handles BETWEEN expressions") {
@@ -271,8 +271,8 @@ TEST_CASE("RowCluster handles BETWEEN expressions") {
     auto inside = std::make_shared<StateRange>(15);
     auto outside = std::make_shared<StateRange>(25);
 
-    REQUIRE(RowCluster::isQueryRelated("users.id", inside, query, {}, cluster.aliasMap()));
-    REQUIRE_FALSE(RowCluster::isQueryRelated("users.id", outside, query, {}, cluster.aliasMap()));
+    REQUIRE(RowCluster::isQueryRelated("users.id", *inside, query, {}, cluster.aliasMap()));
+    REQUIRE_FALSE(RowCluster::isQueryRelated("users.id", *outside, query, {}, cluster.aliasMap()));
 }
 
 TEST_CASE("RowCluster getKeyRangeOf respects query content") {
@@ -313,7 +313,7 @@ TEST_CASE("RowCluster detects string alias mapping") {
     query.readSet().push_back(makeEqStr("users.handle", "alice"));
 
     auto range = std::make_shared<StateRange>(1);
-    REQUIRE(RowCluster::isQueryRelated("users.id", range, query, {}, cluster.aliasMap()));
+    REQUIRE(RowCluster::isQueryRelated("users.id", *range, query, {}, cluster.aliasMap()));
 }
 
 TEST_CASE("RowCluster handles IN expressions") {
@@ -325,8 +325,8 @@ TEST_CASE("RowCluster handles IN expressions") {
     auto matching = std::make_shared<StateRange>(2);
     auto nonMatching = std::make_shared<StateRange>(4);
 
-    REQUIRE(RowCluster::isQueryRelated("users.id", matching, query, {}, cluster.aliasMap()));
-    REQUIRE_FALSE(RowCluster::isQueryRelated("users.id", nonMatching, query, {}, cluster.aliasMap()));
+    REQUIRE(RowCluster::isQueryRelated("users.id", *matching, query, {}, cluster.aliasMap()));
+    REQUIRE_FALSE(RowCluster::isQueryRelated("users.id", *nonMatching, query, {}, cluster.aliasMap()));
 }
 
 TEST_CASE("RowCluster infers implicit foreign keys via naming") {
@@ -338,7 +338,7 @@ TEST_CASE("RowCluster infers implicit foreign keys via naming") {
     auto range = std::make_shared<StateRange>(7);
     std::unordered_set<std::string> implicitTables{"users"};
 
-    REQUIRE(RowCluster::isQueryRelated("users.id", range, query, {}, cluster.aliasMap(), &implicitTables));
+    REQUIRE(RowCluster::isQueryRelated("users.id", *range, query, {}, cluster.aliasMap(), &implicitTables));
 }
 
 TEST_CASE("RowCluster resolves variable cluster keys by coercion") {
@@ -351,15 +351,17 @@ TEST_CASE("RowCluster resolves variable cluster keys by coercion") {
     query.readSet().push_back(makeEqStr("users.uid_str", "000043"));
 
     auto range = std::make_shared<StateRange>(43);
-    REQUIRE(RowCluster::isQueryRelated("users.id", range, query, {}, cluster.aliasMap()));
+    REQUIRE(RowCluster::isQueryRelated("users.id", *range, query, {}, cluster.aliasMap()));
 }
 
 TEST_CASE("RowCluster matches multi-dimensional cluster keys") {
     RowCluster cluster;
     std::vector<std::string> keyColumns{"orders.product_id", "orders.user_id"};
-    RowCluster::CompositeRange ranges{
-        std::make_shared<StateRange>(2),
-        std::make_shared<StateRange>(1)
+    RowCluster::CompositeRange ranges {
+            {
+                StateRange { 2 },
+                StateRange { 1 }
+            }
     };
     cluster.addCompositeKeyRange(keyColumns, ranges, 100);
     cluster.mergeCompositeCluster(keyColumns);

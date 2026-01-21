@@ -359,7 +359,7 @@ namespace ultraverse::state::v2 {
     }
 
     void RowCluster::addCompositeKeyRange(const std::vector<std::string> &columnNames, CompositeRange ranges, gid_t gid) {
-        if (columnNames.size() != ranges.size() || columnNames.empty()) {
+        if (columnNames.size() != ranges.ranges.size() || columnNames.empty()) {
             return;
         }
 
@@ -414,7 +414,7 @@ namespace ultraverse::state::v2 {
         
         for (auto &query: transaction.queries()) {
             for (auto &range: _clusterMap.at(keyColumn)) {
-                if (isQueryRelated(keyColumn, range.first, *query, foreignKeys, _aliases)) {
+                if (isQueryRelated(keyColumn, *range.first, *query, foreignKeys, _aliases)) {
                     keyRanges.push_back(range);
                 }
             }
@@ -442,7 +442,7 @@ namespace ultraverse::state::v2 {
         // 각 keyRange에 대해 하나만 매칭되어도 재실행 대상이 된다.
         for (auto &pair: keyRanges) {
             for (auto &keyRange: pair.second) {
-                if (isQueryRelated(pair.first, keyRange.first, query, foreignKeys, aliases, implicitTables)) {
+                if (isQueryRelated(pair.first, *keyRange.first, query, foreignKeys, aliases, implicitTables)) {
                     return true;
                 }
             }
@@ -469,15 +469,15 @@ namespace ultraverse::state::v2 {
         return std::find(gidList.begin(), gidList.end(), gid) != gidList.end();
     }
     
-    bool RowCluster::isQueryRelated(std::string keyColumn, std::shared_ptr<StateRange> range, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables) {
+    bool RowCluster::isQueryRelated(std::string keyColumn, const StateRange &range, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables) {
         for (auto &expr: query.readSet()) {
-            if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases, implicitTables)) {
+            if (isExprRelated(keyColumn, range, expr, foreignKeys, aliases, implicitTables)) {
                 return true;
             }
         }
         
         for (auto &expr: query.writeSet()) {
-            if (isExprRelated(keyColumn, *range, expr, foreignKeys, aliases, implicitTables)) {
+            if (isExprRelated(keyColumn, range, expr, foreignKeys, aliases, implicitTables)) {
                 return true;
             }
         }
@@ -485,7 +485,7 @@ namespace ultraverse::state::v2 {
         return false;
     }
     
-    bool RowCluster::isExprRelated(std::string keyColumn, StateRange &keyRange, StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables) {
+    bool RowCluster::isExprRelated(const std::string &keyColumn, const StateRange &keyRange, StateItem &expr, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables) {
         if (!expr.name.empty()) {
             expr.name = resolveForeignKey(expr.name, foreignKeys, implicitTables);
             auto resolved = resolveAliasWithCoercion(expr, aliases);
@@ -517,12 +517,12 @@ namespace ultraverse::state::v2 {
     }
 
     bool RowCluster::isQueryRelatedComposite(const std::vector<std::string> &keyColumns, const CompositeRange &keyRanges, Query &query, const std::vector<ForeignKey> &foreignKeys, const AliasMap &aliases, const std::unordered_set<std::string> *implicitTables) {
-        if (keyColumns.size() != keyRanges.size()) {
+        if (keyColumns.size() != keyRanges.ranges.size()) {
             return false;
         }
 
         for (size_t i = 0; i < keyColumns.size(); i++) {
-            if (!isQueryRelated(keyColumns[i], keyRanges[i], query, foreignKeys, aliases, implicitTables)) {
+            if (!isQueryRelated(keyColumns[i], keyRanges.ranges[i], query, foreignKeys, aliases, implicitTables)) {
                 return false;
             }
         }
@@ -572,12 +572,12 @@ namespace ultraverse::state::v2 {
     }
 
     bool RowCluster::compositeIntersects(const CompositeRange &lhs, const CompositeRange &rhs) {
-        if (lhs.size() != rhs.size() || lhs.empty()) {
+        if (lhs.ranges.size() != rhs.ranges.size() || lhs.ranges.empty()) {
             return false;
         }
 
-        for (size_t i = 0; i < lhs.size(); i++) {
-            if (!StateRange::isIntersects(*lhs[i], *rhs[i])) {
+        for (size_t i = 0; i < lhs.ranges.size(); i++) {
+            if (!StateRange::isIntersects(lhs.ranges[i], rhs.ranges[i])) {
                 return false;
             }
         }
@@ -586,26 +586,26 @@ namespace ultraverse::state::v2 {
     }
 
     void RowCluster::compositeMerge(CompositeRange &dst, const CompositeRange &src) {
-        if (dst.size() != src.size()) {
+        if (dst.ranges.size() != src.ranges.size()) {
             return;
         }
 
-        for (size_t i = 0; i < dst.size(); i++) {
-            dst[i]->OR_FAST(*src[i]);
-            dst[i]->arrangeSelf();
+        for (size_t i = 0; i < dst.ranges.size(); i++) {
+            dst.ranges[i].OR_FAST(src.ranges[i]);
+            dst.ranges[i].arrangeSelf();
         }
     }
 
     std::pair<std::string, RowCluster::CompositeRange>
     RowCluster::normalizeCompositeInput(const std::vector<std::string> &columns, const CompositeRange &ranges) {
-        if (columns.size() != ranges.size() || columns.empty()) {
+        if (columns.size() != ranges.ranges.size() || columns.empty()) {
             return {"", CompositeRange{}};
         }
 
         std::vector<std::pair<std::string, std::shared_ptr<StateRange>>> pairs;
         pairs.reserve(columns.size());
         for (size_t i = 0; i < columns.size(); i++) {
-            pairs.emplace_back(utility::toLower(columns[i]), ranges[i]);
+            pairs.emplace_back(utility::toLower(columns[i]), std::make_shared<StateRange>(ranges.ranges[i]));
         }
 
         std::sort(pairs.begin(), pairs.end(), [](const auto &lhs, const auto &rhs) {
@@ -613,7 +613,7 @@ namespace ultraverse::state::v2 {
         });
 
         CompositeRange normalizedRanges;
-        normalizedRanges.reserve(pairs.size());
+        normalizedRanges.ranges.reserve(pairs.size());
 
         std::string keyId;
         for (size_t i = 0; i < pairs.size(); i++) {
@@ -621,7 +621,7 @@ namespace ultraverse::state::v2 {
                 keyId.append("|");
             }
             keyId.append(pairs[i].first);
-            normalizedRanges.push_back(pairs[i].second);
+            normalizedRanges.ranges.push_back(*pairs[i].second);
         }
 
         return {keyId, normalizedRanges};

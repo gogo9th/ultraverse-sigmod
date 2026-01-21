@@ -25,6 +25,82 @@ namespace ultraverse::state::v2 {
             }
             return normalized;
         }
+
+        std::vector<std::vector<std::string>> normalizeKeyColumnGroups(
+            const std::set<std::string> &keyColumns,
+            const std::vector<std::vector<std::string>> &keyColumnGroups) {
+            std::vector<std::vector<std::string>> normalizedGroups;
+            std::unordered_set<std::string> usedColumns;
+
+            auto appendGroup = [&](const std::vector<std::string> &group) {
+                std::vector<std::string> normalizedGroup;
+                for (const auto &column : group) {
+                    auto normalized = utility::toLower(column);
+                    if (normalized.empty()) {
+                        continue;
+                    }
+                    if (!usedColumns.insert(normalized).second) {
+                        continue;
+                    }
+                    normalizedGroup.push_back(std::move(normalized));
+                }
+                if (!normalizedGroup.empty()) {
+                    normalizedGroups.push_back(std::move(normalizedGroup));
+                }
+            };
+
+            for (const auto &group : keyColumnGroups) {
+                appendGroup(group);
+            }
+
+            for (const auto &column : keyColumns) {
+                auto normalized = utility::toLower(column);
+                if (normalized.empty()) {
+                    continue;
+                }
+                if (usedColumns.insert(normalized).second) {
+                    normalizedGroups.push_back({normalized});
+                }
+            }
+
+            return normalizedGroups;
+        }
+
+        std::unordered_map<std::string, std::vector<size_t>> buildKeyColumnGroupsByTable(
+            const std::vector<std::vector<std::string>> &keyColumnGroups) {
+            std::unordered_map<std::string, std::vector<size_t>> mapping;
+
+            for (size_t index = 0; index < keyColumnGroups.size(); index++) {
+                const auto &group = keyColumnGroups[index];
+                if (group.empty()) {
+                    continue;
+                }
+
+                std::string tableName;
+                bool sameTable = true;
+                for (const auto &column : group) {
+                    const auto pair = utility::splitTableName(column);
+                    if (pair.first.empty()) {
+                        sameTable = false;
+                        break;
+                    }
+                    if (tableName.empty()) {
+                        tableName = pair.first;
+                    } else if (tableName != pair.first) {
+                        sameTable = false;
+                        break;
+                    }
+                }
+
+                if (!sameTable || tableName.empty()) {
+                    continue;
+                }
+
+                mapping[tableName].push_back(index);
+            }
+
+            return mapping;
+        }
     }
     
     StateCluster::Cluster::Cluster(): read(), write() {
@@ -192,33 +268,25 @@ namespace ultraverse::state::v2 {
         return it->first;
     }
     
-    std::map<std::string, std::set<std::string>>
-    StateCluster::buildKeyColumnsMap(const std::set<std::string> &keyColumns) {
-        std::map<std::string, std::set<std::string>> keyColumnsMap;
-        
-        for (const auto &keyColumn: keyColumns) {
-            const auto pair = utility::splitTableName(keyColumn);
-            const auto &tableName = pair.first;
-            const auto &columnName = pair.second;
-            
-            keyColumnsMap[tableName].insert(keyColumn);
-        }
-        
-        return std::move(keyColumnsMap);
-    }
-    
-    StateCluster::StateCluster(const std::set<std::string> &keyColumns):
+    StateCluster::StateCluster(const std::set<std::string> &keyColumns,
+                               const std::vector<std::vector<std::string>> &keyColumnGroups):
         _logger(createLogger("StateCluster")),
-        _keyColumnsMapOriginal(std::move(buildKeyColumnsMap(keyColumns))),
         _keyColumns(normalizeKeyColumns(keyColumns)),
-        _keyColumnsMap(std::move(buildKeyColumnsMap(_keyColumns))),
+        _keyColumnGroups(normalizeKeyColumnGroups(keyColumns, keyColumnGroups)),
+        _keyColumnGroupsByTable(buildKeyColumnGroupsByTable(_keyColumnGroups)),
         _clusters()
     {
+        _keyColumns.clear();
+        for (const auto &group : _keyColumnGroups) {
+            for (const auto &column : group) {
+                _keyColumns.insert(column);
+            }
+        }
+
         _clusters.reserve(_keyColumns.size() * 2);
         for (const auto &keyColumn : _keyColumns) {
             _clusters.emplace(keyColumn, Cluster{});
         }
-    
     }
     
     const std::set<std::string> &StateCluster::keyColumns() const {
@@ -361,50 +429,44 @@ namespace ultraverse::state::v2 {
         }
         
         
-        for (const auto &pair: _keyColumnsMap) {
-            const auto &table = pair.first;
-            const auto &keyColumns = pair.second;
-            
+        for (const auto &group : _keyColumnGroups) {
+            if (group.empty()) {
+                continue;
+            }
+
             {
                 std::set<std::string> foundReadColumns;
-                
-                for (const auto &keyColumn: keyColumns) {
+                for (const auto &keyColumn : group) {
                     if (readKeyItems.find(keyColumn) != readKeyItems.end()) {
                         foundReadColumns.insert(keyColumn);
                     }
                 }
-                
-                if (foundReadColumns.empty() || foundReadColumns.size() == keyColumns.size()) {
-                    continue;
-                }
-                
-                for (const auto &keyColumn: keyColumns) {
-                    if (foundReadColumns.find(keyColumn) != foundReadColumns.end()) {
-                        continue;
+
+                if (!foundReadColumns.empty() && foundReadColumns.size() != group.size()) {
+                    for (const auto &keyColumn : group) {
+                        if (foundReadColumns.find(keyColumn) != foundReadColumns.end()) {
+                            continue;
+                        }
+                        readKeyItems[keyColumn] = StateItem::Wildcard(keyColumn);
                     }
-                    
-                    readKeyItems[keyColumn] = StateItem::Wildcard(keyColumn);
                 }
             }
+
             {
                 std::set<std::string> foundWriteColumns;
-                
-                for (const auto &keyColumn: keyColumns) {
+                for (const auto &keyColumn : group) {
                     if (writeKeyItems.find(keyColumn) != writeKeyItems.end()) {
                         foundWriteColumns.insert(keyColumn);
                     }
                 }
-                
-                if (foundWriteColumns.empty() || foundWriteColumns.size() == keyColumns.size()) {
-                    continue;
-                }
-                
-                for (const auto &keyColumn: keyColumns) {
-                    if (foundWriteColumns.find(keyColumn) != foundWriteColumns.end()) {
-                        continue;
+
+                if (!foundWriteColumns.empty() && foundWriteColumns.size() != group.size()) {
+                    for (const auto &keyColumn : group) {
+                        if (foundWriteColumns.find(keyColumn) != foundWriteColumns.end()) {
+                            continue;
+                        }
+                        writeKeyItems[keyColumn] = StateItem::Wildcard(keyColumn);
                     }
-                    
-                    writeKeyItems[keyColumn] = StateItem::Wildcard(keyColumn);
                 }
             }
         }
@@ -595,28 +657,30 @@ namespace ultraverse::state::v2 {
         }
         size_t matched = 0;
         
-        for (const auto &pair: _keyColumnsMap) {
-            const auto &keyColumns = pair.second;
-            
+        for (const auto &group : _keyColumnGroups) {
+            if (group.empty()) {
+                continue;
+            }
+
             size_t count = 0;
-            
-            for (const auto &keyColumn: keyColumns) {
+
+            for (const auto &keyColumn : group) {
                 if (_targetCache.find(keyColumn) == _targetCache.end()) {
                     continue;
                 }
-                
+
                 const auto &ranges = _targetCache[keyColumn];
-                
+
                 if (std::any_of(ranges.begin(), ranges.end(), [gid](const auto &pair) {
                     return pair.second.contains(gid);
                 })) {
                     count++;
                 }
             }
-            
+
             if (count == 0) {
                 continue;
-            } else if (count == keyColumns.size()) {
+            } else if (count == group.size()) {
                 matched++;
             } else {
                 return false;
@@ -629,28 +693,37 @@ namespace ultraverse::state::v2 {
     std::string StateCluster::generateReplaceQuery(const std::string &targetDB, const std::string &intermediateDB, const RelationshipResolver &resolver) {
         std::string query = fmt::format("use {};\nSET FOREIGN_KEY_CHECKS=0;\n", targetDB);
         
-        for (const auto &pair: _keyColumnsMapOriginal) {
+        for (const auto &pair : _keyColumnGroupsByTable) {
             const auto &tableName = pair.first;
-            const auto &keyColumns = pair.second;
-            
-            size_t i = 0;
+            const auto &groupIndices = pair.second;
+
             bool changed = false;
             bool isWildcard = false;
-            
-            std::vector<std::string> where;
-            
-            for (const auto &keyColumn: keyColumns) {
-                std::string resolvedColumn = resolver.resolveChain(keyColumn);
-                std::vector<std::string> conds;
-                
-                if (resolvedColumn.empty()) {
-                    resolvedColumn = keyColumn;
+            std::vector<std::string> whereGroups;
+
+            for (auto groupIndex : groupIndices) {
+                if (groupIndex >= _keyColumnGroups.size()) {
+                    continue;
                 }
-                
-                {
-                    auto appendRange = [&conds, &isWildcard, &changed, &keyColumn](const StateRange &range) {
+                const auto &group = _keyColumnGroups[groupIndex];
+                if (group.empty()) {
+                    continue;
+                }
+
+                bool groupWildcard = false;
+                std::vector<std::string> whereColumns;
+
+                for (const auto &keyColumn : group) {
+                    std::string resolvedColumn = resolver.resolveChain(keyColumn);
+                    std::vector<std::string> conds;
+
+                    if (resolvedColumn.empty()) {
+                        resolvedColumn = keyColumn;
+                    }
+
+                    auto appendRange = [&conds, &groupWildcard, &changed, &keyColumn](const StateRange &range) {
                         if (range.wildcard()) {
-                            isWildcard = true;
+                            groupWildcard = true;
                             return;
                         }
                         changed = true;
@@ -658,13 +731,13 @@ namespace ultraverse::state::v2 {
                     };
 
                     auto appendTargets = [&](const auto &targets) {
-                        for (const auto &pair : targets) {
-                            const auto &targetCache = pair.second;
+                        for (const auto &targetPair : targets) {
+                            const auto &targetCache = targetPair.second;
 
                             auto itRead = targetCache.read.find(resolvedColumn);
                             if (itRead != targetCache.read.end()) {
                                 appendRange(itRead->second);
-                                if (isWildcard) {
+                                if (groupWildcard) {
                                     return;
                                 }
                             }
@@ -672,7 +745,7 @@ namespace ultraverse::state::v2 {
                             auto itWrite = targetCache.write.find(resolvedColumn);
                             if (itWrite != targetCache.write.end()) {
                                 appendRange(itWrite->second);
-                                if (isWildcard) {
+                                if (groupWildcard) {
                                     return;
                                 }
                             }
@@ -680,27 +753,35 @@ namespace ultraverse::state::v2 {
                     };
 
                     appendTargets(_rollbackTargets);
-                    if (!isWildcard) {
+                    if (!groupWildcard) {
                         appendTargets(_prependTargets);
                     }
-                }
-                
-                if (!conds.empty()) {
-                    where.push_back(fmt::format("{}", fmt::join(conds, " OR ")));
-                }
-                
-                NEXT_COLUMN:
-                i++;
-            }
-            
 
-            
+                    if (groupWildcard) {
+                        break;
+                    }
+
+                    if (!conds.empty()) {
+                        whereColumns.push_back(fmt::format("{}", fmt::join(conds, " OR ")));
+                    }
+                }
+
+                if (groupWildcard) {
+                    isWildcard = true;
+                    break;
+                }
+
+                if (!whereColumns.empty()) {
+                    whereGroups.push_back(fmt::format("({})", fmt::join(whereColumns, " AND ")));
+                }
+            }
+
             if (isWildcard) {
                 query += fmt::format("TRUNCATE {};\n", tableName);
                 query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{};\n", tableName, intermediateDB, tableName);
-            } else if (changed) {
-                std::string _where = fmt::format("{}", fmt::join(where, " AND "));
-                
+            } else if (changed && !whereGroups.empty()) {
+                std::string _where = fmt::format("{}", fmt::join(whereGroups, " OR "));
+
                 query += fmt::format("DELETE FROM {} WHERE {};\n", tableName, _where);
                 query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, intermediateDB, tableName, _where);
             }

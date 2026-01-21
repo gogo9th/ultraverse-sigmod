@@ -32,35 +32,128 @@ namespace ultraverse::state::v2 {
             return normalized;
         }
 
-        std::map<std::string, std::set<std::string>>
-        buildKeyColumnsMap(const std::set<std::string> &keyColumns) {
-            std::map<std::string, std::set<std::string>> keyColumnsMap;
+        std::vector<std::vector<std::string>>
+        normalizeKeyColumnGroups(const std::set<std::string> &keyColumns,
+                                 const std::vector<std::vector<std::string>> &keyColumnGroups) {
+            std::vector<std::vector<std::string>> normalizedGroups;
+            std::unordered_set<std::string> usedColumns;
 
-            for (const auto &keyColumn : keyColumns) {
-                const auto pair = utility::splitTableName(keyColumn);
-                const auto &tableName = pair.first;
+            auto appendGroup = [&](const std::vector<std::string> &group) {
+                std::vector<std::string> normalizedGroup;
+                for (const auto &column : group) {
+                    auto normalized = utility::toLower(column);
+                    if (normalized.empty()) {
+                        continue;
+                    }
+                    if (!usedColumns.insert(normalized).second) {
+                        continue;
+                    }
+                    normalizedGroup.push_back(std::move(normalized));
+                }
 
-                if (!tableName.empty()) {
-                    keyColumnsMap[tableName].insert(keyColumn);
+                if (!normalizedGroup.empty()) {
+                    normalizedGroups.push_back(std::move(normalizedGroup));
+                }
+            };
+
+            for (const auto &group : keyColumnGroups) {
+                appendGroup(group);
+            }
+
+            for (const auto &column : keyColumns) {
+                auto normalized = utility::toLower(column);
+                if (normalized.empty()) {
+                    continue;
+                }
+                if (usedColumns.insert(normalized).second) {
+                    normalizedGroups.push_back({normalized});
                 }
             }
 
-            return keyColumnsMap;
+            return normalizedGroups;
         }
+
+        std::unordered_map<std::string, std::vector<size_t>>
+        buildKeyColumnGroupsByTable(const std::vector<std::vector<std::string>> &groups) {
+            std::unordered_map<std::string, std::vector<size_t>> mapping;
+
+            for (size_t index = 0; index < groups.size(); index++) {
+                const auto &group = groups[index];
+                if (group.empty()) {
+                    continue;
+                }
+
+                std::string tableName;
+                bool sameTable = true;
+                for (const auto &column : group) {
+                    const auto pair = utility::splitTableName(column);
+                    if (pair.first.empty()) {
+                        sameTable = false;
+                        break;
+                    }
+                    if (tableName.empty()) {
+                        tableName = pair.first;
+                    } else if (tableName != pair.first) {
+                        sameTable = false;
+                        break;
+                    }
+                }
+
+                if (!sameTable || tableName.empty()) {
+                    continue;
+                }
+
+                mapping[tableName].push_back(index);
+            }
+
+            return mapping;
+        }
+
     }
 
-    RowGraph::RowGraph(const std::set<std::string> &keyColumns, const RelationshipResolver &resolver):
+    RowGraph::RowGraph(const std::set<std::string> &keyColumns,
+                       const RelationshipResolver &resolver,
+                       const std::vector<std::vector<std::string>> &keyColumnGroups):
         _logger(createLogger("RowGraph")),
         _resolver(resolver),
         _keyColumns(normalizeKeyColumns(keyColumns)),
-        _keyColumnsMap(buildKeyColumnsMap(_keyColumns)),
         _rangeComparisonMethod(RangeComparisonMethod::EQ_ONLY)
     {
-        for (const auto &column : _keyColumns) {
-            auto worker = std::make_unique<ColumnWorker>();
-            worker->column = column;
-            worker->worker = std::thread(&RowGraph::columnWorkerLoop, this, std::ref(*worker));
-            _columnWorkers.emplace(column, std::move(worker));
+        _keyColumnGroups = normalizeKeyColumnGroups(keyColumns, keyColumnGroups);
+        _keyColumns.clear();
+        for (const auto &group : _keyColumnGroups) {
+            for (const auto &column : group) {
+                _keyColumns.insert(column);
+            }
+        }
+
+        _keyColumnGroupsByTable = buildKeyColumnGroupsByTable(_keyColumnGroups);
+        _compositeWorkers.resize(_keyColumnGroups.size());
+
+        for (size_t index = 0; index < _keyColumnGroups.size(); index++) {
+            const auto &group = _keyColumnGroups[index];
+            if (group.empty()) {
+                continue;
+            }
+
+            for (const auto &column : group) {
+                _groupIndexByColumn[column] = index;
+            }
+
+            if (group.size() == 1) {
+                const auto &column = group.front();
+                auto worker = std::make_unique<ColumnWorker>();
+                worker->column = column;
+                worker->worker = std::thread(&RowGraph::columnWorkerLoop, this, std::ref(*worker));
+                _columnWorkers.emplace(column, std::move(worker));
+                continue;
+            }
+
+            _compositeColumns.insert(group.begin(), group.end());
+            auto worker = std::make_unique<CompositeWorker>();
+            worker->columns = group;
+            worker->worker = std::thread(&RowGraph::compositeWorkerLoop, this, std::ref(*worker));
+            _compositeWorkers[index] = std::move(worker);
         }
     }
     
@@ -73,13 +166,60 @@ namespace ultraverse::state::v2 {
             }
             worker->queueCv.notify_all();
         }
-        
+
+        for (auto &workerPtr : _compositeWorkers) {
+            if (!workerPtr) {
+                continue;
+            }
+            auto &worker = *workerPtr;
+            {
+                std::lock_guard<std::mutex> lock(worker.queueMutex);
+                worker.running = false;
+            }
+            worker.queueCv.notify_all();
+        }
+
         for (auto &pair : _columnWorkers) {
             auto &worker = pair.second;
             if (worker->worker.joinable()) {
                 worker->worker.join();
             }
         }
+
+        for (auto &workerPtr : _compositeWorkers) {
+            if (!workerPtr) {
+                continue;
+            }
+            auto &worker = *workerPtr;
+            if (worker.worker.joinable()) {
+                worker.worker.join();
+            }
+        }
+    }
+
+    bool RowGraph::CompositeRange::isGlobalWildcard() const {
+        if (ranges.empty()) {
+            return false;
+        }
+        return std::all_of(ranges.begin(), ranges.end(), [](const StateRange &range) {
+            return range.wildcard();
+        });
+    }
+
+    std::size_t RowGraph::CompositeRangeHash::operator()(const CompositeRange &range) const {
+        return range.hash;
+    }
+
+    bool RowGraph::CompositeRangeEq::operator()(const CompositeRange &lhs, const CompositeRange &rhs) const {
+        if (lhs.ranges.size() != rhs.ranges.size()) {
+            return false;
+        }
+        for (size_t index = 0; index < lhs.ranges.size(); index++) {
+            if (!(lhs.ranges[index] == rhs.ranges[index])) {
+                return false;
+            }
+        }
+        return true;
     }
     
     RowGraphId RowGraph::addNode(std::shared_ptr<Transaction> transaction, bool hold) {
@@ -96,7 +236,9 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, ColumnTask> tasksByColumn;
         tasksByColumn.reserve(_keyColumns.size());
 
-        std::set<std::string> tablesWithKeyItems;
+        std::unordered_map<std::string, StateRange> compositeReadRanges;
+        std::unordered_map<std::string, StateRange> compositeWriteRanges;
+
         std::set<std::string> tablesTouchedRead;
         std::set<std::string> tablesTouchedWrite;
         std::unordered_set<std::string> wildcardReadColumns;
@@ -109,20 +251,39 @@ namespace ultraverse::state::v2 {
             return id;
         }
 
+        auto mergeRange = [](StateRange &dst, const StateRange &src) {
+            if (dst.wildcard()) {
+                return;
+            }
+            if (src.wildcard()) {
+                dst = src;
+                return;
+            }
+            dst.OR_FAST(src);
+        };
+
         auto addResolvedItem = [&](StateItem resolved, bool isWrite) {
             resolved.name = utility::toLower(resolved.name);
             const auto columnName = resolved.name;
+
+            if (_compositeColumns.find(columnName) != _compositeColumns.end()) {
+                auto &targetMap = isWrite ? compositeWriteRanges : compositeReadRanges;
+                StateRange range = resolved.MakeRange2();
+                auto it = targetMap.find(columnName);
+                if (it == targetMap.end()) {
+                    targetMap.emplace(columnName, std::move(range));
+                } else {
+                    mergeRange(it->second, range);
+                }
+                return;
+            }
+
             auto &task = tasksByColumn[columnName];
             task.nodeId = id;
             if (isWrite) {
                 task.writeItems.push_back(std::move(resolved));
             } else {
                 task.readItems.push_back(std::move(resolved));
-            }
-
-            const auto tablePair = utility::splitTableName(columnName);
-            if (!tablePair.first.empty()) {
-                tablesWithKeyItems.insert(tablePair.first);
             }
         };
 
@@ -148,7 +309,7 @@ namespace ultraverse::state::v2 {
                 return;
             }
 
-            if (_keyColumnsMap.find(tablePair.first) == _keyColumnsMap.end()) {
+            if (_keyColumnGroupsByTable.find(tablePair.first) == _keyColumnGroupsByTable.end()) {
                 if (isWrite) {
                     globalWriteWildcard = true;
                 } else {
@@ -204,6 +365,9 @@ namespace ultraverse::state::v2 {
 
         auto addWildcardForColumn = [&](const std::string &columnName, bool isWrite) {
             const auto normalized = utility::toLower(columnName);
+            if (_compositeColumns.find(normalized) != _compositeColumns.end()) {
+                return;
+            }
             if (_keyColumns.find(normalized) == _keyColumns.end()) {
                 return;
             }
@@ -219,22 +383,6 @@ namespace ultraverse::state::v2 {
                 task.writeItems.push_back(StateItem::Wildcard(normalized));
             } else {
                 task.readItems.push_back(StateItem::Wildcard(normalized));
-            }
-        };
-
-        auto addWildcardForTable = [&](const std::string &tableName, bool isWrite) {
-            const auto it = _keyColumnsMap.find(tableName);
-            if (it == _keyColumnsMap.end()) {
-                if (isWrite) {
-                    globalWriteWildcard = true;
-                } else {
-                    globalReadWildcard = true;
-                }
-                return;
-            }
-
-            for (const auto &keyColumn : it->second) {
-                addWildcardForColumn(keyColumn, isWrite);
             }
         };
 
@@ -258,42 +406,145 @@ namespace ultraverse::state::v2 {
             }
         }
 
-        for (const auto &tableName : tablesTouchedRead) {
-            if (tablesWithKeyItems.find(tableName) != tablesWithKeyItems.end()) {
+        std::vector<bool> groupReadTouched(_keyColumnGroups.size(), globalReadWildcard);
+        std::vector<bool> groupWriteTouched(_keyColumnGroups.size(), globalWriteWildcard);
+
+        if (!globalReadWildcard) {
+            for (const auto &tableName : tablesTouchedRead) {
+                auto it = _keyColumnGroupsByTable.find(tableName);
+                if (it == _keyColumnGroupsByTable.end()) {
+                    continue;
+                }
+                for (auto index : it->second) {
+                    groupReadTouched[index] = true;
+                }
+            }
+        }
+
+        if (!globalWriteWildcard) {
+            for (const auto &tableName : tablesTouchedWrite) {
+                auto it = _keyColumnGroupsByTable.find(tableName);
+                if (it == _keyColumnGroupsByTable.end()) {
+                    continue;
+                }
+                for (auto index : it->second) {
+                    groupWriteTouched[index] = true;
+                }
+            }
+        }
+
+        auto hasSingleReadItems = [&tasksByColumn](const std::string &columnName) {
+            auto it = tasksByColumn.find(columnName);
+            return it != tasksByColumn.end() && !it->second.readItems.empty();
+        };
+
+        auto hasSingleWriteItems = [&tasksByColumn](const std::string &columnName) {
+            auto it = tasksByColumn.find(columnName);
+            return it != tasksByColumn.end() && !it->second.writeItems.empty();
+        };
+
+        auto makeWildcardRange = [](const std::string &columnName) {
+            return StateItem::Wildcard(columnName).MakeRange2();
+        };
+
+        auto computeCompositeHash = [](const std::vector<StateRange> &ranges) {
+            std::size_t hash = 0;
+            for (const auto &range : ranges) {
+                hash ^= range.hash() + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+            }
+            return hash;
+        };
+
+        auto buildCompositeRange = [&](const std::vector<std::string> &columns,
+                                       const std::unordered_map<std::string, StateRange> &rangeMap,
+                                       bool groupTouched) -> std::optional<CompositeRange> {
+            if (columns.empty()) {
+                return std::nullopt;
+            }
+
+            bool hasAny = false;
+            CompositeRange composite;
+            composite.ranges.reserve(columns.size());
+
+            for (const auto &columnName : columns) {
+                auto it = rangeMap.find(columnName);
+                if (it != rangeMap.end()) {
+                    composite.ranges.push_back(it->second);
+                    hasAny = true;
+                } else if (hasAny || groupTouched) {
+                    composite.ranges.push_back(makeWildcardRange(columnName));
+                }
+            }
+
+            if (!hasAny && !groupTouched) {
+                return std::nullopt;
+            }
+
+            if (composite.ranges.size() != columns.size()) {
+                composite.ranges.clear();
+                composite.ranges.reserve(columns.size());
+                for (const auto &columnName : columns) {
+                    composite.ranges.push_back(makeWildcardRange(columnName));
+                }
+            }
+
+            composite.hash = computeCompositeHash(composite.ranges);
+            return composite;
+        };
+
+        std::vector<std::pair<size_t, CompositeTask>> compositeTasks;
+        compositeTasks.reserve(_keyColumnGroups.size());
+
+        for (size_t index = 0; index < _keyColumnGroups.size(); index++) {
+            const auto &group = _keyColumnGroups[index];
+            if (group.empty()) {
                 continue;
             }
-            addWildcardForTable(tableName, false);
-        }
 
-        for (const auto &tableName : tablesTouchedWrite) {
-            if (tablesWithKeyItems.find(tableName) != tablesWithKeyItems.end()) {
+            if (group.size() == 1) {
+                const auto &columnName = group.front();
+                if (groupReadTouched[index] && !hasSingleReadItems(columnName)) {
+                    addWildcardForColumn(columnName, false);
+                }
+                if (groupWriteTouched[index] && !hasSingleWriteItems(columnName)) {
+                    addWildcardForColumn(columnName, true);
+                }
                 continue;
             }
-            addWildcardForTable(tableName, true);
-        }
 
-        if (globalReadWildcard) {
-            for (const auto &keyColumn : _keyColumns) {
-                addWildcardForColumn(keyColumn, false);
+            CompositeTask task;
+            task.nodeId = id;
+
+            auto readRange = buildCompositeRange(group, compositeReadRanges, groupReadTouched[index]);
+            if (readRange.has_value()) {
+                task.readRanges.push_back(std::move(*readRange));
+            }
+
+            auto writeRange = buildCompositeRange(group, compositeWriteRanges, groupWriteTouched[index]);
+            if (writeRange.has_value()) {
+                task.writeRanges.push_back(std::move(*writeRange));
+            }
+
+            if (!task.readRanges.empty() || !task.writeRanges.empty()) {
+                compositeTasks.emplace_back(index, std::move(task));
             }
         }
 
-        if (globalWriteWildcard) {
-            for (const auto &keyColumn : _keyColumns) {
-                addWildcardForColumn(keyColumn, true);
-            }
-        }
-        
-        node->pendingColumns = static_cast<uint32_t>(tasksByColumn.size());
-        if (tasksByColumn.empty()) {
+        const auto totalTasks = static_cast<uint32_t>(tasksByColumn.size() + compositeTasks.size());
+        node->pendingColumns = totalTasks;
+        if (totalTasks == 0) {
             node->ready = true;
             return id;
         }
-        
+
         for (auto &pair : tasksByColumn) {
             enqueueTask(pair.first, std::move(pair.second));
         }
-        
+
+        for (auto &pair : compositeTasks) {
+            enqueueCompositeTask(pair.first, std::move(pair.second));
+        }
+
         return id;
     }
     
@@ -525,6 +776,57 @@ namespace ultraverse::state::v2 {
                     worker->nodeMap.erase(range);
                 }
             }
+
+            for (auto &workerPtr : _compositeWorkers) {
+                if (!workerPtr) {
+                    continue;
+                }
+                auto &worker = *workerPtr;
+                std::lock_guard<std::mutex> mapLock(worker.mapMutex);
+                std::vector<CompositeRange> toRemoveRanges;
+
+                for (auto &pair2 : worker.nodeMap) {
+                    auto &holder = pair2.second;
+                    std::scoped_lock<std::mutex> holderLock(holder.mutex);
+
+                    if (toRemove.find(holder.read) != toRemove.end()) {
+                        holder.read = nullptr;
+                        holder.readGid = 0;
+                    }
+
+                    if (toRemove.find(holder.write) != toRemove.end()) {
+                        holder.write = nullptr;
+                        holder.writeGid = 0;
+                    }
+
+                    if (holder.read == nullptr && holder.write == nullptr) {
+                        toRemoveRanges.emplace_back(pair2.first);
+                    }
+                }
+
+                if (worker.hasWildcard) {
+                    auto &holder = worker.wildcardHolder;
+                    std::scoped_lock<std::mutex> holderLock(holder.mutex);
+
+                    if (toRemove.find(holder.read) != toRemove.end()) {
+                        holder.read = nullptr;
+                        holder.readGid = 0;
+                    }
+
+                    if (toRemove.find(holder.write) != toRemove.end()) {
+                        holder.write = nullptr;
+                        holder.writeGid = 0;
+                    }
+
+                    if (holder.read == nullptr && holder.write == nullptr) {
+                        worker.hasWildcard = false;
+                    }
+                }
+
+                for (auto &range : toRemoveRanges) {
+                    worker.nodeMap.erase(range);
+                }
+            }
             
         }
         
@@ -547,6 +849,24 @@ namespace ultraverse::state::v2 {
         }
         worker->queueCv.notify_one();
     }
+
+    void RowGraph::enqueueCompositeTask(size_t groupIndex, CompositeTask task) {
+        if (groupIndex >= _compositeWorkers.size()) {
+            markColumnTaskDone(task.nodeId);
+            return;
+        }
+        auto &workerPtr = _compositeWorkers[groupIndex];
+        if (!workerPtr) {
+            markColumnTaskDone(task.nodeId);
+            return;
+        }
+        auto &worker = *workerPtr;
+        {
+            std::lock_guard<std::mutex> lock(worker.queueMutex);
+            worker.queue.push_back(std::move(task));
+        }
+        worker.queueCv.notify_one();
+    }
     
     void RowGraph::columnWorkerLoop(ColumnWorker &worker) {
         while (true) {
@@ -566,6 +886,28 @@ namespace ultraverse::state::v2 {
             }
             
             processColumnTask(worker, task);
+            markColumnTaskDone(task.nodeId);
+        }
+    }
+
+    void RowGraph::compositeWorkerLoop(CompositeWorker &worker) {
+        while (true) {
+            CompositeTask task;
+            {
+                std::unique_lock<std::mutex> lock(worker.queueMutex);
+                worker.queueCv.wait(lock, [&worker]() {
+                    return !worker.queue.empty() || !worker.running;
+                });
+
+                if (!worker.running && worker.queue.empty()) {
+                    return;
+                }
+
+                task = std::move(worker.queue.front());
+                worker.queue.pop_front();
+            }
+
+            processCompositeTask(worker, task);
             markColumnTaskDone(task.nodeId);
         }
     }
@@ -713,6 +1055,166 @@ namespace ultraverse::state::v2 {
             }
         }
     }
+
+    void RowGraph::processCompositeTask(CompositeWorker &worker, CompositeTask &task) {
+        auto node = nodeFor(task.nodeId);
+        if (node == nullptr) {
+            return;
+        }
+        const auto transactionPtr = std::atomic_load(&node->transaction);
+        if (transactionPtr == nullptr) {
+            return;
+        }
+
+        const auto gid = transactionPtr->gid();
+        const auto comparisonMethod = rangeComparisonMethod();
+        std::unordered_set<RowGraphId> edgeSources;
+        edgeSources.reserve(task.readRanges.size() + task.writeRanges.size());
+
+        auto addEdgeSource = [&](RowGraphId source, gid_t sourceGid) {
+            if (source == nullptr || source == task.nodeId) {
+                return;
+            }
+            if (sourceGid != 0 && sourceGid <= gid) {
+                edgeSources.insert(source);
+            }
+        };
+
+        auto compositeIntersects = [](const CompositeRange &lhs, const CompositeRange &rhs) {
+            if (lhs.ranges.size() != rhs.ranges.size()) {
+                return false;
+            }
+
+            for (size_t index = 0; index < lhs.ranges.size(); index++) {
+                const auto &left = lhs.ranges[index];
+                const auto &right = rhs.ranges[index];
+                if (left.wildcard() || right.wildcard()) {
+                    continue;
+                }
+                if (!StateRange::isIntersects(left, right)) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        auto addEdgesFromWildcardHolder = [&](bool isWrite) {
+            std::unique_lock<std::mutex> mapLock(worker.mapMutex);
+            if (!worker.hasWildcard) {
+                return;
+            }
+
+            RWStateHolder &holder = worker.wildcardHolder;
+            std::unique_lock<std::mutex> holderLock(holder.mutex);
+            mapLock.unlock();
+
+            if (isWrite) {
+                addEdgeSource(holder.read, holder.readGid);
+                addEdgeSource(holder.write, holder.writeGid);
+            } else {
+                addEdgeSource(holder.write, holder.writeGid);
+            }
+        };
+
+        auto processGlobalWildcard = [&](bool isWrite) {
+            std::unique_lock<std::mutex> mapLock(worker.mapMutex);
+
+            for (auto &pair : worker.nodeMap) {
+                auto &holder = pair.second;
+                std::unique_lock<std::mutex> holderLock(holder.mutex);
+                if (isWrite) {
+                    addEdgeSource(holder.read, holder.readGid);
+                    addEdgeSource(holder.write, holder.writeGid);
+                } else {
+                    addEdgeSource(holder.write, holder.writeGid);
+                }
+            }
+
+            if (worker.hasWildcard) {
+                auto &holder = worker.wildcardHolder;
+                std::unique_lock<std::mutex> holderLock(holder.mutex);
+                if (isWrite) {
+                    addEdgeSource(holder.read, holder.readGid);
+                    addEdgeSource(holder.write, holder.writeGid);
+                } else {
+                    addEdgeSource(holder.write, holder.writeGid);
+                }
+            }
+
+            worker.hasWildcard = true;
+            {
+                auto &holder = worker.wildcardHolder;
+                std::unique_lock<std::mutex> holderLock(holder.mutex);
+                if (isWrite) {
+                    holder.write = task.nodeId;
+                    holder.writeGid = gid;
+                } else {
+                    holder.read = task.nodeId;
+                    holder.readGid = gid;
+                }
+            }
+        };
+
+        auto withHolder = [&](const CompositeRange &range, auto &&fn) {
+            std::unique_lock<std::mutex> mapLock(worker.mapMutex);
+            auto it = std::find_if(worker.nodeMap.begin(), worker.nodeMap.end(),
+                                   [comparisonMethod, &range, &compositeIntersects](const auto &pair) {
+                                       if (comparisonMethod == RangeComparisonMethod::EQ_ONLY) {
+                                           return pair.first.ranges == range.ranges;
+                                       }
+                                       if (comparisonMethod == RangeComparisonMethod::INTERSECT) {
+                                           return pair.first.ranges == range.ranges || compositeIntersects(pair.first, range);
+                                       }
+                                       return false;
+                                   });
+
+            if (it == worker.nodeMap.end()) {
+                it = worker.nodeMap.try_emplace(range).first;
+            }
+
+            RWStateHolder &holder = it->second;
+            std::unique_lock<std::mutex> holderLock(holder.mutex);
+            mapLock.unlock();
+            fn(holder);
+        };
+
+        auto processRange = [&](const CompositeRange &range, bool isWrite) {
+            if (range.isGlobalWildcard()) {
+                processGlobalWildcard(isWrite);
+                return;
+            }
+
+            addEdgesFromWildcardHolder(isWrite);
+
+            withHolder(range, [&](RWStateHolder &holder) {
+                if (isWrite) {
+                    addEdgeSource(holder.read, holder.readGid);
+                    addEdgeSource(holder.write, holder.writeGid);
+                    holder.write = task.nodeId;
+                    holder.writeGid = gid;
+                } else {
+                    addEdgeSource(holder.write, holder.writeGid);
+                    holder.read = task.nodeId;
+                    holder.readGid = gid;
+                }
+            });
+        };
+
+        for (const auto &range : task.readRanges) {
+            processRange(range, false);
+        }
+
+        for (const auto &range : task.writeRanges) {
+            processRange(range, true);
+        }
+
+        if (!edgeSources.empty()) {
+            WriteLock lock(_graphMutex);
+            for (auto source : edgeSources) {
+                boost::add_edge(source, task.nodeId, _graph);
+            }
+        }
+    }
     
     void RowGraph::markColumnTaskDone(RowGraphId nodeId) {
         auto node = nodeFor(nodeId);
@@ -739,9 +1241,24 @@ namespace ultraverse::state::v2 {
 
 // #ifdef ULTRAVERSE_TESTING
     size_t RowGraph::debugNodeMapSize(const std::string &column) {
-        auto it = _columnWorkers.find(column);
+        const auto normalized = utility::toLower(column);
+        auto it = _columnWorkers.find(normalized);
         if (it == _columnWorkers.end()) {
-            return 0;
+            auto groupIt = _groupIndexByColumn.find(normalized);
+            if (groupIt == _groupIndexByColumn.end()) {
+                return 0;
+            }
+            const auto groupIndex = groupIt->second;
+            if (groupIndex >= _compositeWorkers.size()) {
+                return 0;
+            }
+            auto &workerPtr = _compositeWorkers[groupIndex];
+            if (!workerPtr) {
+                return 0;
+            }
+            auto &worker = *workerPtr;
+            std::lock_guard<std::mutex> lock(worker.mapMutex);
+            return worker.nodeMap.size();
         }
         auto &worker = it->second;
         std::lock_guard<std::mutex> lock(worker->mapMutex);
@@ -754,6 +1271,14 @@ namespace ultraverse::state::v2 {
             auto &worker = pair.second;
             std::lock_guard<std::mutex> lock(worker->mapMutex);
             total += worker->nodeMap.size();
+        }
+        for (auto &workerPtr : _compositeWorkers) {
+            if (!workerPtr) {
+                continue;
+            }
+            auto &worker = *workerPtr;
+            std::lock_guard<std::mutex> lock(worker.mapMutex);
+            total += worker.nodeMap.size();
         }
         return total;
     }

@@ -16,6 +16,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <boost/graph/adjacency_list.hpp>
@@ -92,7 +93,39 @@ namespace ultraverse::state::v2 {
             std::atomic_bool running = true;
             std::thread worker;
         };
-        explicit RowGraph(const std::set<std::string> &keyColumns, const RelationshipResolver &resolver);
+        struct CompositeRange {
+            std::vector<StateRange> ranges;
+            std::size_t hash = 0;
+
+            bool isGlobalWildcard() const;
+        };
+        struct CompositeRangeHash {
+            std::size_t operator()(const CompositeRange &range) const;
+        };
+        struct CompositeRangeEq {
+            bool operator()(const CompositeRange &lhs, const CompositeRange &rhs) const;
+        };
+        struct CompositeTask {
+            RowGraphId nodeId;
+            std::vector<CompositeRange> readRanges;
+            std::vector<CompositeRange> writeRanges;
+        };
+        struct CompositeWorker {
+            std::vector<std::string> columns;
+            std::unordered_map<CompositeRange, RWStateHolder, CompositeRangeHash, CompositeRangeEq> nodeMap;
+            std::mutex mapMutex;
+            RWStateHolder wildcardHolder;
+            bool hasWildcard = false;
+
+            std::mutex queueMutex;
+            std::condition_variable queueCv;
+            std::deque<CompositeTask> queue;
+            std::atomic_bool running = true;
+            std::thread worker;
+        };
+        explicit RowGraph(const std::set<std::string> &keyColumns,
+                          const RelationshipResolver &resolver,
+                          const std::vector<std::vector<std::string>> &keyColumnGroups = {});
         
         ~RowGraph();
         
@@ -166,15 +199,21 @@ namespace ultraverse::state::v2 {
          * @brief 의존성을 해결하여 노드와 노드간 간선 (edge)를 추가한다.
          */
         void enqueueTask(const std::string &column, ColumnTask task);
+        void enqueueCompositeTask(size_t groupIndex, CompositeTask task);
         void columnWorkerLoop(ColumnWorker &worker);
         void processColumnTask(ColumnWorker &worker, ColumnTask &task);
+        void compositeWorkerLoop(CompositeWorker &worker);
+        void processCompositeTask(CompositeWorker &worker, CompositeTask &task);
         void markColumnTaskDone(RowGraphId nodeId);
         
         LoggerPtr _logger;
         const RelationshipResolver &_resolver;
         
         std::set<std::string> _keyColumns;
-        std::map<std::string, std::set<std::string>> _keyColumnsMap;
+        std::vector<std::vector<std::string>> _keyColumnGroups;
+        std::unordered_map<std::string, std::vector<size_t>> _keyColumnGroupsByTable;
+        std::unordered_map<std::string, size_t> _groupIndexByColumn;
+        std::unordered_set<std::string> _compositeColumns;
         
         RowGraphInternal _graph;
         
@@ -183,6 +222,7 @@ namespace ultraverse::state::v2 {
          * @details 노드간 간선을 빠르게 추가하기 위해 사용한다.
          */
         std::unordered_map<std::string, std::unique_ptr<ColumnWorker>> _columnWorkers;
+        std::vector<std::unique_ptr<CompositeWorker>> _compositeWorkers;
         
         
         RWMutex _graphMutex;

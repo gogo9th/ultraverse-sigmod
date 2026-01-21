@@ -50,7 +50,7 @@ TEST_CASE("StateCluster inserts and matches with alias/row-alias") {
 TEST_CASE("StateCluster fills wildcard for missing composite keys") {
     NoopRelationshipResolver resolver;
 
-    StateCluster cluster({"orders.id", "orders.user_id"});
+    StateCluster cluster({"orders.id", "orders.user_id"}, {{"orders.id", "orders.user_id"}});
     auto txn = makeTxn(10, "test", {makeEq("orders.user_id", 42)}, {});
 
     cluster.insert(txn, resolver);
@@ -111,7 +111,7 @@ TEST_CASE("StateCluster generateReplaceQuery uses wildcard for composite keys") 
         return;
     }
 
-    StateCluster cluster({"orders.id", "orders.user_id"});
+    StateCluster cluster({"orders.id", "orders.user_id"}, {{"orders.id", "orders.user_id"}});
     auto rollbackTxn = makeTxn(
         1,
         "test",
@@ -173,7 +173,7 @@ TEST_CASE("StateCluster resolves write items through row alias and FK chain") {
 TEST_CASE("StateCluster shouldReplay requires composite key match") {
     NoopRelationshipResolver resolver;
 
-    StateCluster cluster({"orders.id", "orders.user_id"});
+    StateCluster cluster({"orders.id", "orders.user_id"}, {{"orders.id", "orders.user_id"}});
     auto rollbackTxn = makeTxn(
         1,
         "test",

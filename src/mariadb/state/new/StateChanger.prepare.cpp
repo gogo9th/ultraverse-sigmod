@@ -29,7 +29,7 @@ namespace ultraverse::state::v2 {
     void StateChanger::makeCluster() {
         StateChangeReport report(StateChangeReport::MAKE_CLUSTER, _plan);
         
-        StateCluster rowCluster(_plan.keyColumns());
+        StateCluster rowCluster(_plan.keyColumns(), _plan.keyColumnGroups());
 
         _columnGraph = std::make_unique<ColumnDependencyGraph>();
         _tableGraph = std::make_unique<TableDependencyGraph>();
@@ -228,7 +228,7 @@ namespace ultraverse::state::v2 {
     void StateChanger::bench_prepareRollback() {
         StateChangeReport report(StateChangeReport::PREPARE_AUTO, _plan);
         
-        StateCluster rowCluster(_plan.keyColumns());
+        StateCluster rowCluster(_plan.keyColumns(), _plan.keyColumnGroups());
         
         std::mutex gidListMutex;
         
@@ -368,7 +368,7 @@ namespace ultraverse::state::v2 {
         StateChangeReport report(StateChangeReport::PREPARE, _plan);
         
         TaskExecutor taskExecutor(_plan.threadNum());
-        StateCluster rowCluster(_plan.keyColumns());
+        StateCluster rowCluster(_plan.keyColumns(), _plan.keyColumnGroups());
         
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
