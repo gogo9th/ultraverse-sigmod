@@ -149,6 +149,12 @@ message DMLQuery {
   /* SELECT col1, col2 INTO var1, var2 FROM ... 에서
      var1, var2를 저장 (인덱스는 select 필드와 1:1 대응) */
   repeated string into_variables = 13;
+
+  /* GROUP BY expr1, expr2, ... */
+  repeated DMLQueryExpr group_by = 14;
+
+  /* HAVING expr */
+  DMLQueryExpr having = 15;
 }
 
 message DDLQuery {

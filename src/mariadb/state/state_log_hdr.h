@@ -138,10 +138,10 @@ struct state_hash_event
 struct state_log_time
 {
   long sec;
-  ulong sec_part;
+  uint32_t sec_part;
 
   state_log_time() : sec(0), sec_part(0) {}
-  state_log_time(long sec, ulong sec_part) : sec(sec), sec_part(sec_part) {}
+  state_log_time(long sec, uint32_t sec_part) : sec(sec), sec_part(sec_part) {}
 
   state_log_time &operator++()
   {

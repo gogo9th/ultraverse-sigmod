@@ -55,13 +55,13 @@ namespace ultraverse::mariadb {
 
         mariadb::UserVarEvent::ValueType mapUserVarType(uint8_t type) {
             switch (type) {
-                case mysql::binlog::event::User_var_event::STRING_RESULT:
+                case STRING_RESULT:
                     return mariadb::UserVarEvent::STRING;
-                case mysql::binlog::event::User_var_event::REAL_RESULT:
+                case REAL_RESULT:
                     return mariadb::UserVarEvent::REAL;
-                case mysql::binlog::event::User_var_event::INT_RESULT:
+                case INT_RESULT:
                     return mariadb::UserVarEvent::INT;
-                case mysql::binlog::event::User_var_event::DECIMAL_RESULT:
+                case DECIMAL_RESULT:
                     return mariadb::UserVarEvent::DECIMAL;
                 default:
                     return mariadb::UserVarEvent::STRING;

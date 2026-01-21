@@ -499,6 +499,183 @@ bool runTests() {
            "hash must match for equivalent queries");
     }
 
+    // Subquery tests
+    SQL_OK("SELECT * FROM users WHERE id IN (SELECT user_id FROM orders);")
+    SQL_OK("SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id);")
+    SQL_OK("SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM banned WHERE banned.user_id = users.id);")
+    SQL_OK("SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM banned_users);")
+    SQL_OK("SELECT name, (SELECT COUNT(*) FROM orders WHERE orders.user_id = users.id) AS order_count FROM users;")
+    SQL_OK("SELECT * FROM (SELECT id, name FROM users) AS t WHERE t.id = 1;")
+
+    // Subquery IN test
+    {
+        std::string sqlString = "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders);";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 1, "subquery IN statements_size must be 1");
+
+        const auto &dml = parseResult.statements(0).dml();
+        OK(dml.type() == ultparser::DMLQuery::SELECT, "subquery IN type must be SELECT");
+        OK(dml.has_where(), "subquery IN must have WHERE");
+
+        const auto &where = dml.where();
+        OK(where.operator_() == ultparser::DMLQueryExpr::IN, "subquery IN where operator must be IN");
+        OK(where.has_left(), "subquery IN where must have left");
+        OK(where.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "subquery IN left must be identifier");
+        OK(toLower(where.left().identifier()) == "id", "subquery IN left must be id");
+
+        OK(where.has_right(), "subquery IN where must have right");
+        OK(where.right().value_type() == ultparser::DMLQueryExpr::SUBQUERY, "subquery IN right must be SUBQUERY");
+        OK(where.right().has_subquery(), "subquery IN right must have subquery");
+
+        const auto &subquery = where.right().subquery();
+        OK(subquery.type() == ultparser::DMLQuery::SELECT, "inner subquery type must be SELECT");
+        OK(toLower(subquery.table().real().identifier()) == "orders", "inner subquery table must be orders");
+    }
+
+    // EXISTS subquery test
+    {
+        std::string sqlString = "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id);";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 1, "EXISTS statements_size must be 1");
+
+        const auto &dml = parseResult.statements(0).dml();
+        OK(dml.has_where(), "EXISTS must have WHERE");
+
+        const auto &where = dml.where();
+        OK(where.value_type() == ultparser::DMLQueryExpr::SUBQUERY, "EXISTS where must be SUBQUERY");
+        OK(where.subquery_exists(), "EXISTS subquery_exists must be true");
+        OK(!where.subquery_not(), "EXISTS subquery_not must be false");
+        OK(where.has_subquery(), "EXISTS must have subquery");
+    }
+
+    // NOT EXISTS subquery test
+    {
+        std::string sqlString = "SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM banned WHERE banned.user_id = users.id);";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        const auto &dml = parseResult.statements(0).dml();
+        const auto &where = dml.where();
+        OK(where.value_type() == ultparser::DMLQueryExpr::SUBQUERY, "NOT EXISTS where must be SUBQUERY");
+        OK(where.subquery_exists(), "NOT EXISTS subquery_exists must be true");
+        OK(where.subquery_not(), "NOT EXISTS subquery_not must be true");
+    }
+
+    // Scalar subquery test
+    {
+        std::string sqlString = "SELECT name, (SELECT COUNT(*) FROM orders WHERE orders.user_id = users.id) AS order_count FROM users;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        const auto &dml = parseResult.statements(0).dml();
+        OK(dml.select_size() == 2, "scalar subquery select size must be 2");
+
+        const auto &scalarSubquery = dml.select(1);
+        OK(toLower(scalarSubquery.alias()) == "order_count", "scalar subquery alias must be order_count");
+        OK(scalarSubquery.real().value_type() == ultparser::DMLQueryExpr::SUBQUERY, "scalar subquery must be SUBQUERY");
+        OK(scalarSubquery.real().has_subquery(), "scalar subquery must have subquery");
+    }
+
+    // Derived table test
+    {
+        std::string sqlString = "SELECT * FROM (SELECT id, name FROM users) AS t WHERE t.id = 1;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        const auto &dml = parseResult.statements(0).dml();
+        OK(dml.subqueries_size() >= 1, "derived table must have subqueries");
+
+        const auto &derivedTable = dml.subqueries(0);
+        OK(derivedTable.type() == ultparser::DMLQuery::SELECT, "derived table type must be SELECT");
+        OK(toLower(derivedTable.table().real().identifier()) == "users", "derived table inner table must be users");
+    }
+
+    // Aggregate function tests
+    SQL_OK("SELECT COUNT(*) FROM users;")
+    SQL_OK("SELECT SUM(amount), AVG(price) FROM orders;")
+    SQL_OK("SELECT COUNT(DISTINCT user_id) FROM orders;")
+    SQL_OK("SELECT MIN(created_at), MAX(updated_at) FROM posts;")
+
+    // Aggregate function detailed test
+    {
+        std::string sqlString = "SELECT COUNT(*), SUM(amount) FROM orders;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        const auto &dml = parseResult.statements(0).dml();
+        OK(dml.select_size() == 2, "aggregate select size must be 2");
+
+        const auto &countExpr = dml.select(0).real();
+        OK(countExpr.value_type() == ultparser::DMLQueryExpr::FUNCTION, "COUNT must be FUNCTION");
+        OK(toLower(countExpr.function()) == "count", "function name must be count");
+        OK(countExpr.is_aggregate(), "COUNT is_aggregate must be true");
+
+        const auto &sumExpr = dml.select(1).real();
+        OK(sumExpr.value_type() == ultparser::DMLQueryExpr::FUNCTION, "SUM must be FUNCTION");
+        OK(toLower(sumExpr.function()) == "sum", "function name must be sum");
+        OK(sumExpr.is_aggregate(), "SUM is_aggregate must be true");
+        OK(sumExpr.value_list_size() == 1, "SUM must have 1 arg");
+        OK(sumExpr.value_list(0).value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "SUM arg must be identifier");
+        OK(toLower(sumExpr.value_list(0).identifier()) == "amount", "SUM arg must be amount");
+    }
+
+    // COUNT DISTINCT test
+    {
+        std::string sqlString = "SELECT COUNT(DISTINCT user_id) FROM orders;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        const auto &dml = parseResult.statements(0).dml();
+        const auto &countExpr = dml.select(0).real();
+        OK(countExpr.value_type() == ultparser::DMLQueryExpr::FUNCTION, "COUNT DISTINCT must be FUNCTION");
+        OK(countExpr.is_aggregate(), "COUNT DISTINCT is_aggregate must be true");
+        OK(countExpr.is_distinct(), "COUNT DISTINCT is_distinct must be true");
+    }
+
+    // Regular function should NOT be aggregate
+    {
+        std::string sqlString = "SELECT NOW(), UPPER(name) FROM users;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        const auto &dml = parseResult.statements(0).dml();
+        const auto &nowExpr = dml.select(0).real();
+        OK(nowExpr.value_type() == ultparser::DMLQueryExpr::FUNCTION, "NOW must be FUNCTION");
+        OK(!nowExpr.is_aggregate(), "NOW is_aggregate must be false");
+
+        const auto &upperExpr = dml.select(1).real();
+        OK(upperExpr.value_type() == ultparser::DMLQueryExpr::FUNCTION, "UPPER must be FUNCTION");
+        OK(!upperExpr.is_aggregate(), "UPPER is_aggregate must be false");
+    }
+
     return true;
 }
 

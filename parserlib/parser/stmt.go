@@ -159,6 +159,19 @@ func processSelectStmt(query *pb.DMLQuery, stmt *ast.SelectStmt) {
 		}
 	}
 
+	if stmt.GroupBy != nil {
+		query.GroupBy = make([]*pb.DMLQueryExpr, len(stmt.GroupBy.Items))
+		for i, item := range stmt.GroupBy.Items {
+			expr := item.Expr
+			query.GroupBy[i] = processExprNode(&expr)
+		}
+	}
+
+	if stmt.Having != nil && stmt.Having.Expr != nil {
+		expr := stmt.Having.Expr
+		query.Having = processExprNode(&expr)
+	}
+
 	// Handle SELECT INTO variables
 	if stmt.SelectIntoOpt != nil && stmt.SelectIntoOpt.Tp == ast.SelectIntoVars {
 		query.IntoVariables = make([]string, len(stmt.SelectIntoOpt.Variables))

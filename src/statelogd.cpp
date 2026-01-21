@@ -20,6 +20,7 @@
 #include "mariadb/state/StateHash.hpp"
 
 #include "mariadb/DBHandle.hpp"
+#include "mariadb/DBEvent.hpp"
 
 #include "mariadb/binlog/BinaryLogSequentialReader.hpp"
 

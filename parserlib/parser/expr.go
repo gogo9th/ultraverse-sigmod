@@ -45,6 +45,9 @@ func processExprNode(expr *ast.ExprNode) *pb.DMLQueryExpr {
 		return processSubqueryExpr(e)
 	case *ast.ExistsSubqueryExpr:
 		return processExistsSubqueryExpr(e)
+	case *ast.SetCollationExpr:
+		// COLLATE clause: just process the inner expression, ignore collation info
+		return processExprNode(&e.Expr)
 	default:
 		fmt.Printf("FIXME: Unsupported expression type: %T\n", *expr)
 		return &pb.DMLQueryExpr{

@@ -7,9 +7,6 @@
 
 #ifdef __APPLE__
 
-// HACK: Define ulong as uint32_t on Apple platforms to match expected type in state_log_hdr.h
-using ulong = uint32_t;
-
 // FIXME: is it okay to just map lseek64 to lseek on macOS?
 #define lseek64     lseek
 #define ftruncate64 ftruncate

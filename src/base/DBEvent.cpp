@@ -217,10 +217,23 @@ namespace ultraverse::base {
         const std::string primaryTable = dmlQuery.table().real().identifier();
         // TODO: support join
         
-        _relatedTables.insert(primaryTable);
+        if (!primaryTable.empty()) {
+            _relatedTables.insert(primaryTable);
+        }
         
         for (const auto &join: dmlQuery.join()) {
-            _relatedTables.insert(join.real().identifier());
+            const std::string joinTable = join.real().identifier();
+            if (!joinTable.empty()) {
+                _relatedTables.insert(joinTable);
+            }
+        }
+
+        for (const auto &subquery: dmlQuery.subqueries()) {
+            _logger->debug("processing derived table subquery in select");
+            ultparser::DMLQueryExpr subqueryExpr;
+            subqueryExpr.set_value_type(ultparser::DMLQueryExpr::SUBQUERY);
+            *subqueryExpr.mutable_subquery() = subquery;
+            processExprForColumns(primaryTable, subqueryExpr);
         }
         
         for (const auto &select: dmlQuery.select()) {
@@ -233,8 +246,17 @@ namespace ultraverse::base {
                     _readColumns.insert(colName);
                 }
             } else {
+                processExprForColumns(primaryTable, expr);
                 // _logger->trace("not selecting column: {}", expr.DebugString());
             }
+        }
+
+        for (const auto &groupExpr : dmlQuery.group_by()) {
+            processExprForColumns(primaryTable, groupExpr);
+        }
+
+        if (dmlQuery.has_having()) {
+            processExprForColumns(primaryTable, dmlQuery.having());
         }
         
         if (dmlQuery.has_where()) {
@@ -246,7 +268,9 @@ namespace ultraverse::base {
     
     bool QueryEventBase::processInsert(const ultparser::DMLQuery &dmlQuery) {
         const std::string primaryTable = dmlQuery.table().real().identifier();
-        _relatedTables.insert(primaryTable);
+        if (!primaryTable.empty()) {
+            _relatedTables.insert(primaryTable);
+        }
         
         for (const auto &insertion: dmlQuery.update_or_write()) {
             if (insertion.left().value_type() != ultparser::DMLQueryExpr::IDENTIFIER) {
@@ -260,6 +284,7 @@ namespace ultraverse::base {
             }
             
             _writeColumns.insert(colName);
+            processExprForColumns(primaryTable, insertion.right());
         }
         
         
@@ -268,7 +293,9 @@ namespace ultraverse::base {
     
     bool QueryEventBase::processUpdate(const ultparser::DMLQuery &dmlQuery) {
         const std::string primaryTable = dmlQuery.table().real().identifier();
-        _relatedTables.insert(primaryTable);
+        if (!primaryTable.empty()) {
+            _relatedTables.insert(primaryTable);
+        }
         
         for (const auto &update: dmlQuery.update_or_write()) {
             std::string colName = update.left().identifier();
@@ -277,6 +304,7 @@ namespace ultraverse::base {
             }
             
             _writeColumns.insert(colName);
+            processExprForColumns(primaryTable, update.right());
         }
         
         if (dmlQuery.has_where()) {
@@ -301,6 +329,11 @@ namespace ultraverse::base {
     
     bool QueryEventBase::processWhere(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr) {
         std::function<void(const ultparser::DMLQueryExpr&, StateItem &)> visit_node = [this, &primaryTable, &visit_node](const ultparser::DMLQueryExpr &expr, StateItem &parent) {
+            if (expr.value_type() == ultparser::DMLQueryExpr::SUBQUERY) {
+                _logger->debug("where clause contains subquery expression");
+                processExprForColumns(primaryTable, expr);
+                return;
+            }
             if (expr.operator_() == ultparser::DMLQueryExpr::AND || expr.operator_() == ultparser::DMLQueryExpr::OR) {
                 assert(parent.function_type == FUNCTION_NONE);
                 parent.condition_type = expr.operator_() == ultparser::DMLQueryExpr::AND ? EN_CONDITION_AND : EN_CONDITION_OR;
@@ -402,6 +435,134 @@ namespace ultraverse::base {
         
         return true;
     }
+
+    void QueryEventBase::processExprForColumns(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr, bool qualifyUnqualified) {
+        auto addIdentifier = [this, &primaryTable, qualifyUnqualified](const std::string &identifier) {
+            if (identifier.empty()) {
+                return;
+            }
+            if (identifier.find('.') != std::string::npos) {
+                _readColumns.insert(identifier);
+                return;
+            }
+            if (!qualifyUnqualified) {
+                _logger->trace("skip unqualified identifier without scope: {}", identifier);
+                return;
+            }
+            if (primaryTable.empty()) {
+                _logger->trace("unqualified identifier without primary table: {}", identifier);
+                _readColumns.insert(identifier);
+            } else {
+                _readColumns.insert(primaryTable + "." + identifier);
+            }
+        };
+
+        if (expr.operator_() == ultparser::DMLQueryExpr::AND || expr.operator_() == ultparser::DMLQueryExpr::OR) {
+            for (const auto &child: expr.expressions()) {
+                processExprForColumns(primaryTable, child, qualifyUnqualified);
+            }
+            return;
+        }
+
+        switch (expr.value_type()) {
+            case ultparser::DMLQueryExpr::IDENTIFIER:
+                addIdentifier(expr.identifier());
+                return;
+            case ultparser::DMLQueryExpr::FUNCTION:
+                _logger->trace("processing function expression for columns: {}", expr.function());
+                for (const auto &arg: expr.value_list()) {
+                    processExprForColumns(primaryTable, arg, qualifyUnqualified);
+                }
+                return;
+            case ultparser::DMLQueryExpr::SUBQUERY: {
+                if (!expr.has_subquery()) {
+                    _logger->warn("subquery expression has no payload");
+                    return;
+                }
+
+                _logger->debug("processing subquery expression for columns");
+                const auto &subquery = expr.subquery();
+                const std::string subqueryPrimary = subquery.table().real().identifier();
+                const std::string outerPrimary = primaryTable;
+                if (!subqueryPrimary.empty()) {
+                    _relatedTables.insert(subqueryPrimary);
+                }
+
+                for (const auto &join: subquery.join()) {
+                    const std::string joinTable = join.real().identifier();
+                    if (!joinTable.empty()) {
+                        _relatedTables.insert(joinTable);
+                    }
+                }
+
+                for (const auto &select: subquery.select()) {
+                    processExprForColumns(subqueryPrimary, select.real(), true);
+                    if (!outerPrimary.empty() && outerPrimary != subqueryPrimary) {
+                        processExprForColumns(outerPrimary, select.real(), false);
+                    }
+                }
+
+                for (const auto &groupExpr: subquery.group_by()) {
+                    processExprForColumns(subqueryPrimary, groupExpr, true);
+                    if (!outerPrimary.empty() && outerPrimary != subqueryPrimary) {
+                        processExprForColumns(outerPrimary, groupExpr, false);
+                    }
+                }
+
+                if (subquery.has_having()) {
+                    processExprForColumns(subqueryPrimary, subquery.having(), true);
+                    if (!outerPrimary.empty() && outerPrimary != subqueryPrimary) {
+                        processExprForColumns(outerPrimary, subquery.having(), false);
+                    }
+                }
+
+                if (subquery.has_where()) {
+                    processExprForColumns(subqueryPrimary, subquery.where(), true);
+                    if (!outerPrimary.empty() && outerPrimary != subqueryPrimary) {
+                        _logger->trace("processing subquery where with outer scope: {}", outerPrimary);
+                        processExprForColumns(outerPrimary, subquery.where(), false);
+                    }
+                }
+
+                for (const auto &derived: subquery.subqueries()) {
+                    ultparser::DMLQueryExpr derivedExpr;
+                    derivedExpr.set_value_type(ultparser::DMLQueryExpr::SUBQUERY);
+                    *derivedExpr.mutable_subquery() = derived;
+                    processExprForColumns(subqueryPrimary, derivedExpr, true);
+                    if (!outerPrimary.empty() && outerPrimary != subqueryPrimary) {
+                        processExprForColumns(outerPrimary, derivedExpr, false);
+                    }
+                }
+
+                return;
+            }
+            default:
+                break;
+        }
+
+        const auto &left = expr.left();
+        const auto &right = expr.right();
+
+        auto hasMeaningfulExpr = [](const ultparser::DMLQueryExpr &node) {
+            if (node.value_type() != ultparser::DMLQueryExpr::UNKNOWN_VALUE) {
+                return true;
+            }
+            if (node.operator_() != ultparser::DMLQueryExpr::UNKNOWN) {
+                return true;
+            }
+            if (!node.expressions().empty() || !node.value_list().empty()) {
+                return true;
+            }
+            return node.has_subquery();
+        };
+
+        if (hasMeaningfulExpr(left)) {
+            processExprForColumns(primaryTable, left, qualifyUnqualified);
+        }
+        if (hasMeaningfulExpr(right)) {
+            processExprForColumns(primaryTable, right, qualifyUnqualified);
+        }
+    }
     
     void QueryEventBase::processRValue(StateItem &item, const ultparser::DMLQueryExpr &right) {
         if (right.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
@@ -480,6 +641,22 @@ namespace ultraverse::base {
                 for (const auto &child: right.value_list()) {
                     processRValue(item, child);
                 }
+            }
+                break;
+            case ultparser::DMLQueryExpr::FUNCTION: {
+                _logger->trace("processing function rvalue for {}", item.name);
+                const auto tablePair = utility::splitTableName(item.name);
+                processExprForColumns(tablePair.first, right);
+            }
+                break;
+            case ultparser::DMLQueryExpr::SUBQUERY: {
+                if (!right.has_subquery()) {
+                    _logger->warn("subquery rvalue has no payload for {}", item.name);
+                    return;
+                }
+                _logger->debug("processing subquery rvalue for {}", item.name);
+                const auto tablePair = utility::splitTableName(item.name);
+                processExprForColumns(tablePair.first, right);
             }
                 break;
             default:

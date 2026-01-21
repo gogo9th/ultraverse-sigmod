@@ -263,6 +263,126 @@ TEST_CASE("QueryEventBase buildRWSet handles DELETE with NOT BETWEEN") {
     REQUIRE(hasUpper);
 }
 
+// Subquery tests
+TEST_CASE("QueryEventBase columnRWSet SELECT with IN subquery collects subquery table") {
+    auto parsed = parseColumns("SELECT * FROM users WHERE id IN (SELECT user_id FROM orders);");
+
+    // Main table should be in read
+    REQUIRE(parsed.readColumns.count("users.id") == 1);
+    // Subquery table columns should also be collected
+    REQUIRE(parsed.readColumns.count("orders.user_id") == 1);
+    REQUIRE(parsed.writeColumns.empty());
+}
+
+TEST_CASE("QueryEventBase columnRWSet SELECT with EXISTS subquery collects subquery columns") {
+    auto parsed = parseColumns(
+        "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id);"
+    );
+
+    REQUIRE(parsed.readColumns.count("users.id") == 1);
+    // EXISTS subquery columns should be collected
+    REQUIRE(parsed.readColumns.count("orders.user_id") == 1);
+    REQUIRE(parsed.writeColumns.empty());
+}
+
+TEST_CASE("QueryEventBase columnRWSet SELECT with NOT IN subquery") {
+    auto parsed = parseColumns(
+        "SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM banned_users);"
+    );
+
+    REQUIRE(parsed.readColumns.count("users.id") == 1);
+    REQUIRE(parsed.readColumns.count("banned_users.user_id") == 1);
+    REQUIRE(parsed.writeColumns.empty());
+}
+
+TEST_CASE("QueryEventBase columnRWSet SELECT with scalar subquery") {
+    auto parsed = parseColumns(
+        "SELECT name, (SELECT COUNT(*) FROM orders WHERE orders.user_id = users.id) AS cnt FROM users;"
+    );
+
+    REQUIRE(parsed.readColumns.count("users.name") == 1);
+    // Scalar subquery columns should be collected
+    REQUIRE(parsed.readColumns.count("orders.user_id") == 1);
+    REQUIRE(parsed.readColumns.count("users.id") == 1);
+    REQUIRE(parsed.writeColumns.empty());
+}
+
+TEST_CASE("QueryEventBase columnRWSet INSERT with subquery value") {
+    auto parsed = parseColumns(
+        "INSERT INTO user_stats (user_id, order_count) VALUES (1, (SELECT COUNT(*) FROM orders WHERE user_id = 1));"
+    );
+
+    REQUIRE(parsed.writeColumns.count("user_stats.user_id") == 1);
+    REQUIRE(parsed.writeColumns.count("user_stats.order_count") == 1);
+    REQUIRE(parsed.writeColumns.count("user_stats.*") == 1);
+    // Subquery read columns
+    REQUIRE(parsed.readColumns.count("orders.user_id") == 1);
+}
+
+TEST_CASE("QueryEventBase columnRWSet UPDATE with subquery in SET") {
+    auto parsed = parseColumns(
+        "UPDATE users SET order_count = (SELECT COUNT(*) FROM orders WHERE orders.user_id = users.id) WHERE id = 1;"
+    );
+
+    REQUIRE(parsed.writeColumns.count("users.order_count") == 1);
+    REQUIRE(parsed.readColumns.count("users.id") == 1);
+    // Subquery read columns
+    REQUIRE(parsed.readColumns.count("orders.user_id") == 1);
+}
+
+// Aggregate function tests
+TEST_CASE("QueryEventBase columnRWSet SELECT with aggregate collects argument columns") {
+    auto parsed = parseColumns("SELECT COUNT(*), SUM(amount), AVG(price) FROM orders;");
+
+    // Aggregate function arguments should be in read columns
+    REQUIRE(parsed.readColumns.count("orders.amount") == 1);
+    REQUIRE(parsed.readColumns.count("orders.price") == 1);
+    REQUIRE(parsed.writeColumns.empty());
+}
+
+TEST_CASE("QueryEventBase columnRWSet SELECT with COUNT DISTINCT") {
+    auto parsed = parseColumns("SELECT COUNT(DISTINCT user_id) FROM orders;");
+
+    REQUIRE(parsed.readColumns.count("orders.user_id") == 1);
+    REQUIRE(parsed.writeColumns.empty());
+}
+
+TEST_CASE("QueryEventBase columnRWSet SELECT with nested aggregate in expression") {
+    auto parsed = parseColumns(
+        "SELECT user_id, SUM(quantity * price) AS total FROM order_items WHERE status = 'paid';"
+    );
+
+    REQUIRE(parsed.readColumns.count("order_items.user_id") == 1);
+    REQUIRE(parsed.readColumns.count("order_items.quantity") == 1);
+    REQUIRE(parsed.readColumns.count("order_items.price") == 1);
+    REQUIRE(parsed.readColumns.count("order_items.status") == 1);
+    REQUIRE(parsed.writeColumns.empty());
+}
+
+TEST_CASE("QueryEventBase columnRWSet UPDATE with aggregate subquery in WHERE") {
+    auto parsed = parseColumns(
+        "UPDATE users SET status = 'vip' WHERE id IN (SELECT user_id FROM orders GROUP BY user_id HAVING SUM(amount) > 1000);"
+    );
+
+    REQUIRE(parsed.writeColumns.count("users.status") == 1);
+    REQUIRE(parsed.readColumns.count("users.id") == 1);
+    // Subquery columns
+    REQUIRE(parsed.readColumns.count("orders.user_id") == 1);
+    REQUIRE(parsed.readColumns.count("orders.amount") == 1);
+}
+
+TEST_CASE("QueryEventBase columnRWSet SELECT with derived table") {
+    auto parsed = parseColumns(
+        "SELECT * FROM (SELECT id, name FROM users WHERE active = 1) AS t WHERE t.id > 10;"
+    );
+
+    // Derived table inner columns should be collected
+    REQUIRE(parsed.readColumns.count("users.id") == 1);
+    REQUIRE(parsed.readColumns.count("users.name") == 1);
+    REQUIRE(parsed.readColumns.count("users.active") == 1);
+    REQUIRE(parsed.writeColumns.empty());
+}
+
 #if 0
 // TODO(DDL): 현재 QueryEventBase::processDDL()이 미지원이므로, DDL 기반 R/W set 테스트는
 // 활성화하지 않는다. DDL 지원이 연결되면 아래 pseudo code를 실제 테스트로 전환한다.
