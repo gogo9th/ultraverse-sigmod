@@ -156,6 +156,17 @@ message DDLQuery {
   string statement = 2;
 }
 
+message SetVariable {
+  string name = 1;           // 변수 이름 (@ 제외)
+  bool is_global = 2;        // @@GLOBAL.xxx
+  bool is_system = 3;        // @@xxx (시스템 변수)
+  DMLQueryExpr value = 4;    // 할당할 값
+}
+
+message SetQuery {
+  repeated SetVariable assignments = 1;
+}
+
 message ProcedureIfBlock {
   DMLQueryExpr condition = 1;
   repeated Query then_block = 2;
@@ -183,6 +194,8 @@ message Query {
 
     IF      = 4;
     WHILE   = 5;
+
+    SET     = 6;
   };
 
   QueryType type = 1;
@@ -194,6 +207,8 @@ message Query {
 
   optional ProcedureIfBlock if_block = 5;
   optional ProcedureWhileBlock while_block = 6;
+
+  optional SetQuery set = 7;
 }
 
 message Procedure {

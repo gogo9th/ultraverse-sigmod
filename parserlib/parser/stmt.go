@@ -24,6 +24,12 @@ func processStmtNode(stmt *ast.StmtNode) *pb.Query {
 			Type: pb.Query_DML,
 			Dml:  query,
 		}
+	} else if isSetNode(stmt) {
+		setQuery := processSetStmt((*stmt).(*ast.SetStmt))
+		return &pb.Query{
+			Type: pb.Query_SET,
+			Set:  setQuery,
+		}
 	} else if isProcInfo(stmt) {
 		procedure := &pb.Procedure{}
 		processProcInfo(procedure, (*stmt).(*ast.ProcedureInfo))
@@ -37,6 +43,35 @@ func processStmtNode(stmt *ast.StmtNode) *pb.Query {
 
 	fmt.Printf("FIXME: Unsupported statement type: %v\n", reflect.TypeOf(*stmt))
 	return nil
+}
+
+// isSetNode checks if the node is a SET statement.
+func isSetNode(node *ast.StmtNode) bool {
+	_, ok := (*node).(*ast.SetStmt)
+	return ok
+}
+
+// processSetStmt processes a SET statement and returns a SetQuery protobuf message.
+func processSetStmt(stmt *ast.SetStmt) *pb.SetQuery {
+	setQuery := &pb.SetQuery{
+		Assignments: make([]*pb.SetVariable, len(stmt.Variables)),
+	}
+
+	for i, v := range stmt.Variables {
+		setVar := &pb.SetVariable{
+			Name:     v.Name,
+			IsGlobal: v.IsGlobal,
+			IsSystem: v.IsSystem,
+		}
+
+		if v.Value != nil {
+			setVar.Value = processExprNode(&v.Value)
+		}
+
+		setQuery.Assignments[i] = setVar
+	}
+
+	return setQuery
 }
 
 // isDMLNode checks if the node is a DML statement.

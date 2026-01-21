@@ -37,6 +37,8 @@ func processExprNode(expr *ast.ExprNode) *pb.DMLQueryExpr {
 		return processExprNode(&e.Expr)
 	case *ast.UnaryOperationExpr:
 		return processUnaryOperationExpr(e)
+	case *ast.VariableExpr:
+		return processVariableExpr(e)
 	default:
 		fmt.Printf("FIXME: Unsupported expression type: %T\n", *expr)
 		return &pb.DMLQueryExpr{
@@ -262,4 +264,20 @@ func processUnaryOperationExpr(e *ast.UnaryOperationExpr) *pb.DMLQueryExpr {
 	}
 
 	return exprNode
+}
+
+func processVariableExpr(e *ast.VariableExpr) *pb.DMLQueryExpr {
+	// User variable like @x is represented as IDENTIFIER with @ prefix
+	identifier := "@" + e.Name
+	if e.IsGlobal {
+		identifier = "@@GLOBAL." + e.Name
+	} else if e.IsSystem {
+		identifier = "@@" + e.Name
+	}
+
+	return &pb.DMLQueryExpr{
+		Operator:   pb.DMLQueryExpr_VALUE,
+		ValueType:  pb.DMLQueryExpr_IDENTIFIER,
+		Identifier: identifier,
+	}
 }

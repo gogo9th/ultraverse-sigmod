@@ -249,3 +249,101 @@ func TestParseInvalidSQL(t *testing.T) {
 		t.Fatal("expected error message")
 	}
 }
+
+func TestParseSetVariable(t *testing.T) {
+	p := New()
+	result := p.Parse("SET @x = 1")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	stmt := result.Statements[0]
+	if stmt.Type != pb.Query_SET {
+		t.Fatalf("expected SET query, got %v", stmt.Type)
+	}
+
+	setQuery := stmt.Set
+	if len(setQuery.Assignments) != 1 {
+		t.Fatalf("expected 1 assignment, got %d", len(setQuery.Assignments))
+	}
+
+	assignment := setQuery.Assignments[0]
+	if assignment.Name != "x" {
+		t.Fatalf("expected variable name 'x', got %s", assignment.Name)
+	}
+
+	if assignment.IsGlobal {
+		t.Fatal("expected IsGlobal to be false")
+	}
+
+	if assignment.IsSystem {
+		t.Fatal("expected IsSystem to be false")
+	}
+
+	if assignment.Value == nil {
+		t.Fatal("expected value to be set")
+	}
+
+	if assignment.Value.ValueType != pb.DMLQueryExpr_INTEGER {
+		t.Fatalf("expected INTEGER value, got %v", assignment.Value.ValueType)
+	}
+
+	if assignment.Value.Integer != 1 {
+		t.Fatalf("expected value 1, got %d", assignment.Value.Integer)
+	}
+}
+
+func TestParseSetMultipleVariables(t *testing.T) {
+	p := New()
+	result := p.Parse("SET @user_id = 42, @name = 'test'")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	setQuery := result.Statements[0].Set
+	if len(setQuery.Assignments) != 2 {
+		t.Fatalf("expected 2 assignments, got %d", len(setQuery.Assignments))
+	}
+
+	// First assignment: @user_id = 42
+	if setQuery.Assignments[0].Name != "user_id" {
+		t.Fatalf("expected variable name 'user_id', got %s", setQuery.Assignments[0].Name)
+	}
+	if setQuery.Assignments[0].Value.Integer != 42 {
+		t.Fatalf("expected value 42, got %d", setQuery.Assignments[0].Value.Integer)
+	}
+
+	// Second assignment: @name = 'test'
+	if setQuery.Assignments[1].Name != "name" {
+		t.Fatalf("expected variable name 'name', got %s", setQuery.Assignments[1].Name)
+	}
+	if setQuery.Assignments[1].Value.String_ != "test" {
+		t.Fatalf("expected value 'test', got %s", setQuery.Assignments[1].Value.String_)
+	}
+}
+
+func TestParseSetWithExpression(t *testing.T) {
+	p := New()
+	result := p.Parse("SET @total = @price * @quantity")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	setQuery := result.Statements[0].Set
+	if len(setQuery.Assignments) != 1 {
+		t.Fatalf("expected 1 assignment, got %d", len(setQuery.Assignments))
+	}
+
+	if setQuery.Assignments[0].Name != "total" {
+		t.Fatalf("expected variable name 'total', got %s", setQuery.Assignments[0].Name)
+	}
+
+	// Value should be a multiplication expression
+	value := setQuery.Assignments[0].Value
+	if value.Operator != pb.DMLQueryExpr_MUL {
+		t.Fatalf("expected MUL operator, got %v", value.Operator)
+	}
+}
