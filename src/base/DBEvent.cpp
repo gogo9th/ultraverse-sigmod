@@ -3,7 +3,7 @@
 //
 
 #include <algorithm>
-#include <thread>
+#include <cstdint>
 
 #include <libultparser/libultparser.h>
 #include <ultparser_query.pb.h>
@@ -31,14 +31,19 @@ namespace ultraverse::base {
     }
     
     bool QueryEventBase::parse() {
-        int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
+        static thread_local uintptr_t s_parser = 0;
+        if (s_parser == 0) {
+            s_parser = ult_sql_parser_create();
+        }
         
         ultparser::ParseResult parseResult;
         
         char *parseResultCStr = nullptr;
-        int64_t parseResultCStrSize = ult_sql_parse(
-            (char *) statement().c_str(),
-            threadId,
+        const auto &sqlStatement = statement();
+        int64_t parseResultCStrSize = ult_sql_parse_new(
+            s_parser,
+            (char *) sqlStatement.c_str(),
+            static_cast<int64_t>(sqlStatement.size()),
             &parseResultCStr
         );
         

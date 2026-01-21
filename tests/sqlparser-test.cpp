@@ -5,11 +5,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <string>
-#include <thread>
 
 #include <libultparser/libultparser.h>
 #include <ultparser_query.pb.h>
@@ -41,15 +41,20 @@ static std::string toLower(const std::string &value) {
     return out;
 }
 
+static uintptr_t g_parser = 0;
+
 bool parseSQL(const std::string &sqlString, ultparser::ParseResult *out = nullptr) {
     std::cerr << "testing " << sqlString << " ... ";
 
-    int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
+    if (g_parser == 0) {
+        g_parser = ult_sql_parser_create();
+    }
     ultparser::ParseResult parseResult;
     char *parseResultCStr = nullptr;
-    int64_t parseResultCStrSize = ult_sql_parse(
+    int64_t parseResultCStrSize = ult_sql_parse_new(
+        g_parser,
         (char *) sqlString.c_str(),
-        threadId,
+        static_cast<int64_t>(sqlString.size()),
         &parseResultCStr
     );
 
@@ -349,8 +354,9 @@ bool runTests() {
 }
 
 int main() {
-    ult_sql_parser_init();
+    g_parser = ult_sql_parser_create();
     bool ok = runTests();
-    ult_sql_parser_deinit();
+    ult_sql_parser_destroy(g_parser);
+    g_parser = 0;
     return ok ? 0 : 1;
 }
