@@ -383,8 +383,23 @@ public:
                     break;
                 case event_type::ROW_EVENT: {
                     auto rowEvent = std::dynamic_pointer_cast<mariadb::RowEvent>(event);
-                    auto tableMapEvent = currentTransaction->tableMaps[rowEvent->tableId()];
-                    
+                    if (rowEvent == nullptr) {
+                        _logger->warn("ROW_EVENT cast failed; skipping");
+                        break;
+                    }
+                    auto tableMapIt = currentTransaction->tableMaps.find(rowEvent->tableId());
+                    if (tableMapIt == currentTransaction->tableMaps.end() || tableMapIt->second == nullptr) {
+                        if (!_warnedMissingTableMap) {
+                            _logger->warn("ROW_EVENT missing TABLE_MAP for table id {}; skipping row event", rowEvent->tableId());
+                            _warnedMissingTableMap = true;
+                        }
+                        if (rowEvent->flags() & 1) {
+                            pendingRowQueryEvent = nullptr;
+                        }
+                        break;
+                    }
+                    auto tableMapEvent = tableMapIt->second;
+
                     auto promise = std::make_shared<std::promise<std::shared_ptr<state::v2::Query>>>();
                     /*
                     auto promise = _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, currentTransaction, rowEvent = std::move(rowEvent), pendingRowQueryEvent, tableMapEvent]() {
@@ -404,7 +419,7 @@ public:
                      */
                     auto pendingQuery = std::make_shared<state::v2::Query>();
                     
-                    processRowEvent(
+                    const bool processed = processRowEvent(
                         currentTransaction,
                         rowEvent,
                         pendingRowQueryEvent,
@@ -413,9 +428,13 @@ public:
                         &currentTransaction->statementContext
                     );
                     // processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
-                    promise->set_value(pendingQuery);
-                    
-                    currentTransaction->queries.push(promise);
+                    if (processed) {
+                        promise->set_value(pendingQuery);
+                        currentTransaction->queries.push(promise);
+                    }
+                    if (rowEvent->flags() & 1) {
+                        pendingRowQueryEvent = nullptr;
+                    }
                 }
                     break;
                 case event_type::ROW_QUERY:
@@ -736,13 +755,16 @@ public:
         transaction->tableMaps[event->tableId()] = event;
     }
     
-    void processRowEvent(std::shared_ptr<PendingTransaction> transaction,
+    bool processRowEvent(std::shared_ptr<PendingTransaction> transaction,
                          std::shared_ptr<mariadb::RowEvent> event,
                          std::shared_ptr<mariadb::RowQueryEvent> rowQueryEvent,
                          std::shared_ptr<state::v2::Query> pendingQuery,
                          std::shared_ptr<mariadb::TableMapEvent> tableMapEvent,
                          state::v2::Query::StatementContext *statementContext) {
-        
+        if (event == nullptr || tableMapEvent == nullptr) {
+            return false;
+        }
+
         event->mapToTable(*tableMapEvent);
     
         switch (event->type()) {
@@ -759,11 +781,17 @@ public:
 
         pendingQuery->setTimestamp(event->timestamp());
         pendingQuery->setAffectedRows(event->affectedRows());
-        pendingQuery->setStatement(rowQueryEvent->statement());
+        if (rowQueryEvent != nullptr) {
+            pendingQuery->setStatement(rowQueryEvent->statement());
+        } else {
+            if (!_warnedMissingRowQuery) {
+                _logger->warn("ROW_QUERY missing; using row image only for ROW_EVENT processing");
+                _warnedMissingRowQuery = true;
+            }
+            pendingQuery->setStatement("");
+        }
         pendingQuery->setDatabase(tableMapEvent->database());
         
-        
-        mariadb::QueryEvent dummyEvent(pendingQuery->database(), rowQueryEvent->statement(), 0);
         
         if (!(event->flags() & 1)) {
             pendingQuery->setFlags(pendingQuery->flags() | state::v2::Query::FLAG_IS_CONTINUOUS);
@@ -777,52 +805,88 @@ public:
         }
         
         
-        dummyEvent.itemSet().insert(
-            dummyEvent.itemSet().end(),
-            event->itemSet().begin(), event->itemSet().end()
-        );
-        
-        dummyEvent.itemSet().insert(
-            dummyEvent.itemSet().end(),
-            event->updateSet().begin(), event->updateSet().end()
-        );
-        
-        if (!dummyEvent.parse()) {
-            dummyEvent.parseDDL(1);
-        }
-        dummyEvent.buildRWSet(_keyColumns);
+        if (rowQueryEvent != nullptr) {
+            mariadb::QueryEvent dummyEvent(pendingQuery->database(), rowQueryEvent->statement(), 0);
 
-        pendingQuery->readSet().insert(
-            pendingQuery->readSet().end(),
-            dummyEvent.readSet().begin(), dummyEvent.readSet().end()
-        );
-        
-        pendingQuery->writeSet().insert(
-            pendingQuery->writeSet().end(),
-            dummyEvent.writeSet().begin(), dummyEvent.writeSet().end()
-        );
+            dummyEvent.itemSet().insert(
+                dummyEvent.itemSet().end(),
+                event->itemSet().begin(), event->itemSet().end()
+            );
 
-        {
-            state::v2::ColumnSet readColumns;
-            state::v2::ColumnSet writeColumns;
-            dummyEvent.columnRWSet(readColumns, writeColumns);
-            pendingQuery->readColumns().insert(readColumns.begin(), readColumns.end());
-            pendingQuery->writeColumns().insert(writeColumns.begin(), writeColumns.end());
+            dummyEvent.itemSet().insert(
+                dummyEvent.itemSet().end(),
+                event->updateSet().begin(), event->updateSet().end()
+            );
+
+            if (!dummyEvent.parse()) {
+                dummyEvent.parseDDL(1);
+            }
+            dummyEvent.buildRWSet(_keyColumns);
+
+            pendingQuery->readSet().insert(
+                pendingQuery->readSet().end(),
+                dummyEvent.readSet().begin(), dummyEvent.readSet().end()
+            );
+
+            pendingQuery->writeSet().insert(
+                pendingQuery->writeSet().end(),
+                dummyEvent.writeSet().begin(), dummyEvent.writeSet().end()
+            );
+
+            {
+                state::v2::ColumnSet readColumns;
+                state::v2::ColumnSet writeColumns;
+                dummyEvent.columnRWSet(readColumns, writeColumns);
+                pendingQuery->readColumns().insert(readColumns.begin(), readColumns.end());
+                pendingQuery->writeColumns().insert(writeColumns.begin(), writeColumns.end());
+            }
+
+            pendingQuery->varMap().insert(
+                pendingQuery->varMap().end(),
+                dummyEvent.variableSet().begin(), dummyEvent.variableSet().end()
+            );
+
+            if (isProcedureHint(rowQueryEvent->statement())) {
+                std::scoped_lock lock(transaction->_procCallMutex);
+
+                assert(transaction->procCall == nullptr);
+
+                const auto &json = pendingQuery->writeSet().begin()->data_list.at(0).getAs<std::string>();
+                transaction->procCall = prepareProcedureCall(json);
+            }
+        } else {
+            auto appendItems = [](const std::vector<StateItem> &items, std::vector<StateItem> &target) {
+                target.insert(target.end(), items.begin(), items.end());
+            };
+            auto appendColumns = [](const std::vector<StateItem> &items, state::v2::ColumnSet &target) {
+                for (const auto &item : items) {
+                    target.insert(item.name);
+                }
+            };
+
+            switch (event->type()) {
+                case mariadb::RowEvent::INSERT:
+                    appendItems(event->itemSet(), pendingQuery->writeSet());
+                    appendItems(event->itemSet(), pendingQuery->readSet());
+                    appendColumns(event->itemSet(), pendingQuery->writeColumns());
+                    appendColumns(event->itemSet(), pendingQuery->readColumns());
+                    break;
+                case mariadb::RowEvent::DELETE:
+                    appendItems(event->itemSet(), pendingQuery->readSet());
+                    appendItems(event->itemSet(), pendingQuery->writeSet());
+                    appendColumns(event->itemSet(), pendingQuery->readColumns());
+                    appendColumns(event->itemSet(), pendingQuery->writeColumns());
+                    break;
+                case mariadb::RowEvent::UPDATE:
+                    appendItems(event->updateSet(), pendingQuery->readSet());
+                    appendItems(event->itemSet(), pendingQuery->writeSet());
+                    appendColumns(event->updateSet(), pendingQuery->readColumns());
+                    appendColumns(event->itemSet(), pendingQuery->writeColumns());
+                    break;
+            }
         }
-        
-        pendingQuery->varMap().insert(
-            pendingQuery->varMap().end(),
-            dummyEvent.variableSet().begin(), dummyEvent.variableSet().end()
-        );
-        
-        if (isProcedureHint(rowQueryEvent->statement())) {
-            std::scoped_lock lock(transaction->_procCallMutex);
-            
-            assert(transaction->procCall == nullptr);
-            
-            const auto &json = pendingQuery->writeSet().begin()->data_list.at(0).getAs<std::string>();
-            transaction->procCall = prepareProcedureCall(json);
-        }
+
+        return true;
     }
     
     void terminateProcess() {
@@ -1023,6 +1087,9 @@ private:
 
     std::atomic<bool> _stopRequested{false};
     std::atomic<bool> _terminateRequested{false};
+
+    bool _warnedMissingRowQuery = false;
+    bool _warnedMissingTableMap = false;
 };
 
 int main(int argc, char **argv) {
