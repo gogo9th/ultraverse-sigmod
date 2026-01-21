@@ -152,6 +152,17 @@ $ sudo chmod 777 myserver-binlog*
 $ cp <BenchBase Directory> checkpoint-epinions.backup .
 ```
 
+### Key Column Groups (-k)
+Ultraverse uses key columns for row-wise clustering and replay scheduling. The `-k` option now supports **multi-dimensional keys**:
+* Use **comma `,`** to separate key groups (OR across groups).
+* Use **plus `+`** inside a group to require all columns together (AND within a group).
+
+Example:
+```console
+-k "orders.user_id+orders.item_id,review.u_id"
+```
+If you do not use `+`, each column becomes its own group.
+
 
 <u>**Step 5.**</u> Read Ultraverse's binary log and write (or oppend) the state log into `benchbase.ultstatelog` (see `./statelogd -h` for more information).
 

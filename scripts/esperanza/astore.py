@@ -11,7 +11,7 @@ DB_STATE_CHANGE_BASE_OPTIONS = [
     '-b', 'dbdump.sql',
     '-i', 'benchbase',
     '-d', 'benchbase',
-    '-k', 'Addresses.AddressID,Users.UserID,Categories.CategoryID,Products.ProductID,Orders.OrderID,OrderDetails,OrderID,Messages.MessageID,Subscribers.Email'
+    '-k', 'Addresses.AddressID,Users.UserID,Categories.CategoryID,Products.ProductID,Orders.OrderID,OrderDetails.OrderID,Messages.MessageID,Subscribers.Email'
 ]
 
 DB_TABLE_DIFF_OPTIONS = {
@@ -225,7 +225,7 @@ if __name__ == "__main__":
     session.prepare()
 
     # statelogd를 실행해서 binary log에서 statelog를 생성한다.
-    session.run_statelogd(['-k', 'Addresses.AddressID,Users.UserID,Categories.CategoryID,Products.ProductID,Orders.OrderID,OrderDetails,OrderID,Messages.MessageID,Subscribers.Email'])
+    session.run_statelogd(['-k', 'Addresses.AddressID,Users.UserID,Categories.CategoryID,Products.ProductID,Orders.OrderID,OrderDetails.OrderID,Messages.MessageID,Subscribers.Email'])
 
     # db_state_change를 실행하기 위해 mysqld를 실행한다.
     logger.info("starting mysqld...")
