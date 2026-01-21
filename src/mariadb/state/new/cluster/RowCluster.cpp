@@ -117,7 +117,7 @@ namespace ultraverse::state::v2 {
             }
 
             try {
-                converted.emplace_back(StateData{std::stoll(raw)});
+                converted.emplace_back(StateData{ (int64_t) std::stoll(raw) });
             } catch (const std::exception &) {
                 return std::nullopt;
             }
