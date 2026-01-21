@@ -3,6 +3,7 @@
 //
 
 #include <stdexcept>
+#include <utility>
 
 #include <fmt/core.h>
 
@@ -498,10 +499,20 @@ namespace ultraverse::mariadb {
         
         auto timestamp = header->timestamp;
         uint16_t flags = postHeader->flags;
-        
+
+        std::vector<uint8_t> columnsBefore(bitmapBefore.get(), bitmapBefore.get() + colsSize);
+        std::vector<uint8_t> columnsAfter;
+        if (eventType == RowEvent::UPDATE) {
+            columnsAfter.assign(bitmapAfter.get(), bitmapAfter.get() + colsSize);
+        } else {
+            columnsAfter = columnsBefore;
+        }
+
         return std::make_shared<RowEvent>(
             eventType,
             tableId, columns,
+            std::move(columnsBefore),
+            std::move(columnsAfter),
             data, dataSize,
             timestamp, flags
         );

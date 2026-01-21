@@ -5,7 +5,7 @@
 #include "BinaryLogSequentialReader.hpp"
 
 #include "MariaDBBinaryLogReader.hpp"
-#include "MySQLBinaryLogReader.hpp"
+#include "MySQLBinaryLogReaderV2.hpp"
 
 namespace ultraverse::mariadb {
     BinaryLogSequentialReader::BinaryLogSequentialReader(const std::string &basePath, const std::string &indexFile):
@@ -146,7 +146,7 @@ namespace ultraverse::mariadb {
     }
     
     std::unique_ptr<BinaryLogReaderBase> MySQLBinaryLogSequentialReader::openBinaryLog(const std::string &logFile) {
-        return std::move(std::make_unique<MySQLBinaryLogReader>(_basePath + "/" + logFile));
+        return std::move(std::make_unique<MySQLBinaryLogReaderV2>(_basePath + "/" + logFile));
     }
     
     

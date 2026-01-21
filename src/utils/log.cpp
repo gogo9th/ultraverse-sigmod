@@ -26,7 +26,7 @@ LoggerPtr createLogger(const std::string &name) {
     if (loggerMap.find(name) == loggerMap.end()) {
         auto logger = std::make_shared<spdlog::logger>(name, loggerSink);
         
-        if (name != "MySQLBinaryLogReader") {
+        if (name != "MySQLBinaryLogReader" && name != "MySQLBinaryLogReaderV2") {
             logger->set_level(loggerSink->level());
         }
         loggerMap.emplace(name, std::move(logger));

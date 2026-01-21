@@ -7,6 +7,9 @@
 
 #include <mysql/mysql.h>
 
+#include <memory>
+#include <vector>
+
 #include <cereal/access.hpp>
 
 #include "base/DBEvent.hpp"
@@ -72,6 +75,8 @@ namespace ultraverse::mariadb {
         
         std::string database() const;
         std::string table() const;
+
+        int columnCount() const;
         
         column_type::Value typeOf(int columnIndex) const;
         int sizeOf(int columnIndex) const;
@@ -99,6 +104,11 @@ namespace ultraverse::mariadb {
         };
         
         explicit RowEvent(Type type, uint64_t tableId, int columns,
+                          std::shared_ptr<uint8_t> rowData, int dataSize,
+                          uint64_t timestamp, uint16_t flags);
+        explicit RowEvent(Type type, uint64_t tableId, int columns,
+                          std::vector<uint8_t> columnsBeforeImage,
+                          std::vector<uint8_t> columnsAfterImage,
                           std::shared_ptr<uint8_t> rowData, int dataSize,
                           uint64_t timestamp, uint16_t flags);
         
@@ -135,7 +145,9 @@ namespace ultraverse::mariadb {
         const std::vector<StateItem> &itemSet() const;
         const std::vector<StateItem> &updateSet() const;
     private:
-        std::pair<std::string, int> readRow(TableMapEvent &tableMapEvent, int basePos, bool isUpdate);
+        std::pair<std::string, int> readRow(TableMapEvent &tableMapEvent, int basePos,
+                                            const std::vector<uint8_t> &columnsBitmap,
+                                            int columnsBitmapCount, bool isUpdate);
         
         template <typename T>
         inline T readValue(int offset) {
@@ -151,6 +163,11 @@ namespace ultraverse::mariadb {
         uint64_t _timestamp;
         uint64_t _tableId;
         int _columns;
+
+        std::vector<uint8_t> _columnsBeforeImage;
+        std::vector<uint8_t> _columnsAfterImage;
+        int _columnsBeforeCount;
+        int _columnsAfterCount;
         
         std::shared_ptr<uint8_t> _rowData;
         int _dataSize;
