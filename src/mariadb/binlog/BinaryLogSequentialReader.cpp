@@ -32,7 +32,7 @@ namespace ultraverse::mariadb {
     }
     
     bool BinaryLogSequentialReader::next() {
-        while (!terminateSignal) {
+        while (!terminateSignal.load(std::memory_order_acquire)) {
             if (_binaryLogReader == nullptr) {
                 return false;
             }
@@ -121,7 +121,7 @@ namespace ultraverse::mariadb {
     }
     
     void BinaryLogSequentialReader::terminate() {
-        terminateSignal = true;
+        terminateSignal.store(true, std::memory_order_release);
     }
 
     int BinaryLogSequentialReader::logFileListSize() {

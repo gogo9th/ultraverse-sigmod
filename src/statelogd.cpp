@@ -4,9 +4,12 @@
 #include <cereal/types/utility.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <condition_variable>
 #include <iostream>
 #include <fstream>
+#include <pthread.h>
 #include <signal.h>
 
 #include <fmt/ranges.h>
@@ -160,8 +163,25 @@ public:
         return hasher(threadId);
     }
     
+    void requestStopFromSignal() {
+        _stopRequested.store(true, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(_binlogMutex);
+            if (_binlogReader != nullptr) {
+                _binlogReader->terminate();
+            }
+        }
+        _txnQueueCv.notify_all();
+    }
+
     void writerMain() {
-        _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(".", _binlogIndexPath);
+        {
+            std::lock_guard<std::mutex> lock(_binlogMutex);
+            _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(".", _binlogIndexPath);
+            if (_stopRequested.load(std::memory_order_acquire)) {
+                _binlogReader->terminate();
+            }
+        }
         _binlogReader->setPollDisabled(isArgSet('n'));
 
         if (isArgSet('p')) {
@@ -176,20 +196,27 @@ public:
         // _pendingQuery = std::make_shared<state::v2::Query>();
         
         _writerThread = std::thread([this]() {
-            while (!terminateStatus || !_pendingTransactions.empty()) {
-                if (_pendingTransactions.empty()) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 16));
-                    continue;
+            while (true) {
+                std::shared_ptr<std::promise<std::shared_ptr<state::v2::Transaction>>> promise;
+                {
+                    std::unique_lock<std::mutex> lock(_txnQueueMutex);
+                    _txnQueueCv.wait(lock, [this]() {
+                        return _terminateRequested.load(std::memory_order_acquire)
+                            || !_pendingTransactions.empty();
+                    });
+                    if (_pendingTransactions.empty()) {
+                        if (_terminateRequested.load(std::memory_order_acquire)) {
+                            return;
+                        }
+                        continue;
+                    }
+                    promise = std::move(_pendingTransactions.front());
+                    _pendingTransactions.pop();
                 }
-                
-                
-                _txnQueueMutex.lock();
-                auto promise = _pendingTransactions.front();
-                _pendingTransactions.pop();
-                _txnQueueMutex.unlock();
-                
+                _txnQueueCv.notify_all();
+
                 auto transaction = std::move(promise->get_future().get());
-                
+
                 if (transaction != nullptr) {
                     if (_printTransactions) {
                         _logger->info("writing transaction gid {} (queries: {})",
@@ -206,7 +233,7 @@ public:
                                           query->statement());
                         }
                     }
-					}
+                }
                 *_stateLogWriter << *transaction;
             }
         });
@@ -246,7 +273,13 @@ public:
         gid_t global_gid = 0;
         std::shared_ptr<PendingTransaction> currentTransaction = std::make_shared<PendingTransaction>();
 
-        while (_binlogReader->next()) {
+        while (true) {
+            if (_stopRequested.load(std::memory_order_acquire)) {
+                break;
+            }
+            if (!_binlogReader->next()) {
+                break;
+            }
             auto event = _binlogReader->currentEvent();
 
             if (event == nullptr) {
@@ -280,7 +313,7 @@ public:
                 case event_type::TXNID: {
                     currentTransaction->tidEvent = std::dynamic_pointer_cast<mariadb::TransactionIDEvent>(event);
                     gid_t gid = global_gid++;
-                    _pendingTransactions.push(_taskExecutor.post<std::shared_ptr<state::v2::Transaction>>(
+                    auto pendingTxn = _taskExecutor.post<std::shared_ptr<state::v2::Transaction>>(
                         [this, currentTransaction = std::move(currentTransaction), gid]() {
                             while (!currentTransaction->queries.empty()) {
                                 auto promise = std::move(currentTransaction->queries.front());
@@ -292,12 +325,15 @@ public:
                             }
                             
                             return processTransactionIDEvent(currentTransaction, gid);
-                        }));
-                    
-                    
-                    while (_pendingTransactions.size() > 128) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 16));
+                        });
+                    {
+                        std::unique_lock<std::mutex> lock(_txnQueueMutex);
+                        _txnQueueCv.wait(lock, [this]() {
+                            return _pendingTransactions.size() < kMaxPendingTransactions;
+                        });
+                        _pendingTransactions.push(std::move(pendingTxn));
                     }
+                    _txnQueueCv.notify_one();
                     
                     currentTransaction = std::make_shared<PendingTransaction>();
                 }
@@ -390,18 +426,22 @@ public:
                     break;
             }
             
-            if (terminateStatus) {
+            if (_stopRequested.load(std::memory_order_acquire)) {
                 break;
             }
         }
-        
-        terminateStatus = true;
+
+        requestStop();
         
         if (_writerThread.joinable()) {
             _writerThread.join();
         }
         
         _stateLogWriter->close();
+        {
+            std::lock_guard<std::mutex> lock(_binlogMutex);
+            _binlogReader.reset();
+        }
     }
     
     /**
@@ -785,16 +825,6 @@ public:
         }
     }
     
-    void sigintHandler(int param) {
-        terminateStatus = true;
-        
-        if (_writerThread.joinable()) {
-            _writerThread.join();
-        }
-        
-        _binlogReader->terminate();
-    }
-
     void terminateProcess() {
         std::string checkpointPath = _stateLogName.substr(0, _stateLogName.find_last_of('.')) + ".ultchkpoint";
         int pos = _binlogReader->pos();
@@ -943,6 +973,13 @@ public:
     }
 
 private:
+    void requestStop() {
+        _terminateRequested.store(true, std::memory_order_release);
+        _txnQueueCv.notify_all();
+    }
+
+    static constexpr size_t kMaxPendingTransactions = 128;
+
     LoggerPtr _logger;
     TaskExecutor _taskExecutor;
 
@@ -960,6 +997,8 @@ private:
     
     std::thread _writerThread;
     std::mutex _txnQueueMutex;
+    std::condition_variable _txnQueueCv;
+    std::mutex _binlogMutex;
     
     std::unique_ptr<mariadb::BinaryLogSequentialReader> _binlogReader;
     std::unique_ptr<state::v2::StateLogWriter> _stateLogWriter;
@@ -982,17 +1021,24 @@ private:
     
     std::vector<std::string> _keyColumns;
 
-    bool terminateStatus = false;
+    std::atomic<bool> _stopRequested{false};
+    std::atomic<bool> _terminateRequested{false};
 };
 
-StateLogWriterApp application;
-
-void sigintHandler(int param) {
-    application.sigintHandler(param);
-}
-
 int main(int argc, char **argv) {
-    signal(SIGINT, sigintHandler);
-    int retval = application.exec(argc, argv);
-    return retval;
+    sigset_t signals;
+    sigemptyset(&signals);
+    sigaddset(&signals, SIGINT);
+    pthread_sigmask(SIG_BLOCK, &signals, nullptr);
+
+    StateLogWriterApp application;
+    std::thread signalThread([&application, signals]() mutable {
+        int sig = 0;
+        if (sigwait(&signals, &sig) == 0) {
+            application.requestStopFromSignal();
+        }
+    });
+    signalThread.detach();
+
+    return application.exec(argc, argv);
 }

@@ -5,6 +5,8 @@
 #ifndef ULTRAVERSE_BINARYLOGSEQUENTIALREADER_HPP
 #define ULTRAVERSE_BINARYLOGSEQUENTIALREADER_HPP
 
+#include <atomic>
+
 #include "BinaryLogReader.hpp"
 
 namespace ultraverse::mariadb {
@@ -38,7 +40,7 @@ namespace ultraverse::mariadb {
         // TOOD: currentFile or currentIndex;
         int _currentIndex;
     
-        bool terminateSignal = false;
+        std::atomic<bool> terminateSignal{false};
         bool _isPollDisabled;
     
         std::unique_ptr<BinaryLogReaderBase> _binaryLogReader;
