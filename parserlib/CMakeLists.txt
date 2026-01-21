@@ -27,7 +27,11 @@ add_custom_command(
 
 
 set(ULTPARSERLIB_GO_SRCS
-    ${CMAKE_CURRENT_SOURCE_DIR}/ultparserlib.go
+    ${CMAKE_CURRENT_SOURCE_DIR}/capi.go
+    ${CMAKE_CURRENT_SOURCE_DIR}/parser/parser.go
+    ${CMAKE_CURRENT_SOURCE_DIR}/parser/expr.go
+    ${CMAKE_CURRENT_SOURCE_DIR}/parser/stmt.go
+    ${CMAKE_CURRENT_SOURCE_DIR}/parser/proc.go
 )
 
 set(ULTPARSERLIB_PROTOBUF_SRCS
@@ -60,7 +64,7 @@ add_custom_command(
         ${CMAKE_CURRENT_SOURCE_DIR}/ULTPARSERLIB_DEP_INSTALLED
         ${ULTPARSERLIB_PROTOBUF_GO_AUTOGEN_SRCS} ${ULTPARSERLIB_GO_SRCS}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMAND env go build -o ${ULTPARSERLIB_SONAME} -buildmode=c-shared ${ULTPARSERLIB_GO_SRCS}
+    COMMAND env go build -o ${ULTPARSERLIB_SONAME} -buildmode=c-shared .
     COMMENT "Building ultparserlib.so"
 )
 

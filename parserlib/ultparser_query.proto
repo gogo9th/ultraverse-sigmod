@@ -135,6 +135,10 @@ message DMLQuery {
 
   /* READSET | WRITESET: WHERE a = 42 */
   DMLQueryExpr where = 12;
+
+  /* SELECT col1, col2 INTO var1, var2 FROM ... 에서
+     var1, var2를 저장 (인덱스는 select 필드와 1:1 대응) */
+  repeated string into_variables = 13;
 }
 
 message DDLQuery {
@@ -213,14 +217,6 @@ message ParseResult {
   repeated string warnings = 3;
 
   repeated Query statements = 4;
-}
-
-message SelectIntoAssignmentMap {
-  map<string, string> assignments = 1;
-}
-
-message SelectIntoExtractionResult {
-  repeated SelectIntoAssignmentMap results = 1;
 }
 
 option go_package = ".";
