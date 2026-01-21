@@ -277,6 +277,73 @@ bool runTests() {
     SQL_OK("UPDATE orders SET checksum = MD5(CONCAT(user_id, '-', order_id)), score = (score + 5) * 3 WHERE (status = 'paid' OR status = 'shipped') AND total >= 1000;")
     SQL_OK("DELETE FROM logs WHERE (level = 'debug' OR level = 'trace') AND (retry_count % 3 = 0);")
     SQL_OK("INSERT INTO pricing (sku, price, discount, note) VALUES ('SKU-1', 19.9900, -0.05, CONCAT('promo-', 2026));")
+
+    // SELECT ... INTO (procedure-style variable assignment)
+    SQL_OK("SELECT score INTO game_score FROM game_records WHERE user_id = 1;")
+
+    {
+        std::string sqlString = "SELECT score INTO game_score FROM game_records WHERE user_id = 1;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 1, "statements_size must be 1");
+
+        const auto &statement = parseResult.statements(0);
+        OK(statement.has_dml(), "statement must be DML");
+
+        const auto &dml = statement.dml();
+        OK(dml.type() == ultparser::DMLQuery::SELECT, "statement type must be SELECT");
+        OK(dml.select_size() == 1, "select size must be 1");
+
+        OK(dml.table().real().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "table must be identifier");
+        OK(toLower(dml.table().real().identifier()) == "game_records", "table must be game_records");
+
+        OK(dml.select(0).real().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "select expr must be identifier");
+        OK(toLower(dml.select(0).real().identifier()) == "score", "select expr must be score");
+
+        OK(dml.has_where(), "where clause must exist");
+        const auto &where = dml.where();
+        OK(where.operator_() == ultparser::DMLQueryExpr::EQ, "where operator must be EQ");
+        OK(where.has_left(), "where must have left");
+        OK(where.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER, "where left must be identifier");
+        OK(toLower(where.left().identifier()) == "user_id", "where left must be user_id");
+        OK(where.has_right(), "where must have right");
+        OK(where.right().value_type() == ultparser::DMLQueryExpr::INTEGER, "where right must be integer");
+        OK(where.right().integer() == 1, "where right must be 1");
+    }
+
+    {
+        std::string sqlString =
+            "CREATE PROCEDURE test_select_into()\n"
+            "BEGIN\n"
+            "  SELECT score INTO game_score FROM game_records WHERE user_id = 1;\n"
+            "END;";
+        ultparser::ParseResult parseResult;
+
+        if (!parseSQL(sqlString, &parseResult)) {
+            return false;
+        }
+
+        OK(parseResult.statements_size() == 1, "statements_size must be 1");
+
+        const auto &statement = parseResult.statements(0);
+        OK(statement.type() == ultparser::Query::PROCEDURE, "statement type must be PROCEDURE");
+        OK(statement.has_procedure(), "statement must have procedure");
+
+        const auto &procedure = statement.procedure();
+        OK(toLower(procedure.name()) == "test_select_into", "procedure name must be test_select_into");
+        OK(procedure.statements_size() == 1, "procedure statements_size must be 1");
+
+        const auto &procStatement = procedure.statements(0);
+        OK(procStatement.has_dml(), "procedure statement must be DML");
+
+        const auto &dml = procStatement.dml();
+        OK(dml.type() == ultparser::DMLQuery::SELECT, "procedure statement type must be SELECT");
+        OK(dml.select_size() == 1, "procedure select size must be 1");
+    }
     
     return true;
 }
