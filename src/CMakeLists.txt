@@ -40,6 +40,8 @@ if (NOT MARIADB_FOUND)
     pkg_check_modules(MARIADB REQUIRED mariadb)
 endif()
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/mysql_binlogevents.cmake)
+
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 add_compile_options(-march=native -O2)
@@ -63,6 +65,7 @@ set(ULTRAVERSE_DEPENDENCIES
     OpenSSL::SSL
     
     tbb
+    mysql_binlog_event_standalone
 
     ${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp/libultparser/libultparser.so
 )
