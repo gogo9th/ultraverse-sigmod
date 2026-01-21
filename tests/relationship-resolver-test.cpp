@@ -89,6 +89,27 @@ TEST_CASE("StateRelationshipResolver resolves alias chains and FK mapping") {
     REQUIRE(resolver.resolveChain("unknown.col").empty());
 }
 
+TEST_CASE("StateRelationshipResolver resolves FK + alias chain for cluster key propagation") {
+    StateChangePlan plan;
+    plan.columnAliases().push_back({"accounts.aid", "accounts.uid"});
+    plan.columnAliases().push_back({"v_statements.aid", "statements.aid"});
+
+    StateChangeContext context;
+    auto users = std::make_shared<NamingHistory>("users");
+    auto accounts = std::make_shared<NamingHistory>("accounts");
+    auto statements = std::make_shared<NamingHistory>("statements");
+    context.tables = {users, accounts, statements};
+    context.foreignKeys.push_back(ForeignKey{accounts, "uid", users, "uid"});
+    context.foreignKeys.push_back(ForeignKey{statements, "aid", accounts, "aid"});
+
+    StateRelationshipResolver resolver(plan, context);
+
+    REQUIRE(resolver.resolveChain("statements.aid") == "users.uid");
+    REQUIRE(resolver.resolveChain("Statements.AID") == "users.uid");
+    REQUIRE(resolver.resolveChain("accounts.aid") == "users.uid");
+    REQUIRE(resolver.resolveChain("v_statements.aid") == "users.uid");
+}
+
 TEST_CASE("StateRelationshipResolver detects alias cycles") {
     StateChangePlan plan;
     plan.columnAliases().push_back({"a", "b"});
@@ -153,6 +174,34 @@ TEST_CASE("StateRelationshipResolver resolveRowChain follows FK even without row
     REQUIRE(resolved->MakeRange2() == StateRange{1});
 }
 
+TEST_CASE("StateRelationshipResolver resolveRowChain follows alias + FK chain") {
+    StateChangePlan plan;
+    plan.columnAliases().push_back({"accounts.aid", "accounts.uid"});
+
+    StateChangeContext context;
+    auto users = std::make_shared<NamingHistory>("users");
+    auto accounts = std::make_shared<NamingHistory>("accounts");
+    auto statements = std::make_shared<NamingHistory>("statements");
+    context.tables = {users, accounts, statements};
+    context.foreignKeys.push_back(ForeignKey{accounts, "uid", users, "uid"});
+    context.foreignKeys.push_back(ForeignKey{statements, "aid", accounts, "aid"});
+
+    StateRelationshipResolver resolver(plan, context);
+
+    auto txn = makeTxn(
+        1,
+        "test",
+        {},
+        {makeEq("accounts.aid", 3), makeEq("accounts.uid", 42)}
+    );
+    resolver.addTransaction(*txn);
+
+    auto resolved = resolver.resolveRowChain(makeEq("statements.aid", 3));
+    REQUIRE(resolved != nullptr);
+    REQUIRE(resolved->name == "users.uid");
+    REQUIRE(resolved->MakeRange2() == StateRange{42});
+}
+
 TEST_CASE("CachedRelationshipResolver returns consistent results") {
     MockedRelationshipResolver resolver;
     resolver.addColumnAlias("posts.uuid", "posts.id");
@@ -182,6 +231,25 @@ TEST_CASE("CachedRelationshipResolver returns consistent results") {
     REQUIRE(cached.resolveChain("unknown.col").empty());
 }
 
+TEST_CASE("CachedRelationshipResolver separates row alias and row chain caches") {
+    MockedRelationshipResolver resolver;
+    resolver.addRowAlias(
+        makeEqStr("posts.author_str", "alice"),
+        makeEq("posts.author", 1)
+    );
+    resolver.addForeignKey("posts.author", "users.id");
+
+    CachedRelationshipResolver cached(resolver, 4);
+
+    auto alias = cached.resolveRowAlias(makeEqStr("posts.author_str", "alice"));
+    REQUIRE(alias != nullptr);
+    REQUIRE(alias->name == "posts.author");
+
+    auto chained = cached.resolveRowChain(makeEqStr("posts.author_str", "alice"));
+    REQUIRE(chained != nullptr);
+    REQUIRE(chained->name == "users.id");
+}
+
 TEST_CASE("StateRelationshipResolver resolves aliases case-insensitively") {
     StateChangePlan plan;
     plan.columnAliases().push_back({"users.id_str", "users.id"});
@@ -191,6 +259,21 @@ TEST_CASE("StateRelationshipResolver resolves aliases case-insensitively") {
 
     REQUIRE(resolver.resolveColumnAlias("Users.ID_Str") == "users.id");
     REQUIRE(resolver.resolveChain("Users.ID_Str") == "users.id");
+}
+
+TEST_CASE("StateRelationshipResolver resolves foreign keys case-insensitively") {
+    StateChangePlan plan;
+    StateChangeContext context;
+
+    auto posts = std::make_shared<NamingHistory>("Posts");
+    auto users = std::make_shared<NamingHistory>("Users");
+    context.tables = {posts, users};
+    context.foreignKeys.push_back(ForeignKey{posts, "Author", users, "ID"});
+
+    StateRelationshipResolver resolver(plan, context);
+
+    REQUIRE(resolver.resolveForeignKey("posts.author") == "users.id");
+    REQUIRE(resolver.resolveChain("POSTS.AUTHOR") == "users.id");
 }
 
 TEST_CASE("StateRelationshipResolver addTransaction ignores incomplete alias mapping") {

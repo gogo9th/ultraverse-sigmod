@@ -82,14 +82,6 @@ namespace ultraverse::base {
     }
     
     void QueryEventBase::buildRWSet(const std::vector<std::string> &keyColumns) {
-        for (const auto &table: _relatedTables) {
-            if (!table.empty()) {
-                _readItems.emplace_back(StateItem::Wildcard(
-                    fmt::format("_S.{}", table)
-                ));
-            }
-        }
-        
         if (_queryType == SELECT) {
             _readItems.insert(
                 _readItems.end(),
@@ -136,6 +128,57 @@ namespace ultraverse::base {
                 _readItems.end(),
                 _whereSet.begin(), _whereSet.end()
             );
+        }
+
+        const bool needsFullScanWildcard =
+            _whereSet.empty() && (
+                (_queryType == SELECT && _readItems.empty()) ||
+                (_queryType == UPDATE && _writeItems.empty()) ||
+                (_queryType == DELETE && _writeItems.empty())
+            );
+
+        if (needsFullScanWildcard) {
+            auto addWildcardItem = [this](const std::string &name, bool isWrite) {
+                if (name.empty()) {
+                    return;
+                }
+                StateItem wildcard = StateItem::Wildcard(name);
+                if (isWrite) {
+                    _writeItems.emplace_back(std::move(wildcard));
+                } else {
+                    _readItems.emplace_back(std::move(wildcard));
+                }
+            };
+
+            const bool isWrite = _queryType == UPDATE || _queryType == DELETE;
+
+            if (!keyColumns.empty()) {
+                std::unordered_set<std::string> relatedTablesLower;
+                relatedTablesLower.reserve(_relatedTables.size());
+                for (const auto &table : _relatedTables) {
+                    if (!table.empty()) {
+                        relatedTablesLower.insert(utility::toLower(table));
+                    }
+                }
+
+                for (const auto &keyColumn : keyColumns) {
+                    if (keyColumn.empty()) {
+                        continue;
+                    }
+                    const auto normalizedKey = utility::toLower(keyColumn);
+                    const auto tablePair = utility::splitTableName(normalizedKey);
+                    if (!tablePair.first.empty() &&
+                        relatedTablesLower.find(tablePair.first) != relatedTablesLower.end()) {
+                        addWildcardItem(normalizedKey, isWrite);
+                    }
+                }
+            } else {
+                for (const auto &table : _relatedTables) {
+                    if (!table.empty()) {
+                        addWildcardItem(utility::toLower(table) + ".*", isWrite);
+                    }
+                }
+            }
         }
     }
     
