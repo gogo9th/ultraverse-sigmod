@@ -39,9 +39,18 @@ func processProcInfo(procedure *pb.Procedure, node *ast.ProcedureInfo) {
 		}
 	}
 
+	// Extract the block from either ProcedureLabelBlock or ProcedureBlock
+	var block *ast.ProcedureBlock
 	if labelStmt, ok := (node.ProcedureBody).(*ast.ProcedureLabelBlock); ok {
-		block := labelStmt.Block
+		block = labelStmt.Block
+	} else if directBlock, ok := (node.ProcedureBody).(*ast.ProcedureBlock); ok {
+		block = directBlock
+	} else if node.ProcedureBody != nil {
+		fmt.Printf("FIXME: Unsupported procedure body type: %T\n", node.ProcedureBody)
+		return
+	}
 
+	if block != nil {
 		for _, variable := range block.ProcedureVars {
 			if vardecl, ok := variable.(*ast.ProcedureDecl); ok {
 				for _, declName := range vardecl.DeclNames {
