@@ -241,6 +241,291 @@ namespace ultraverse::state::v2 {
         return -1;
     }
     
+    TraceResult ProcMatcher::trace(
+        const std::map<std::string, StateData>& initialVariables,
+        const std::vector<std::string>& keyColumns
+    ) const {
+        TraceResult result;
+        SymbolTable symbols;
+        
+        // 1. 프로시저 파라미터를 심볼 테이블에 초기화
+        for (const auto& paramName : _parameters) {
+            auto it = initialVariables.find(paramName);
+            if (it != initialVariables.end()) {
+                symbols[paramName] = VariableValue::known(it->second);
+            } else {
+                symbols[paramName] = VariableValue{VariableValue::UNDEFINED, StateData()};
+                result.unresolvedVars.push_back(paramName);
+            }
+        }
+        
+        // 2. 각 문장을 순회하며 분석
+        for (const auto& code : _codes) {
+            traceStatement(*code, symbols, result, keyColumns);
+        }
+        
+        return result;
+    }
+    
+    void ProcMatcher::traceStatement(
+        const ultparser::Query& stmt,
+        SymbolTable& symbols,
+        TraceResult& result,
+        const std::vector<std::string>& keyColumns
+    ) const {
+        if (stmt.type() == ultparser::Query::SET) {
+            const auto& setQuery = stmt.set();
+            for (const auto& assignment : setQuery.assignments()) {
+                const std::string& varName = assignment.name();
+                if (assignment.has_value()) {
+                    symbols[varName] = evaluateExpr(assignment.value(), symbols);
+                } else {
+                    symbols[varName] = VariableValue::unknown();
+                }
+            }
+            return;
+        }
+        
+        if (stmt.type() == ultparser::Query::DML) {
+            const auto& dml = stmt.dml();
+            const auto& primaryTable = dml.table().real().identifier();
+            const auto isKeyColumn = [&](const std::string& colName) -> bool {
+                if (keyColumns.empty()) {
+                    return true;
+                }
+                for (const auto& kc : keyColumns) {
+                    if (colName == kc) {
+                        return true;
+                    }
+                    const std::string suffix = "." + kc;
+                    if (colName.size() >= suffix.size() &&
+                        colName.compare(colName.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            
+            // SELECT의 WHERE 절 → readSet
+            if (dml.type() == ultparser::DMLQuery::SELECT && dml.has_where()) {
+                auto whereItems = buildWhereItemSet(primaryTable, dml.where(), symbols, result.unresolvedVars);
+                result.readSet.insert(result.readSet.end(), whereItems.begin(), whereItems.end());
+            }
+            
+            // SELECT INTO 처리: 결과를 변수에 저장하는 경우
+            if (dml.type() == ultparser::DMLQuery::SELECT) {
+                // into_variables()에 변수명들이 있음
+                for (const auto& varName : dml.into_variables()) {
+                    // SELECT 결과는 런타임에만 알 수 있으므로 UNKNOWN
+                    symbols[varName] = VariableValue::unknown();
+                }
+            }
+            // UPDATE 처리: WHERE → readSet, key column → writeSet
+            else if (dml.type() == ultparser::DMLQuery::UPDATE) {
+                // WHERE 절 → readSet
+                if (dml.has_where()) {
+                    auto whereItems = buildWhereItemSet(primaryTable, dml.where(), symbols, result.unresolvedVars);
+                    result.readSet.insert(result.readSet.end(), whereItems.begin(), whereItems.end());
+                }
+                
+                // UPDATE SET 절: key column만 writeSet에 추가
+                for (const auto& expr : dml.update_or_write()) {
+                    if (expr.has_left() && expr.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+                        std::string colName = expr.left().identifier();
+                        if (colName.find('.') == std::string::npos) {
+                            colName = primaryTable + "." + colName;
+                        }
+                        
+                        if (isKeyColumn(colName) && expr.has_right()) {
+                            result.writeSet.push_back(resolveExprToStateItem(colName, expr.right(), symbols, result.unresolvedVars));
+                        }
+                    }
+                }
+            }
+            // DELETE 처리: WHERE → readSet + writeSet
+            else if (dml.type() == ultparser::DMLQuery::DELETE) {
+                if (dml.has_where()) {
+                    auto whereItems = buildWhereItemSet(primaryTable, dml.where(), symbols, result.unresolvedVars);
+                    result.readSet.insert(result.readSet.end(), whereItems.begin(), whereItems.end());
+                    result.writeSet.insert(result.writeSet.end(), whereItems.begin(), whereItems.end());
+                } else {
+                    // WHERE 없으면 전체 테이블 wildcard
+                    result.writeSet.push_back(StateItem::Wildcard(primaryTable + ".*"));
+                }
+            }
+            // INSERT 처리: key column → writeSet
+            else if (dml.type() == ultparser::DMLQuery::INSERT) {
+                for (const auto& expr : dml.update_or_write()) {
+                    if (expr.has_left() && expr.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+                        std::string colName = expr.left().identifier();
+                        if (colName.find('.') == std::string::npos) {
+                            colName = primaryTable + "." + colName;
+                        }
+                        
+                        if (isKeyColumn(colName) && expr.has_right()) {
+                            result.writeSet.push_back(resolveExprToStateItem(colName, expr.right(), symbols, result.unresolvedVars));
+                        }
+                    }
+                }
+            }
+            
+            return;
+        }
+        
+        // IF 블록 처리: 양쪽 분기 모두 분석 (union)
+        if (stmt.type() == ultparser::Query::IF) {
+            const auto& ifBlock = stmt.if_block();
+            
+            // then 블록의 모든 문장 재귀 처리
+            for (const auto& query : ifBlock.then_block()) {
+                traceStatement(query, symbols, result, keyColumns);
+            }
+            
+            // else 블록의 모든 문장 재귀 처리
+            for (const auto& query : ifBlock.else_block()) {
+                traceStatement(query, symbols, result, keyColumns);
+            }
+            
+            return;
+        }
+        
+        // WHILE 블록 처리: 1회 순회 가정
+        if (stmt.type() == ultparser::Query::WHILE) {
+            const auto& whileBlock = stmt.while_block();
+            
+            // 블록 내 모든 문장 재귀 처리
+            for (const auto& query : whileBlock.block()) {
+                traceStatement(query, symbols, result, keyColumns);
+            }
+            
+            return;
+        }
+        
+        // TODO: 다른 문장 타입 처리 (다음 태스크에서)
+    }
+    
+    VariableValue ProcMatcher::evaluateExpr(
+        const ultparser::DMLQueryExpr& expr,
+        const SymbolTable& symbols
+    ) const {
+        // 복잡한 표현식 (연산자 포함)은 UNKNOWN 반환
+        if (isComplexExpression(expr)) {
+            return VariableValue::unknown();
+        }
+        
+        // VALUE 타입인 경우
+        if (expr.operator_() == ultparser::DMLQueryExpr::VALUE) {
+            switch (expr.value_type()) {
+                case ultparser::DMLQueryExpr::INTEGER:
+                    return VariableValue::known(StateData(expr.integer()));
+                case ultparser::DMLQueryExpr::STRING:
+                    return VariableValue::known(StateData(expr.string()));
+                case ultparser::DMLQueryExpr::DOUBLE:
+                    return VariableValue::known(StateData(expr.double_()));
+                case ultparser::DMLQueryExpr::DECIMAL:
+                    return VariableValue::known(StateData(expr.decimal()));
+                case ultparser::DMLQueryExpr::IDENTIFIER: {
+                    // @var 참조인 경우
+                    const auto& id = expr.identifier();
+                    if (!id.empty() && id[0] == '@') {
+                        std::string varName = id.substr(1);
+                        auto it = symbols.find(varName);
+                        if (it != symbols.end()) {
+                            return it->second;
+                        }
+                        return VariableValue{VariableValue::UNDEFINED, StateData()};
+                    }
+                    // 일반 identifier는 UNKNOWN
+                    return VariableValue::unknown();
+                }
+                default:
+                    return VariableValue::unknown();
+            }
+        }
+        
+        return VariableValue::unknown();
+    }
+    
+    bool ProcMatcher::isComplexExpression(const ultparser::DMLQueryExpr& expr) {
+        auto op = expr.operator_();
+        // 산술 연산자가 있으면 복잡한 표현식
+        if (op == ultparser::DMLQueryExpr::PLUS ||
+            op == ultparser::DMLQueryExpr::MINUS ||
+            op == ultparser::DMLQueryExpr::MUL ||
+            op == ultparser::DMLQueryExpr::DIV ||
+            op == ultparser::DMLQueryExpr::MOD) {
+            return true;
+        }
+        // 함수 호출도 복잡한 표현식
+        if (expr.value_type() == ultparser::DMLQueryExpr::FUNCTION) {
+            return true;
+        }
+        return false;
+    }
+    
+    StateItem ProcMatcher::resolveExprToStateItem(
+        const std::string& columnName,
+        const ultparser::DMLQueryExpr& expr,
+        const SymbolTable& symbols,
+        std::vector<std::string>& unresolvedVars
+    ) const {
+        auto value = evaluateExpr(expr, symbols);
+        
+        switch (value.state) {
+            case VariableValue::KNOWN:
+                return StateItem::EQ(columnName, value.data);
+            case VariableValue::UNKNOWN:
+                return StateItem::Wildcard(columnName);
+            case VariableValue::UNDEFINED:
+                // 표현식이 변수 참조이고 미정의면 unresolvedVars에 기록
+                if (expr.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+                    const auto& id = expr.identifier();
+                    if (!id.empty() && id[0] == '@') {
+                        unresolvedVars.push_back(id.substr(1));
+                    }
+                }
+                return StateItem::Wildcard(columnName);
+        }
+        return StateItem::Wildcard(columnName);
+    }
+    
+    std::vector<StateItem> ProcMatcher::buildWhereItemSet(
+        const std::string& primaryTable,
+        const ultparser::DMLQueryExpr& whereExpr,
+        const SymbolTable& symbols,
+        std::vector<std::string>& unresolvedVars
+    ) const {
+        std::vector<StateItem> items;
+        
+        auto op = whereExpr.operator_();
+        
+        // AND/OR 연산자: 재귀 처리
+        if (op == ultparser::DMLQueryExpr::AND || op == ultparser::DMLQueryExpr::OR) {
+            for (const auto& child : whereExpr.expressions()) {
+                auto childItems = buildWhereItemSet(primaryTable, child, symbols, unresolvedVars);
+                items.insert(items.end(), childItems.begin(), childItems.end());
+            }
+            return items;
+        }
+        
+        // 비교 연산자: 왼쪽은 컬럼명, 오른쪽은 값
+        if (whereExpr.has_left() && whereExpr.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+            std::string colName = whereExpr.left().identifier();
+            // 테이블명이 없으면 primaryTable 추가
+            if (colName.find('.') == std::string::npos) {
+                colName = primaryTable + "." + colName;
+            }
+            
+            if (whereExpr.has_right()) {
+                items.push_back(resolveExprToStateItem(colName, whereExpr.right(), symbols, unresolvedVars));
+            } else {
+                items.push_back(StateItem::Wildcard(colName));
+            }
+        }
+        
+        return items;
+    }
+    
     std::vector<StateItem> ProcMatcher::variableSet(const ProcCall &procCall) const {
         std::vector<StateItem> _variableSet;
         

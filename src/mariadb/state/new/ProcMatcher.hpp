@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <map>
 
 #include <ultparser_query.pb.h>
 
@@ -20,6 +21,29 @@ class ProcCall;
 
 namespace ultraverse::state::v2 {
     
+    // 변수 값 상태
+    struct VariableValue {
+        enum State { KNOWN, UNKNOWN, UNDEFINED };
+        State state = UNDEFINED;
+        StateData data;
+
+        static VariableValue known(const StateData& d) {
+            return VariableValue{KNOWN, d};
+        }
+        static VariableValue unknown() {
+            return VariableValue{UNKNOWN, StateData()};
+        }
+    };
+
+    // trace 결과
+    struct TraceResult {
+        std::vector<StateItem> readSet;
+        std::vector<StateItem> writeSet;
+        std::vector<std::string> unresolvedVars;  // 디버깅용
+    };
+
+    using SymbolTable = std::unordered_map<std::string, VariableValue>;
+
     class ProcMatcher {
     public:
         static void load(const std::string &procedureDefinition, ProcMatcher &instance);
@@ -42,6 +66,12 @@ namespace ultraverse::state::v2 {
         int matchForward(const std::string &statement, int fromIndex);
         
         
+        TraceResult trace(
+            const std::map<std::string, StateData>& initialVariables,
+            const std::vector<std::string>& keyColumns = {}
+        ) const;
+        
+        
         std::vector<StateItem> variableSet(const ProcCall &procCall) const;
         std::vector<std::shared_ptr<Query>> asQuery(int index, const ProcCall &procCall, const std::vector<std::string> &keyColumns) const;
         
@@ -51,6 +81,34 @@ namespace ultraverse::state::v2 {
         const std::unordered_set<std::string> &readSet() const;
         const std::unordered_set<std::string> &writeSet() const;
     private:
+        void traceStatement(
+            const ultparser::Query& stmt,
+            SymbolTable& symbols,
+            TraceResult& result,
+            const std::vector<std::string>& keyColumns
+        ) const;
+        
+        VariableValue evaluateExpr(
+            const ultparser::DMLQueryExpr& expr,
+            const SymbolTable& symbols
+        ) const;
+        
+        static bool isComplexExpression(const ultparser::DMLQueryExpr& expr);
+        
+        StateItem resolveExprToStateItem(
+            const std::string& columnName,
+            const ultparser::DMLQueryExpr& expr,
+            const SymbolTable& symbols,
+            std::vector<std::string>& unresolvedVars
+        ) const;
+        
+        std::vector<StateItem> buildWhereItemSet(
+            const std::string& primaryTable,
+            const ultparser::DMLQueryExpr& whereExpr,
+            const SymbolTable& symbols,
+            std::vector<std::string>& unresolvedVars
+        ) const;
+        
         void extractRWSets();
         void extractRWSets(const ultparser::Query &query);
         
