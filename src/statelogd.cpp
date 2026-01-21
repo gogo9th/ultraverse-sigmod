@@ -21,8 +21,6 @@
 
 #include "mariadb/DBHandle.hpp"
 
-#include "mariadb/binlog/MariaDBBinaryLogReader.hpp"
-#include "mariadb/binlog/MySQLBinaryLogReader.hpp"
 #include "mariadb/binlog/BinaryLogSequentialReader.hpp"
 
 #include "mariadb/state/new/ProcLogReader.hpp"
@@ -81,7 +79,7 @@ public:
             "statelogd - state-logging daemon\n"
             "\n"
             "Options: \n"
-            "    -b file        specify MariaDB-variant binlog.index file\n"
+            "    -b file        specify binlog.index file\n"
             "    -o file        specify log output name\n"
             "    -p file        use procedure log to append additional queries (SELECT ...)\n"
             "    -k columns     key columns (eg. user.id,article.id or orders.user_id+orders.item_id)\n"
@@ -158,7 +156,7 @@ public:
     }
     
     void writerMain() {
-        _binlogReader = std::make_unique<mariadb::MySQLBinaryLogSequentialReader>(".", _binlogIndexPath);
+        _binlogReader = std::make_unique<mariadb::BinaryLogSequentialReader>(".", _binlogIndexPath);
         _binlogReader->setPollDisabled(isArgSet('n'));
 
         if (isArgSet('p')) {

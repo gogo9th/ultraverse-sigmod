@@ -147,10 +147,6 @@ set(LIBULTRAVERSE_MARIADB_SRCS
     mariadb/DBHandle.cpp
     mariadb/DBEvent.cpp
     
-    mariadb/binlog/MariaDBBinaryLogReader.cpp
-    mariadb/binlog/MariaDBBinaryLogReader.hpp
-    mariadb/binlog/MySQLBinaryLogReader.cpp
-    mariadb/binlog/MySQLBinaryLogReader.hpp
     mariadb/binlog/MySQLBinaryLogReaderV2.cpp
     mariadb/binlog/MySQLBinaryLogReaderV2.hpp
     mariadb/binlog/BinaryLogEvents.hpp

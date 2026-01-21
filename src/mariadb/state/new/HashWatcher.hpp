@@ -52,7 +52,7 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, StateHash> _hashState;
         std::unordered_map<std::string, bool> _matchState;
         std::unordered_map<std::string, std::queue<StateHash>> _hashQueue;
-        mariadb::MySQLBinaryLogSequentialReader _binlogReader;
+        mariadb::BinaryLogSequentialReader _binlogReader;
     };
 }
 
