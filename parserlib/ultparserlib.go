@@ -90,10 +90,14 @@ func process_expr_node(expr *ast.ExprNode) *pb.DMLQueryExpr {
 	}
 
 	if columnNameExpr, ok := (*expr).(*ast.ColumnNameExpr); ok {
+		identifier := columnNameExpr.Name.Name.O
+		if columnNameExpr.Name.Table.O != "" {
+			identifier = columnNameExpr.Name.Table.O + "." + identifier
+		}
 		return &pb.DMLQueryExpr{
 			Operator:   pb.DMLQueryExpr_VALUE,
 			ValueType:  pb.DMLQueryExpr_IDENTIFIER,
-			Identifier: columnNameExpr.Name.Name.O,
+			Identifier: identifier,
 		}
 	} else if valueExpr, ok := (*expr).(ast.ValueExpr); ok {
 		tp := valueExpr.GetType().GetType()
