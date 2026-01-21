@@ -5,10 +5,13 @@
 #ifndef ULTRAVERSE_STATE_QUERY_HPP
 #define ULTRAVERSE_STATE_QUERY_HPP
 
+#include <cstdint>
 #include <memory>
 #include <set>
+#include <string>
 #include <unordered_set>
 #include <unordered_map>
+#include <vector>
 
 #include <cereal/access.hpp>
 
@@ -42,6 +45,60 @@ namespace ultraverse::state::v2 {
         static const uint8_t FLAG_IS_PROCCALL_QUERY           = 0b00010000;
 
         static const uint8_t FLAG_IS_CONTINUOUS = 0b10000000;
+
+        struct UserVar {
+            enum ValueType : uint8_t {
+                STRING = 0,
+                REAL = 1,
+                INT = 2,
+                DECIMAL = 3
+            };
+
+            std::string name;
+            ValueType type = STRING;
+            bool isNull = false;
+            bool isUnsigned = false;
+            uint32_t charset = 0;
+            std::string value;
+
+            template <typename Archive>
+            void serialize(Archive &archive) {
+                archive(name, type, isNull, isUnsigned, charset, value);
+            }
+        };
+
+        struct StatementContext {
+            bool hasLastInsertId = false;
+            uint64_t lastInsertId = 0;
+            bool hasInsertId = false;
+            uint64_t insertId = 0;
+            bool hasRandSeed = false;
+            uint64_t randSeed1 = 0;
+            uint64_t randSeed2 = 0;
+            std::vector<UserVar> userVars;
+
+            bool empty() const {
+                return !hasLastInsertId && !hasInsertId && !hasRandSeed && userVars.empty();
+            }
+
+            void clear() {
+                *this = StatementContext();
+            }
+
+            template <typename Archive>
+            void serialize(Archive &archive) {
+                archive(
+                    hasLastInsertId,
+                    lastInsertId,
+                    hasInsertId,
+                    insertId,
+                    hasRandSeed,
+                    randSeed1,
+                    randSeed2,
+                    userVars
+                );
+            }
+        };
 
         Query();
         
@@ -87,11 +144,20 @@ namespace ultraverse::state::v2 {
         ColumnSet &writeColumns();
         const ColumnSet &writeColumns() const;
         std::vector<StateItem> &varMap();
-        
+
+        StatementContext &statementContext();
+        const StatementContext &statementContext() const;
+        void setStatementContext(const StatementContext &context);
+        void clearStatementContext();
+        bool hasStatementContext() const;
+
         std::string varMappedStatement(const std::vector<StateItem> &variableSet) const;
         
         template <typename Archive>
-        void serialize(Archive &archive);
+        void save(Archive &archive) const;
+
+        template <typename Archive>
+        void load(Archive &archive, std::uint32_t const version);
         
     private:
         QueryType _type;
@@ -111,8 +177,10 @@ namespace ultraverse::state::v2 {
 
         ColumnSet _readColumns;
         ColumnSet _writeColumns;
-        
+
         uint32_t _affectedRows;
+
+        StatementContext _statementContext;
     };
 }
 

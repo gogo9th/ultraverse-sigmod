@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <sstream>
+#include <utility>
 
 #include <cereal/types/vector.hpp>
 #include <cereal/types/unordered_map.hpp>
@@ -59,6 +60,89 @@ namespace ultraverse::mariadb {
     
     const std::string &QueryEvent::database() {
         return _database;
+    }
+
+    IntVarEvent::IntVarEvent(Type type, uint64_t value, uint64_t timestamp):
+        _type(type),
+        _value(value),
+        _timestamp(timestamp)
+    {
+    }
+
+    uint64_t IntVarEvent::timestamp() {
+        return _timestamp;
+    }
+
+    IntVarEvent::Type IntVarEvent::type() const {
+        return _type;
+    }
+
+    uint64_t IntVarEvent::value() const {
+        return _value;
+    }
+
+    RandEvent::RandEvent(uint64_t seed1, uint64_t seed2, uint64_t timestamp):
+        _seed1(seed1),
+        _seed2(seed2),
+        _timestamp(timestamp)
+    {
+    }
+
+    uint64_t RandEvent::timestamp() {
+        return _timestamp;
+    }
+
+    uint64_t RandEvent::seed1() const {
+        return _seed1;
+    }
+
+    uint64_t RandEvent::seed2() const {
+        return _seed2;
+    }
+
+    UserVarEvent::UserVarEvent(std::string name,
+                               ValueType type,
+                               bool isNull,
+                               bool isUnsigned,
+                               uint32_t charset,
+                               std::string value,
+                               uint64_t timestamp):
+        _name(std::move(name)),
+        _type(type),
+        _isNull(isNull),
+        _isUnsigned(isUnsigned),
+        _charset(charset),
+        _value(std::move(value)),
+        _timestamp(timestamp)
+    {
+    }
+
+    uint64_t UserVarEvent::timestamp() {
+        return _timestamp;
+    }
+
+    const std::string &UserVarEvent::name() const {
+        return _name;
+    }
+
+    UserVarEvent::ValueType UserVarEvent::type() const {
+        return _type;
+    }
+
+    bool UserVarEvent::isNull() const {
+        return _isNull;
+    }
+
+    bool UserVarEvent::isUnsigned() const {
+        return _isUnsigned;
+    }
+
+    uint32_t UserVarEvent::charset() const {
+        return _charset;
+    }
+
+    const std::string &UserVarEvent::value() const {
+        return _value;
     }
     
     TableMapEvent::TableMapEvent(uint64_t tableId, std::string database, std::string table, std::vector<std::pair<column_type::Value, int>> columns, std::vector<std::string> columnNames, uint64_t timestamp):

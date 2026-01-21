@@ -7,7 +7,9 @@
 
 #include <mysql/mysql.h>
 
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <cereal/access.hpp>
@@ -51,6 +53,87 @@ namespace ultraverse::mariadb {
         
         std::string _statement;
         std::string _database;
+    };
+
+    class IntVarEvent: public base::DBEvent {
+    public:
+        enum Type: uint8_t {
+            INVALID = 0,
+            LAST_INSERT_ID = 1,
+            INSERT_ID = 2
+        };
+
+        IntVarEvent(Type type, uint64_t value, uint64_t timestamp);
+
+        event_type::Value eventType() override {
+            return event_type::INTVAR;
+        }
+
+        uint64_t timestamp() override;
+        Type type() const;
+        uint64_t value() const;
+
+    private:
+        Type _type;
+        uint64_t _value;
+        uint64_t _timestamp;
+    };
+
+    class RandEvent: public base::DBEvent {
+    public:
+        RandEvent(uint64_t seed1, uint64_t seed2, uint64_t timestamp);
+
+        event_type::Value eventType() override {
+            return event_type::RAND;
+        }
+
+        uint64_t timestamp() override;
+        uint64_t seed1() const;
+        uint64_t seed2() const;
+
+    private:
+        uint64_t _seed1;
+        uint64_t _seed2;
+        uint64_t _timestamp;
+    };
+
+    class UserVarEvent: public base::DBEvent {
+    public:
+        enum ValueType: uint8_t {
+            STRING = 0,
+            REAL = 1,
+            INT = 2,
+            DECIMAL = 3
+        };
+
+        UserVarEvent(std::string name,
+                     ValueType type,
+                     bool isNull,
+                     bool isUnsigned,
+                     uint32_t charset,
+                     std::string value,
+                     uint64_t timestamp);
+
+        event_type::Value eventType() override {
+            return event_type::USER_VAR;
+        }
+
+        uint64_t timestamp() override;
+        const std::string &name() const;
+        ValueType type() const;
+        bool isNull() const;
+        bool isUnsigned() const;
+        uint32_t charset() const;
+        const std::string &value() const;
+
+    private:
+        std::string _name;
+        ValueType _type;
+        bool _isNull;
+        bool _isUnsigned;
+        uint32_t _charset;
+        std::string _value;
+        uint64_t _timestamp;
     };
     
     class TableMapEvent: public base::DBEvent {

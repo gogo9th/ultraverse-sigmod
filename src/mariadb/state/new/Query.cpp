@@ -123,6 +123,26 @@ namespace ultraverse::state::v2 {
         return _varMap;
     }
 
+    Query::StatementContext &Query::statementContext() {
+        return _statementContext;
+    }
+
+    const Query::StatementContext &Query::statementContext() const {
+        return _statementContext;
+    }
+
+    void Query::setStatementContext(const StatementContext &context) {
+        _statementContext = context;
+    }
+
+    void Query::clearStatementContext() {
+        _statementContext.clear();
+    }
+
+    bool Query::hasStatementContext() const {
+        return !_statementContext.empty();
+    }
+
     
     std::string Query::varMappedStatement(const std::vector<StateItem> &variableSet) const {
         std::string statement = this->statement();

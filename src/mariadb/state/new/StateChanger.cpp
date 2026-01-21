@@ -3,6 +3,8 @@
 //
 
 #include <algorithm>
+#include <cstring>
+#include <iomanip>
 #include <sstream>
 
 #include <fmt/color.h>
@@ -30,6 +32,116 @@ namespace ultraverse::state::v2 {
     const std::string StateChanger::QUERY_TAG_STATECHANGE = "/* STATECHANGE_QUERY */ ";
 
     namespace {
+        std::string hexEncode(const std::string &data) {
+            static const char kHex[] = "0123456789ABCDEF";
+            std::string out;
+            out.reserve(data.size() * 2);
+            for (unsigned char c : data) {
+                out.push_back(kHex[c >> 4]);
+                out.push_back(kHex[c & 0x0F]);
+            }
+            return out;
+        }
+
+        std::string quoteUserVarName(const std::string &name) {
+            std::string out;
+            out.reserve(name.size() + 2);
+            out.push_back('`');
+            for (char ch : name) {
+                if (ch == '`') {
+                    out.push_back('`');
+                }
+                out.push_back(ch);
+            }
+            out.push_back('`');
+            return out;
+        }
+
+        uint64_t readUint64LE(const std::string &data) {
+            uint64_t value = 0;
+            size_t len = std::min<size_t>(data.size(), 8);
+            for (size_t i = 0; i < len; i++) {
+                value |= (static_cast<uint64_t>(static_cast<unsigned char>(data[i])) << (8 * i));
+            }
+            return value;
+        }
+
+        std::string decodeDecimalUserVar(const std::string &data) {
+            if (data.size() < 2) {
+                return "0";
+            }
+
+            uint8_t precision = static_cast<uint8_t>(data[0]);
+            uint8_t scale = static_cast<uint8_t>(data[1]);
+            const uint8_t *raw = reinterpret_cast<const uint8_t *>(data.data() + 2);
+            size_t rawSize = data.size() - 2;
+
+            size_t size = (precision + 1) / 2;
+            if (size > rawSize) {
+                size = rawSize;
+            }
+
+            bool sign = true;
+            uint64_t high = 0;
+            uint64_t low = 0;
+
+            for (size_t i = 0; i < size; i++) {
+                uint8_t value = raw[i];
+                if (i == 0) {
+                    sign = (value & 0x80) != 0;
+                    value ^= 0x80;
+                }
+
+                if (i < ((precision - scale) + 1) / 2) {
+                    high = (high << 8) + value;
+                } else {
+                    low = (low << 8) + value;
+                }
+            }
+
+            std::ostringstream stream;
+            if (!sign) {
+                stream << "-";
+            }
+            stream << high;
+            if (scale > 0) {
+                stream << "." << std::setfill('0') << std::setw(scale) << low;
+            }
+            return stream.str();
+        }
+
+        std::string formatUserVarValue(const Query::UserVar &userVar) {
+            if (userVar.isNull) {
+                return "NULL";
+            }
+
+            switch (userVar.type) {
+                case Query::UserVar::STRING: {
+                    // TODO: charset / collation mapping
+                    return "_binary 0x" + hexEncode(userVar.value);
+                }
+                case Query::UserVar::REAL: {
+                    uint64_t bits = readUint64LE(userVar.value);
+                    double value = 0.0;
+                    std::memcpy(&value, &bits, sizeof(value));
+                    std::ostringstream stream;
+                    stream << std::setprecision(17) << value;
+                    return stream.str();
+                }
+                case Query::UserVar::INT: {
+                    uint64_t raw = readUint64LE(userVar.value);
+                    if (userVar.isUnsigned) {
+                        return std::to_string(raw);
+                    }
+                    return std::to_string(static_cast<int64_t>(raw));
+                }
+                case Query::UserVar::DECIMAL:
+                    return decodeDecimalUserVar(userVar.value);
+            }
+
+            return "NULL";
+        }
+
         StateChangerIO makeDefaultIO(const StateChangePlan &plan) {
             StateChangerIO io;
             io.stateLogReader = std::make_unique<StateLogReader>(plan.stateLogPath(), plan.stateLogName());
@@ -132,6 +244,7 @@ namespace ultraverse::state::v2 {
                         goto NEXT_QUERY;
                     }
                     
+                    applyStatementContext(handle, *query);
                     if (handle.executeQuery(query->statement()) != 0) {
                         _logger->error("query execution failed: {}", handle.lastError());
                     }
@@ -299,6 +412,30 @@ namespace ultraverse::state::v2 {
         }
         
         _context->foreignKeys = foreignKeys;
+    }
+
+    void StateChanger::applyStatementContext(mariadb::DBHandle &dbHandle, const Query &query) {
+        const auto &context = query.statementContext();
+        if (context.empty()) {
+            return;
+        }
+
+        if (context.hasLastInsertId) {
+            dbHandle.executeQuery(fmt::format("SET LAST_INSERT_ID={}", context.lastInsertId));
+        }
+        if (context.hasInsertId) {
+            dbHandle.executeQuery(fmt::format("SET INSERT_ID={}", context.insertId));
+        }
+        if (context.hasRandSeed) {
+            dbHandle.executeQuery(fmt::format("SET @@RAND_SEED1={}, @@RAND_SEED2={}",
+                                              context.randSeed1, context.randSeed2));
+        }
+
+        for (const auto &userVar : context.userVars) {
+            std::string name = quoteUserVarName(userVar.name);
+            std::string value = formatUserVarValue(userVar);
+            dbHandle.executeQuery(fmt::format("SET @{} := {}", name, value));
+        }
     }
     
     int64_t StateChanger::getAutoIncrement(mariadb::DBHandle &dbHandle, std::string table) {

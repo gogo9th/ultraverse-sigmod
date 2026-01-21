@@ -53,6 +53,8 @@ struct PendingTransaction {
     std::mutex _procCallMutex;
     
     std::shared_ptr<mariadb::TransactionIDEvent> tidEvent;
+
+    state::v2::Query::StatementContext statementContext;
     
     bool flag1 = false;
     std::string tmp;
@@ -249,19 +251,27 @@ public:
             }
             
             switch (event->eventType()) {
-                case event_type::QUERY:
-                    /*
-                    currentTransaction->queries.push(
-                        _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, event = std::move(event)]() {
-                            return processQueryEvent(std::dynamic_pointer_cast<mariadb::QueryEvent>(event));
-                        })
-                    );
-                     */
-                {
+                case event_type::QUERY: {
                     auto queryEvent = std::dynamic_pointer_cast<mariadb::QueryEvent>(event);
-                    if (queryEvent->statement() == "COMMIT") {
-                        currentTransaction = std::make_shared<PendingTransaction>();
+                    if (queryEvent == nullptr) {
+                        break;
                     }
+
+                    const auto &statement = queryEvent->statement();
+                    if (statement == "COMMIT" || statement == "ROLLBACK") {
+                        currentTransaction = std::make_shared<PendingTransaction>();
+                        pendingRowQueryEvent = nullptr;
+                        break;
+                    }
+                    if (statement == "BEGIN") {
+                        currentTransaction->statementContext.clear();
+                        break;
+                    }
+
+                    auto promise = std::make_shared<std::promise<std::shared_ptr<state::v2::Query>>>();
+                    auto pendingQuery = processQueryEvent(queryEvent, &currentTransaction->statementContext);
+                    promise->set_value(pendingQuery);
+                    currentTransaction->queries.push(promise);
                 }
                     break;
                 case event_type::TXNID: {
@@ -287,6 +297,45 @@ public:
                     }
                     
                     currentTransaction = std::make_shared<PendingTransaction>();
+                }
+                    break;
+                case event_type::INTVAR: {
+                    auto intVarEvent = std::dynamic_pointer_cast<mariadb::IntVarEvent>(event);
+                    if (intVarEvent == nullptr) {
+                        break;
+                    }
+                    if (intVarEvent->type() == mariadb::IntVarEvent::LAST_INSERT_ID) {
+                        currentTransaction->statementContext.hasLastInsertId = true;
+                        currentTransaction->statementContext.lastInsertId = intVarEvent->value();
+                    } else if (intVarEvent->type() == mariadb::IntVarEvent::INSERT_ID) {
+                        currentTransaction->statementContext.hasInsertId = true;
+                        currentTransaction->statementContext.insertId = intVarEvent->value();
+                    }
+                }
+                    break;
+                case event_type::RAND: {
+                    auto randEvent = std::dynamic_pointer_cast<mariadb::RandEvent>(event);
+                    if (randEvent == nullptr) {
+                        break;
+                    }
+                    currentTransaction->statementContext.hasRandSeed = true;
+                    currentTransaction->statementContext.randSeed1 = randEvent->seed1();
+                    currentTransaction->statementContext.randSeed2 = randEvent->seed2();
+                }
+                    break;
+                case event_type::USER_VAR: {
+                    auto userVarEvent = std::dynamic_pointer_cast<mariadb::UserVarEvent>(event);
+                    if (userVarEvent == nullptr) {
+                        break;
+                    }
+                    state::v2::Query::UserVar userVar;
+                    userVar.name = userVarEvent->name();
+                    userVar.type = static_cast<state::v2::Query::UserVar::ValueType>(userVarEvent->type());
+                    userVar.isNull = userVarEvent->isNull();
+                    userVar.isUnsigned = userVarEvent->isUnsigned();
+                    userVar.charset = userVarEvent->charset();
+                    userVar.value = userVarEvent->value();
+                    currentTransaction->statementContext.userVars.emplace_back(std::move(userVar));
                 }
                     break;
                 // row events
@@ -321,7 +370,8 @@ public:
                         rowEvent,
                         pendingRowQueryEvent,
                         pendingQuery,
-                        tableMapEvent
+                        tableMapEvent,
+                        &currentTransaction->statementContext
                     );
                     // processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
                     promise->set_value(pendingQuery);
@@ -474,12 +524,20 @@ public:
         return std::move(transactionObj);
     }
     
-    std::shared_ptr<state::v2::Query> processQueryEvent(std::shared_ptr<mariadb::QueryEvent> event) {
+    std::shared_ptr<state::v2::Query> processQueryEvent(
+        std::shared_ptr<mariadb::QueryEvent> event,
+        state::v2::Query::StatementContext *statementContext
+    ) {
         auto pendingQuery = std::make_shared<state::v2::Query>();
         
         pendingQuery->setTimestamp(event->timestamp());
         pendingQuery->setDatabase(event->database());
         pendingQuery->setStatement(event->statement());
+
+        if (statementContext != nullptr && !statementContext->empty()) {
+            pendingQuery->setStatementContext(*statementContext);
+            statementContext->clear();
+        }
 
         event->tokenize();
         
@@ -621,7 +679,8 @@ public:
                          std::shared_ptr<mariadb::RowEvent> event,
                          std::shared_ptr<mariadb::RowQueryEvent> rowQueryEvent,
                          std::shared_ptr<state::v2::Query> pendingQuery,
-                         std::shared_ptr<mariadb::TableMapEvent> tableMapEvent) {
+                         std::shared_ptr<mariadb::TableMapEvent> tableMapEvent,
+                         state::v2::Query::StatementContext *statementContext) {
         
         event->mapToTable(*tableMapEvent);
     
@@ -647,6 +706,13 @@ public:
         
         if (!(event->flags() & 1)) {
             pendingQuery->setFlags(pendingQuery->flags() | state::v2::Query::FLAG_IS_CONTINUOUS);
+        }
+
+        if (statementContext != nullptr && !statementContext->empty()) {
+            pendingQuery->setStatementContext(*statementContext);
+            if (event->flags() & 1) {
+                statementContext->clear();
+            }
         }
         
         

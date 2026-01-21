@@ -92,6 +92,8 @@ namespace ultraverse::state::v2 {
         
         int64_t getAutoIncrement(mariadb::DBHandle &dbHandle, std::string table);
         void setAutoIncrement(mariadb::DBHandle &dbHandle, std::string table, int64_t value);
+
+        void applyStatementContext(mariadb::DBHandle &dbHandle, const Query &query);
         
         LoggerPtr _logger;
         

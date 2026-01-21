@@ -42,6 +42,32 @@ namespace ultraverse::mariadb {
             return value;
         }
 
+        mariadb::IntVarEvent::Type mapIntVarType(uint8_t type) {
+            switch (type) {
+                case mysql::binlog::event::Intvar_event::LAST_INSERT_ID_EVENT:
+                    return mariadb::IntVarEvent::LAST_INSERT_ID;
+                case mysql::binlog::event::Intvar_event::INSERT_ID_EVENT:
+                    return mariadb::IntVarEvent::INSERT_ID;
+                default:
+                    return mariadb::IntVarEvent::INVALID;
+            }
+        }
+
+        mariadb::UserVarEvent::ValueType mapUserVarType(uint8_t type) {
+            switch (type) {
+                case mysql::binlog::event::User_var_event::STRING_RESULT:
+                    return mariadb::UserVarEvent::STRING;
+                case mysql::binlog::event::User_var_event::REAL_RESULT:
+                    return mariadb::UserVarEvent::REAL;
+                case mysql::binlog::event::User_var_event::INT_RESULT:
+                    return mariadb::UserVarEvent::INT;
+                case mysql::binlog::event::User_var_event::DECIMAL_RESULT:
+                    return mariadb::UserVarEvent::DECIMAL;
+                default:
+                    return mariadb::UserVarEvent::STRING;
+            }
+        }
+
         bool readNetFieldLength(const unsigned char *&ptr, const unsigned char *end, uint64_t &out) {
             if (ptr >= end) {
                 return false;
@@ -309,6 +335,68 @@ namespace ultraverse::mariadb {
                     return nullptr;
                 }
                 return std::make_shared<TransactionIDEvent>(event.xid, event.header()->when.tv_sec);
+            }
+            case mysql::binlog::event::INTVAR_EVENT: {
+                mysql::binlog::event::Intvar_event event(
+                    reinterpret_cast<const char *>(buffer.data()),
+                    &fdeForEvent
+                );
+                if (!event.header()->get_is_valid()) {
+                    _logger->warn("invalid intvar event, skipping");
+                    return nullptr;
+                }
+                return std::make_shared<IntVarEvent>(
+                    mapIntVarType(event.type),
+                    event.val,
+                    event.header()->when.tv_sec
+                );
+            }
+            case mysql::binlog::event::RAND_EVENT: {
+                mysql::binlog::event::Rand_event event(
+                    reinterpret_cast<const char *>(buffer.data()),
+                    &fdeForEvent
+                );
+                if (!event.header()->get_is_valid()) {
+                    _logger->warn("invalid rand event, skipping");
+                    return nullptr;
+                }
+                return std::make_shared<RandEvent>(
+                    event.seed1,
+                    event.seed2,
+                    event.header()->when.tv_sec
+                );
+            }
+            case mysql::binlog::event::USER_VAR_EVENT: {
+                mysql::binlog::event::User_var_event event(
+                    reinterpret_cast<const char *>(buffer.data()),
+                    &fdeForEvent
+                );
+                if (!event.header()->get_is_valid()) {
+                    _logger->warn("invalid user var event, skipping");
+                    return nullptr;
+                }
+
+                std::string name;
+                if (event.name != nullptr && event.name_len > 0) {
+                    name.assign(event.name, event.name_len);
+                }
+
+                std::string value;
+                if (!event.is_null && event.val != nullptr && event.val_len > 0) {
+                    value.assign(event.val, event.val_len);
+                }
+
+                bool isUnsigned = (event.flags & mysql::binlog::event::User_var_event::UNSIGNED_F) != 0;
+
+                return std::make_shared<UserVarEvent>(
+                    std::move(name),
+                    mapUserVarType(static_cast<uint8_t>(event.type)),
+                    event.is_null,
+                    isUnsigned,
+                    event.charset_number,
+                    std::move(value),
+                    event.header()->when.tv_sec
+                );
             }
             case mysql::binlog::event::TABLE_MAP_EVENT: {
                 mysql::binlog::event::Table_map_event event(
