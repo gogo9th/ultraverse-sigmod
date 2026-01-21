@@ -1,13 +1,20 @@
 #pragma once
 
 #include <chrono>
+#include <condition_variable>
+#include <functional>
 #include <memory>
+#include <mutex>
+#include <queue>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
+#include "../src/mariadb/DBHandle.hpp"
+#include "../src/mariadb/DBHandlePoolAdapter.hpp"
 #include "../src/mariadb/state/new/Transaction.hpp"
 #include "../src/mariadb/state/new/Query.hpp"
 #include "../src/mariadb/state/new/cluster/StateRelationshipResolver.hpp"
@@ -80,6 +87,73 @@ namespace ultraverse::state::v2::test_helpers {
         std::unordered_map<std::string, std::string> _columnAliases;
         std::unordered_map<std::string, std::string> _foreignKeys;
         std::unordered_map<std::string, std::unordered_map<StateRange, RowAlias>> _rowAliasTable;
+    };
+
+    class MockedDBHandleLease final: public ultraverse::mariadb::DBHandleLeaseBase {
+    public:
+        MockedDBHandleLease(
+            std::shared_ptr<ultraverse::mariadb::MockedDBHandle> handle,
+            std::function<void()> releaser
+        ):
+            _handle(std::move(handle)),
+            _releaser(std::move(releaser))
+        {
+        }
+
+        ~MockedDBHandleLease() override {
+            if (_releaser) {
+                _releaser();
+            }
+        }
+
+        ultraverse::mariadb::DBHandle &get() override {
+            return *_handle;
+        }
+
+    private:
+        std::shared_ptr<ultraverse::mariadb::MockedDBHandle> _handle;
+        std::function<void()> _releaser;
+    };
+
+    class MockedDBHandlePool final: public ultraverse::mariadb::DBHandlePoolBase {
+    public:
+        MockedDBHandlePool(
+            int poolSize,
+            std::shared_ptr<ultraverse::mariadb::MockedDBHandle::SharedState> sharedState
+        ):
+            _poolSize(poolSize),
+            _sharedState(std::move(sharedState))
+        {
+            for (int i = 0; i < poolSize; i++) {
+                _handles.push(std::make_shared<ultraverse::mariadb::MockedDBHandle>(_sharedState));
+            }
+        }
+
+        std::unique_ptr<ultraverse::mariadb::DBHandleLeaseBase> take() override {
+            std::unique_lock lock(_mutex);
+            _condvar.wait(lock, [this]() { return !_handles.empty(); });
+
+            auto handle = _handles.front();
+            _handles.pop();
+            lock.unlock();
+
+            return std::make_unique<MockedDBHandleLease>(handle, [this, handle]() {
+                std::scoped_lock lock(_mutex);
+                _handles.push(handle);
+                _condvar.notify_one();
+            });
+        }
+
+        int poolSize() const override {
+            return _poolSize;
+        }
+
+    private:
+        int _poolSize;
+        std::shared_ptr<ultraverse::mariadb::MockedDBHandle::SharedState> _sharedState;
+        std::mutex _mutex;
+        std::condition_variable _condvar;
+        std::queue<std::shared_ptr<ultraverse::mariadb::MockedDBHandle>> _handles;
     };
 
     inline StateItem makeEq(const std::string &name, int64_t value) {

@@ -1,17 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
-#include <condition_variable>
 #include <cstdint>
-#include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <queue>
 #include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "state_test_helpers.hpp"
 
 #include "mariadb/DBHandle.hpp"
 #include "mariadb/state/new/StateChanger.hpp"
@@ -33,6 +32,7 @@ namespace {
     using ultraverse::state::v2::MockedStateLogReader;
     using ultraverse::state::v2::MockedStateClusterStore;
     using ultraverse::state::v2::IBackupLoader;
+    using ultraverse::state::v2::test_helpers::MockedDBHandlePool;
     using ultraverse::state::v2::Transaction;
     using ultraverse::state::v2::Query;
     using ultraverse::state::v2::gid_t;
@@ -46,67 +46,6 @@ namespace {
             (void) dbName;
             (void) fileName;
         }
-    };
-
-    class TestHandleLease final: public ultraverse::mariadb::DBHandleLeaseBase {
-    public:
-        TestHandleLease(std::shared_ptr<MockedDBHandle> handle, std::function<void()> releaser):
-            _handle(std::move(handle)),
-            _releaser(std::move(releaser))
-        {
-        }
-
-        ~TestHandleLease() override {
-            if (_releaser) {
-                _releaser();
-            }
-        }
-
-        ultraverse::mariadb::DBHandle &get() override {
-            return *_handle;
-        }
-
-    private:
-        std::shared_ptr<MockedDBHandle> _handle;
-        std::function<void()> _releaser;
-    };
-
-    class TestHandlePool final: public ultraverse::mariadb::DBHandlePoolBase {
-    public:
-        TestHandlePool(int poolSize, std::shared_ptr<MockedDBHandle::SharedState> sharedState):
-            _poolSize(poolSize),
-            _sharedState(std::move(sharedState))
-        {
-            for (int i = 0; i < poolSize; i++) {
-                _handles.push(std::make_shared<MockedDBHandle>(_sharedState));
-            }
-        }
-
-        std::unique_ptr<ultraverse::mariadb::DBHandleLeaseBase> take() override {
-            std::unique_lock lock(_mutex);
-            _condvar.wait(lock, [this]() { return !_handles.empty(); });
-
-            auto handle = _handles.front();
-            _handles.pop();
-            lock.unlock();
-
-            return std::make_unique<TestHandleLease>(handle, [this, handle]() {
-                std::scoped_lock lock(_mutex);
-                _handles.push(handle);
-                _condvar.notify_one();
-            });
-        }
-
-        int poolSize() const override {
-            return _poolSize;
-        }
-
-    private:
-        int _poolSize;
-        std::shared_ptr<MockedDBHandle::SharedState> _sharedState;
-        std::mutex _mutex;
-        std::condition_variable _condvar;
-        std::queue<std::shared_ptr<MockedDBHandle>> _handles;
     };
 
     class ScopedIStreamRedirect {
@@ -277,7 +216,7 @@ TEST_CASE("StateChanger prepare outputs dependent GIDs only", "[statechanger][pr
     logReader->addTransaction(txn2, 2);
     logReader->addTransaction(txn3, 3);
 
-    TestHandlePool pool(1, sharedState);
+    MockedDBHandlePool pool(1, sharedState);
 
     StateChangerIO io;
     io.stateLogReader = std::move(logReader);
@@ -377,7 +316,7 @@ TEST_CASE("StateChanger prepare handles multiple rollback targets and partial-ke
     auto clusterStore = std::make_unique<MockedStateClusterStore>();
     clusterStore->save(cluster);
 
-    TestHandlePool pool(1, sharedState);
+    MockedDBHandlePool pool(1, sharedState);
 
     StateChangerIO io;
     io.stateLogReader = std::move(logReader);
@@ -436,7 +375,7 @@ TEST_CASE("StateChanger prepare includes column-wise dependent queries without k
     logReader->addTransaction(txn2, 2);
     logReader->addTransaction(txn3, 3);
 
-    TestHandlePool pool(1, sharedState);
+    MockedDBHandlePool pool(1, sharedState);
 
     StateChangerIO io;
     io.stateLogReader = std::move(logReader);
@@ -494,7 +433,7 @@ TEST_CASE("StateChanger replay respects dependency order within chains", "[state
     std::istringstream stdinSource(stdinBuilder.str());
     ScopedIStreamRedirect cinRedirect(std::cin, stdinSource.rdbuf());
 
-    TestHandlePool pool(kThreadNum, sharedState);
+    MockedDBHandlePool pool(kThreadNum, sharedState);
 
     StateChangerIO io;
     io.stateLogReader = std::move(logReader);

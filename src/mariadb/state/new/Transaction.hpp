@@ -66,6 +66,7 @@ namespace ultraverse::state::v2 {
         TransactionHeader header();
         
         std::vector<std::shared_ptr<Query>> &queries();
+        const std::vector<std::shared_ptr<Query>> &queries() const;
         
         CombinedIterator<StateItem> readSet_begin();
         
