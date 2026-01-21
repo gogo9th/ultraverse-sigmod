@@ -9,6 +9,7 @@
 
 #include <vector>
 #include <string>
+#include <map>
 
 #include "../StateItem.h"
 #include "ProcMatcher.hpp"
@@ -44,6 +45,7 @@ public:
   void save(Archive &archive) const;
   
   std::vector<StateItem> buildItemSet(const ultraverse::state::v2::ProcMatcher &procMatcher) const;
+  std::map<std::string, StateData> buildInitialVariables(const ultraverse::state::v2::ProcMatcher &procMatcher) const;
   
 private:
   uint64_t _callId;

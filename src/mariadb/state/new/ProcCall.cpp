@@ -60,3 +60,22 @@ std::vector<StateItem> ProcCall::buildItemSet(const ultraverse::state::v2::ProcM
    
     return itemSet;
 }
+
+std::map<std::string, StateData> ProcCall::buildInitialVariables(
+    const ultraverse::state::v2::ProcMatcher &procMatcher
+) const {
+    std::map<std::string, StateData> variables;
+    
+    if (procMatcher.parameters().size() != _parameters.size()) {
+        return variables;
+    }
+    
+    for (size_t i = 0; i < _parameters.size(); i++) {
+        const auto &name = procMatcher.parameters()[i];
+        const auto &value = _parameters[i];
+        
+        variables.emplace(name, value);
+    }
+    
+    return variables;
+}

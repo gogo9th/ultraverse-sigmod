@@ -9,6 +9,8 @@
 #include <fstream>
 #include <signal.h>
 
+#include <fmt/ranges.h>
+
 #include <nlohmann/json.hpp>
 
 #include <libultparser/libultparser.h>
@@ -505,6 +507,24 @@ public:
             procCallQuery->setDatabase(transactionObj->queries()[0]->database());
             procCallQuery->setTimestamp(transactionObj->queries()[0]->timestamp());
             procCallQuery->setFlags(state::v2::Query::FLAG_IS_PROCCALL_QUERY);
+
+            auto initialVariables = procCall->buildInitialVariables(*procMatcher);
+            auto traceResult = procMatcher->trace(initialVariables, _keyColumns);
+
+            if (!traceResult.unresolvedVars.empty()) {
+                _logger->warn("procedure {} has unresolved variables: {}",
+                              procCall->procName(),
+                              fmt::join(traceResult.unresolvedVars, ", "));
+            }
+
+            procCallQuery->readSet().insert(
+                procCallQuery->readSet().end(),
+                traceResult.readSet.begin(), traceResult.readSet.end()
+            );
+            procCallQuery->writeSet().insert(
+                procCallQuery->writeSet().end(),
+                traceResult.writeSet.begin(), traceResult.writeSet.end()
+            );
             
             *transactionObj << procCallQuery;
             
