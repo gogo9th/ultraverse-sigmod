@@ -147,12 +147,21 @@ TEST_CASE("QueryEventBase buildRWSet handles BETWEEN and NOT BETWEEN") {
         parsed.event->buildRWSet({});
         const auto &readItems = parsed.event->readSet();
 
-        const auto *ageItem = findItem(readItems, "users.age");
-        REQUIRE(ageItem != nullptr);
-        REQUIRE(ageItem->function_type == FUNCTION_BETWEEN);
-        REQUIRE(ageItem->data_list.size() == 2);
-        REQUIRE(ageItem->data_list[0].getAs<int64_t>() == 18);
-        REQUIRE(ageItem->data_list[1].getAs<int64_t>() == 30);
+        bool hasLower = false;
+        bool hasUpper = false;
+        for (const auto &item : readItems) {
+            if (item.name != "users.age" || item.data_list.size() != 1) {
+                continue;
+            }
+            const auto value = item.data_list[0].getAs<int64_t>();
+            if (item.function_type == FUNCTION_GE && value == 18) {
+                hasLower = true;
+            } else if (item.function_type == FUNCTION_LE && value == 30) {
+                hasUpper = true;
+            }
+        }
+        REQUIRE(hasLower);
+        REQUIRE(hasUpper);
     }
 
     {
@@ -160,12 +169,21 @@ TEST_CASE("QueryEventBase buildRWSet handles BETWEEN and NOT BETWEEN") {
         parsed.event->buildRWSet({});
         const auto &readItems = parsed.event->readSet();
 
-        const auto *ageItem = findItem(readItems, "users.age");
-        REQUIRE(ageItem != nullptr);
-        REQUIRE(ageItem->function_type == FUNCTION_NE);
-        REQUIRE(ageItem->data_list.size() == 2);
-        REQUIRE(ageItem->data_list[0].getAs<int64_t>() == 18);
-        REQUIRE(ageItem->data_list[1].getAs<int64_t>() == 30);
+        bool hasLower = false;
+        bool hasUpper = false;
+        for (const auto &item : readItems) {
+            if (item.name != "users.age" || item.data_list.size() != 1) {
+                continue;
+            }
+            const auto value = item.data_list[0].getAs<int64_t>();
+            if (item.function_type == FUNCTION_LT && value == 18) {
+                hasLower = true;
+            } else if (item.function_type == FUNCTION_GT && value == 30) {
+                hasUpper = true;
+            }
+        }
+        REQUIRE(hasLower);
+        REQUIRE(hasUpper);
     }
 }
 
@@ -228,12 +246,21 @@ TEST_CASE("QueryEventBase buildRWSet handles DELETE with NOT BETWEEN") {
     parsed.event->buildRWSet({});
     const auto &readItems = parsed.event->readSet();
 
-    const auto *item = findItem(readItems, "sessions.last_seen");
-    REQUIRE(item != nullptr);
-    REQUIRE(item->function_type == FUNCTION_NE);
-    REQUIRE(item->data_list.size() == 2);
-    REQUIRE(item->data_list[0].getAs<int64_t>() == 100);
-    REQUIRE(item->data_list[1].getAs<int64_t>() == 200);
+    bool hasLower = false;
+    bool hasUpper = false;
+    for (const auto &item : readItems) {
+        if (item.name != "sessions.last_seen" || item.data_list.size() != 1) {
+            continue;
+        }
+        const auto value = item.data_list[0].getAs<int64_t>();
+        if (item.function_type == FUNCTION_LT && value == 100) {
+            hasLower = true;
+        } else if (item.function_type == FUNCTION_GT && value == 200) {
+            hasUpper = true;
+        }
+    }
+    REQUIRE(hasLower);
+    REQUIRE(hasUpper);
 }
 
 #if 0
