@@ -1,0 +1,260 @@
+import os
+import re
+import shutil
+import subprocess
+import time
+
+from esperanza.benchbase.benchmark_session import BenchmarkSession
+from esperanza.utils.download_mysql import download_mysql
+from esperanza.utils.state_change_report import read_state_change_report
+
+KEY_COLUMNS = [
+    'items.id',
+    'orders.order_id',
+]
+BACKUP_FILE = "dbdump.sql"
+COLUMN_ALIASES: dict[str, list[str]] = {}
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+MINISHOP_DIR = os.path.join(SCRIPT_DIR, "minishop")
+PROCDEF_DIR = os.path.join(SCRIPT_DIR, "procdefs", "minishop")
+
+SCHEMA_SQL = os.path.join(MINISHOP_DIR, "schema.sql")
+PROCEDURES_SQL = os.path.join(MINISHOP_DIR, "procedures.sql")
+SCENARIO_SQL = os.path.join(MINISHOP_DIR, "scenario.sql")
+
+EXPECTED_STOCK_ITEM1 = 10
+EXPECTED_STOCK_ITEM2 = 6
+EXPECTED_ORDER_STATUS = "PAID"
+EXPECTED_REFUND_COUNT = 0
+
+
+def mysql_args(session: BenchmarkSession, database: str | None = None, no_header: bool = False) -> list[str]:
+    args = [
+        session.mysqld.bin_for("mysql"),
+        "-h127.0.0.1",
+        f"--port={session.mysqld.port}",
+        "-uroot",
+        "-ppassword",
+        "-B",
+        "--silent",
+        "--raw",
+    ]
+    if no_header:
+        args.append("-N")
+    if database:
+        args.append(database)
+    return args
+
+
+def mysql_source(session: BenchmarkSession, sql_path: str, database: str | None = None) -> None:
+    args = mysql_args(session, database)
+    args += ["-e", f"source {sql_path}"]
+    subprocess.check_call(args, stdout=subprocess.DEVNULL)
+
+
+def mysql_scalar(session: BenchmarkSession, sql: str, database: str = "benchbase") -> str:
+    args = mysql_args(session, database, no_header=True)
+    args += ["-e", sql]
+    output = subprocess.check_output(args)
+    return output.decode("utf-8").strip()
+
+
+def copy_procdefs(session: BenchmarkSession) -> None:
+    dst_dir = os.path.join(session.session_path, "procdef")
+    os.makedirs(dst_dir, exist_ok=True)
+    for name in os.listdir(PROCDEF_DIR):
+        if not name.endswith(".sql"):
+            continue
+        shutil.copy2(os.path.join(PROCDEF_DIR, name), dst_dir)
+
+def patch_procedures(session: BenchmarkSession) -> tuple[str, str]:
+    patch_dir = os.path.join(session.session_path, "procpatcher")
+    os.makedirs(patch_dir, exist_ok=True)
+
+    patched_sql = os.path.join(patch_dir, "procedures.patched.sql")
+    helper_sql = os.path.join(patch_dir, "__ultraverse__helper.sql")
+
+    subprocess.check_call(
+        ["go", "run", "./procpatcher", PROCEDURES_SQL, patched_sql],
+        cwd=REPO_ROOT,
+    )
+
+    if not os.path.exists(helper_sql):
+        raise RuntimeError("procpatcher did not generate __ultraverse__helper.sql")
+
+    return patched_sql, helper_sql
+
+
+def find_gid_by_query(session: BenchmarkSession, needles: list[str]) -> int:
+    ultraverse_home = os.environ.get("ULTRAVERSE_HOME")
+    if not ultraverse_home:
+        raise RuntimeError("ULTRAVERSE_HOME is not set")
+
+    viewer_path = os.path.join(ultraverse_home, "state_log_viewer")
+    result = subprocess.run(
+        [viewer_path, "-i", "benchbase.ultstatelog"],
+        cwd=session.session_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError("state_log_viewer failed")
+
+    current_gid = None
+    for line in result.stdout.splitlines():
+        match = re.search(r"Transaction #(\d+)", line)
+        if match:
+            current_gid = int(match.group(1))
+            continue
+        if current_gid is not None and any(needle in line for needle in needles):
+            return current_gid
+
+    raise RuntimeError(f"failed to find gid for queries containing {', '.join(needles)}")
+
+
+def perform_state_change(session: BenchmarkSession, rollback_gid: int):
+    logger = session.logger
+
+    rollback_log_name = f"rollback_{rollback_gid}"
+    rollback_stdout_name = rollback_log_name + ".stdout"
+    rollback_stderr_name = rollback_log_name + ".stderr"
+    rollback_report_name = session.report_name_from_stdout(rollback_stdout_name)
+
+    replay_log_name = rollback_log_name + ".replay"
+    replay_stdout_name = replay_log_name + ".stdout"
+    replay_stderr_name = replay_log_name + ".stderr"
+    replay_report_name = session.report_name_from_stdout(replay_stdout_name)
+
+    rollback_action = f"rollback={rollback_gid}"
+    session.run_db_state_change(
+        rollback_action,
+        stdout_name=rollback_stdout_name,
+        stderr_name=rollback_stderr_name,
+    )
+
+    rollback_report = read_state_change_report(f"{session.session_path}/{rollback_report_name}")
+
+    session.run_db_state_change(
+        "replay",
+        stdout_name=replay_stdout_name,
+        stderr_name=replay_stderr_name,
+    )
+
+    replay_report = read_state_change_report(f"{session.session_path}/{replay_report_name}")
+    logger.info(f"State Change Report: {rollback_log_name}")
+    logger.info(f"prepare: {rollback_report['executionTime']}, replay: {replay_report['executionTime']}")
+
+    return rollback_report, replay_report
+
+
+def verify_rowwise_skip(rollback_report: dict) -> None:
+    replay_count = rollback_report.get("replayGidCount")
+    if replay_count is None:
+        raise RuntimeError("rollback report missing replayGidCount")
+
+    if replay_count != 1:
+        raise RuntimeError(f"expected replayGidCount=1 for row-wise skip, got {replay_count}")
+
+
+def verify_results(session: BenchmarkSession) -> None:
+    stock_item1 = int(mysql_scalar(session, "SELECT stock FROM items WHERE id = 1;"))
+    stock_item2 = int(mysql_scalar(session, "SELECT stock FROM items WHERE id = 2;"))
+    order_status = mysql_scalar(
+        session,
+        "SELECT status FROM orders WHERE order_id = (SELECT MIN(order_id) FROM orders WHERE item_id = 1);",
+    )
+    refund_count = int(mysql_scalar(
+        session,
+        "SELECT COUNT(*) FROM refunds WHERE order_id = (SELECT MIN(order_id) FROM orders WHERE item_id = 1);",
+    ))
+
+    if stock_item1 != EXPECTED_STOCK_ITEM1:
+        raise RuntimeError(f"items.id=1 stock expected {EXPECTED_STOCK_ITEM1}, got {stock_item1}")
+    if stock_item2 != EXPECTED_STOCK_ITEM2:
+        raise RuntimeError(f"items.id=2 stock expected {EXPECTED_STOCK_ITEM2}, got {stock_item2}")
+    if order_status != EXPECTED_ORDER_STATUS:
+        raise RuntimeError(f"order status expected {EXPECTED_ORDER_STATUS}, got {order_status}")
+    if refund_count != EXPECTED_REFUND_COUNT:
+        raise RuntimeError(f"refund count expected {EXPECTED_REFUND_COUNT}, got {refund_count}")
+
+
+if __name__ == "__main__":
+    if not download_mysql():
+        print("MySQL distribution is not available")
+        exit(1)
+
+    os.putenv("DB_HOST", "127.0.0.1")
+    os.putenv("DB_PORT", "3306")
+    os.putenv("DB_USER", "admin")
+    os.putenv("DB_PASS", "password")
+
+    session = BenchmarkSession("minishop", "mini")
+    logger = session.logger
+
+    session.mysqld.prepare()
+    time.sleep(5)
+
+    logger.info("starting mysqld...")
+    session.mysqld.start()
+    time.sleep(5)
+
+    logger.info("creating schema/procedures...")
+    mysql_source(session, SCHEMA_SQL)
+
+    patched_sql, helper_sql = patch_procedures(session)
+    mysql_source(session, helper_sql, "benchbase")
+    mysql_source(session, patched_sql, "benchbase")
+
+    logger.info("dumping checkpoint...")
+    session.mysqld.mysqldump("benchbase", f"{session.session_path}/dbdump.sql")
+
+    session.mysqld.stop()
+
+    session.mysqld.flush_binlogs()
+
+    logger.info("starting mysqld for scenario...")
+    session.mysqld.start()
+    time.sleep(5)
+
+    logger.info("running scenario...")
+    mysql_source(session, SCENARIO_SQL)
+
+    session.mysqld.stop()
+
+    logger.info("starting mysqld for dump...")
+    session.mysqld.start()
+    time.sleep(5)
+
+    logger.info("dumping latest database...")
+    session.mysqld.mysqldump("benchbase", f"{session.session_path}/dbdump_latest.sql")
+
+    session.mysqld.stop()
+
+    os.system(f"mv -v {session.session_path}/mysql/server-binlog.* {session.session_path}/")
+
+    copy_procdefs(session)
+
+    session.run_statelogd(key_columns=KEY_COLUMNS)
+    session.update_config(backup_file=BACKUP_FILE, column_aliases=COLUMN_ALIASES)
+
+    logger.info("starting mysqld for state change...")
+    session.mysqld.start()
+    time.sleep(10)
+
+    logger.info("creating cluster...")
+    session.run_db_state_change("make_cluster")
+
+    refund_gid = find_gid_by_query(session, ["refund_item", "refunds", "REFUNDED"])
+    logger.info(f"refund gid: {refund_gid}")
+
+    rollback_report, _replay_report = perform_state_change(session, refund_gid)
+    verify_rowwise_skip(rollback_report)
+
+    verify_results(session)
+
+    logger.info("stopping mysqld...")
+    session.mysqld.stop()

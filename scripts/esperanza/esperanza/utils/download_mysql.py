@@ -16,14 +16,14 @@ MYSQL_DISTRIBUTIONS = {
     },
     "Darwin": {
         "arm64": {
-            "url": f"https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-{MYSQL_VERSION}-macos14-arm64.tar.gz",
-            "name": f"mysql-{MYSQL_VERSION}-macos14-arm64",
-            "tarname": f"mysql-{MYSQL_VERSION}-macos14-arm64.tar.gz",
+            "url": f"https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-{MYSQL_VERSION}-macos15-arm64.tar.gz",
+            "name": f"mysql-{MYSQL_VERSION}-macos15-arm64",
+            "tarname": f"mysql-{MYSQL_VERSION}-macos15-arm64.tar.gz",
         },
         "x86_64": {
-            "url": f"https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-{MYSQL_VERSION}-macos14-x86_64.tar.gz",
-            "name": f"mysql-{MYSQL_VERSION}-macos14-x86_64",
-            "tarname": f"mysql-{MYSQL_VERSION}-macos14-x86_64.tar.gz",
+            "url": f"https://dev.mysql.com/get/Downloads/MySQL-8.4/mysql-{MYSQL_VERSION}-macos15-x86_64.tar.gz",
+            "name": f"mysql-{MYSQL_VERSION}-macos15-x86_64",
+            "tarname": f"mysql-{MYSQL_VERSION}-macos15-x86_64.tar.gz",
         },
     },
 }

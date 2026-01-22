@@ -1,0 +1,32 @@
+CREATE DATABASE IF NOT EXISTS benchbase;
+USE benchbase;
+
+DROP TABLE IF EXISTS refunds;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS items;
+
+CREATE TABLE items (
+    id INT PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
+    price INT NOT NULL,
+    stock INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE orders (
+    order_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    item_id INT NOT NULL,
+    quantity INT NOT NULL,
+    total_price INT NOT NULL,
+    status ENUM('PAID','REFUNDED') NOT NULL DEFAULT 'PAID',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_orders_item FOREIGN KEY (item_id) REFERENCES items(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE refunds (
+    refund_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    order_id BIGINT NOT NULL,
+    amount INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_refunds_order FOREIGN KEY (order_id) REFERENCES orders(order_id)
+) ENGINE=InnoDB;
