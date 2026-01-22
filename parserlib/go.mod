@@ -9,7 +9,7 @@ require (
 	google.golang.org/protobuf v1.36.10
 )
 
-replace github.com/pingcap/tidb/pkg/parser => github.com/unstabler/tidb/pkg/parser v0.0.0-20260121094910-612b9aa21b71
+replace github.com/pingcap/tidb/pkg/parser => github.com/unstabler/tidb/pkg/parser v0.0.0-20260122115123-d7e3dcec7180
 
 require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
