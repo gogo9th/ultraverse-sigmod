@@ -38,7 +38,8 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/mysql_binlogevents.cmake)
 
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-add_compile_options(-march=native -O2)
+# add_compile_options(-march=native -O2)
+add_compile_options(-O0 -g)
 
 if (APPLE)
     add_compile_options(-fexperimental-library "-I/opt/homebrew/opt/llvm/include")

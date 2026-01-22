@@ -2,7 +2,6 @@
 // Created by cheesekun on 3/16/23.
 //
 
-#include <array>
 #include <cstdint>
 #include <cmath>
 #include <optional>
@@ -11,10 +10,6 @@
 #include <ultparser_query.pb.h>
 
 #include "ProcMatcher.hpp"
-#include "Query.hpp"
-#include "ProcCall.hpp"
-
-#include "mariadb/DBEvent.hpp"
 
 #include "utils/StringUtil.hpp"
 
@@ -136,6 +131,7 @@ namespace ultraverse::state::v2 {
     void ProcMatcher::load(const std::string &procedureDefinition, ProcMatcher &instance) {
         static const auto logger = createLogger("ProcMatcher");
         static thread_local uintptr_t s_parser = 0;
+
         if (s_parser == 0) {
             s_parser = ult_sql_parser_create();
         }
@@ -176,7 +172,6 @@ namespace ultraverse::state::v2 {
         }
         
         {
-            auto &statements = instance._codes;
             const auto &_procedureInfo = parseResult.statements()[0];
             assert(_procedureInfo.type() == ultparser::Query::PROCEDURE);
             
@@ -186,27 +181,9 @@ namespace ultraverse::state::v2 {
                 instance._parameters.push_back(parameter.name());
             }
          
-            const std::function<void(const google::protobuf::RepeatedPtrField<ultparser::Query> &)> insertStatements = [&statements, &insertStatements](const google::protobuf::RepeatedPtrField<ultparser::Query> &_statements) {
-                for (const auto &_statement: _statements) {
-                    if (_statement.type() == ultparser::Query_QueryType_IF) {
-                        auto &ifBlock = _statement.if_block();
-                        
-                        insertStatements(ifBlock.then_block());
-                        insertStatements(ifBlock.else_block());
-                        
-                        continue;
-                    } else if (_statement.type() == ultparser::Query_QueryType_WHILE) {
-                        auto &whileBlock = _statement.while_block();
-                        
-                        insertStatements(whileBlock.block());
-                        continue;
-                    }
-                    
-                    statements.push_back(std::make_shared<ultparser::Query>(_statement));
-                }
-            };
-            
-            insertStatements(procedureInfo.statements());
+            for (const auto &statement: procedureInfo.statements()) {
+                instance._codes.push_back(std::make_shared<ultparser::Query>(statement));
+            }
         }
         
         return;
@@ -271,11 +248,11 @@ namespace ultraverse::state::v2 {
     }
     
     void ProcMatcher::extractRWSets(const ultparser::Query &statement) {
-        static const auto insertReadSet = [this](std::unordered_set<std::string> readSet) {
+        const auto insertReadSet = [this](std::unordered_set<std::string> readSet) {
             _readSet.insert(readSet.begin(), readSet.end());
         };
         
-        static const auto insertWriteSet = [this](std::unordered_set<std::string> writeSet) {
+        const auto insertWriteSet = [this](std::unordered_set<std::string> writeSet) {
             _writeSet.insert(writeSet.begin(), writeSet.end());
         };
         
@@ -314,45 +291,6 @@ namespace ultraverse::state::v2 {
                 extractRWSets(q);
             }
         }
-    }
-    
-    int ProcMatcher::matchForward(const std::string &statement, int fromIndex) {
-        static thread_local uintptr_t s_parser = 0;
-        if (s_parser == 0) {
-            s_parser = ult_sql_parser_create();
-        }
-
-        std::array<unsigned char, 20> statementHash{};
-        if (ult_query_hash_new(
-                s_parser,
-                (char *) statement.c_str(),
-                static_cast<int64_t>(statement.size()),
-                reinterpret_cast<char *>(statementHash.data())
-            ) != 20) {
-            return -1;
-        }
-        
-        for (int i = fromIndex; i < _codes.size(); i++) {
-            // DML일때만 매칭을 시도한다.
-            if (_codes[i]->type() == ultparser::Query::DML) {
-                const auto &codeStatement = _codes[i]->dml().statement();
-                std::array<unsigned char, 20> codeHash{};
-                if (ult_query_hash_new(
-                        s_parser,
-                        (char *) codeStatement.c_str(),
-                        static_cast<int64_t>(codeStatement.size()),
-                        reinterpret_cast<char *>(codeHash.data())
-                    ) != 20) {
-                    continue;
-                }
-
-                if (statementHash == codeHash) {
-                    return i;
-                }
-            }
-        }
-
-        return -1;
     }
     
     TraceResult ProcMatcher::trace(
@@ -664,105 +602,6 @@ namespace ultraverse::state::v2 {
         }
         
         return items;
-    }
-    
-    std::vector<StateItem> ProcMatcher::variableSet(const ProcCall &procCall) const {
-        std::vector<StateItem> _variableSet;
-        
-        auto procParameters = procCall.buildItemSet(*this);
-        std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(_variableSet));
-        
-        return std::move(_variableSet);
-    }
-    
-    std::vector<std::shared_ptr<Query>> ProcMatcher::asQuery(int index, const ProcCall &procCall, const std::vector<std::string> &keyColumns) const {
-        std::vector<std::shared_ptr<Query>> queries;
-        
-        auto &code = codes().at(index);
-        
-        const std::function<void(const ultparser::Query &)> processQuery = [&](const ultparser::Query &code) {
-            auto query = std::make_shared<Query>();
-            auto procParameters = procCall.buildItemSet(*this);
-            
-            std::string statement = "SELECT 1";
-            
-            switch (code.type()) {
-                case ultparser::Query_QueryType_DDL:
-                    statement = code.ddl().statement();
-                    break;
-                case ultparser::Query_QueryType_DML:
-                    statement = code.dml().statement();
-                    break;
-                case ultparser::Query_QueryType_IF: {
-                    auto &block = code.if_block();
-                    for (const auto &_query: block.then_block()) {
-                        processQuery(_query);
-                    }
-                    
-                    for (const auto &_query: block.else_block()) {
-                        processQuery(_query);
-                    }
-                }
-                    return;
-                    
-                case ultparser::Query_QueryType_WHILE: {
-                    auto &whileBlock = code.while_block();
-                    for (const auto &_query: whileBlock.block()) {
-                        processQuery(_query);
-                    }
-                }
-                    return;
-                default:
-                    _logger->error("unsupprted statement type: {}", (int) code.type());
-                    break;
-            }
-            
-            auto event = std::make_shared<mariadb::QueryEvent>(
-                "fillme",
-                statement,
-                0
-            );
-            
-            std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->variableSet()));
-
-            if (!event->parse()) {
-                _logger->warn("cannot parse procedure statement: {}", statement);
-            }
-            event->buildRWSet(keyColumns);
-            
-            query->setStatement(statement);
-            query->setFlags(Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
-            if (code.type() == ultparser::Query_QueryType_DDL) {
-                query->setFlags(query->flags() | Query::FLAG_IS_DDL);
-            }
-            
-            query->readSet().insert(
-                query->readSet().end(),
-                event->readSet().begin(), event->readSet().end()
-            );
-            query->writeSet().insert(
-                query->writeSet().end(),
-                event->writeSet().begin(), event->writeSet().end()
-            );
-            {
-                ColumnSet readColumns;
-                ColumnSet writeColumns;
-                event->columnRWSet(readColumns, writeColumns);
-                query->readColumns().insert(readColumns.begin(), readColumns.end());
-                query->writeColumns().insert(writeColumns.begin(), writeColumns.end());
-            }
-            
-            query->varMap().insert(
-                query->varMap().end(),
-                event->variableSet().begin(), event->variableSet().end()
-            );
-            
-            return queries.push_back(query);
-        };
-        
-        processQuery(*code);
-        
-        return queries;
     }
     
     const std::vector<std::string> &ProcMatcher::parameters() const {

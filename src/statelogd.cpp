@@ -488,7 +488,6 @@ public:
         bool containsDDL = false;
         
         auto procMatcher = procedureDefinition(procCall->procName());
-        int prevIndex = 1;
         
         if (procMatcher == nullptr) {
             _logger->error("procedure definition for {} is not available!", procCall->procName());
@@ -501,6 +500,8 @@ public:
             procCall->statements().push_back(buildCallStatement(*procCall, *procMatcher));
         }
         
+        std::shared_ptr<state::v2::Query> firstQuery;
+        
         while (!queries.empty()) {
             auto pendingQuery = std::move(queries.front());
             queries.pop();
@@ -509,37 +510,14 @@ public:
                 continue;
             }
             
-            {
-                if (isProcedureHint(pendingQuery->statement())) {
-                    continue;
-                }
-                
-                auto index = procMatcher->matchForward(pendingQuery->statement(), prevIndex);
-                
-                if (index == -1) {
-                    _logger->error("query not matched: {} at index {}", pendingQuery->statement(), prevIndex);
-                    goto APPEND_QUERY;
-                }
-                
-                for (int i = prevIndex; i < index; i++) {
-                    auto queries = procMatcher->asQuery(i, *procCall, _keyColumns);
-                    for (auto &query : queries) {
-                        query->setDatabase(pendingQuery->database());
-                        query->setTimestamp(pendingQuery->timestamp());
-                        query->setFlags(state::v2::Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
-                        *transactionObj << query;
-                        if (query->flags() & state::v2::Query::FLAG_IS_DDL) {
-                            containsDDL = true;
-                        }
-                    }
-                }
-                
-                
-                prevIndex = index;
+            if (isProcedureHint(pendingQuery->statement())) {
+                continue;
             }
             
-            APPEND_QUERY:
-            *transactionObj << pendingQuery;
+            if (firstQuery == nullptr) {
+                firstQuery = pendingQuery;
+            }
+            
             if (pendingQuery->flags() & state::v2::Query::FLAG_IS_DDL) {
                 containsDDL = true;
             }
@@ -548,8 +526,10 @@ public:
         {
             auto procCallQuery = std::make_shared<state::v2::Query>();
             procCallQuery->setStatement(procCall->statements()[0]);
-            procCallQuery->setDatabase(transactionObj->queries()[0]->database());
-            procCallQuery->setTimestamp(transactionObj->queries()[0]->timestamp());
+            if (firstQuery != nullptr) {
+                procCallQuery->setDatabase(firstQuery->database());
+                procCallQuery->setTimestamp(firstQuery->timestamp());
+            }
             procCallQuery->setFlags(state::v2::Query::FLAG_IS_PROCCALL_QUERY);
 
             auto initialVariables = procCall->buildInitialVariables(*procMatcher);
@@ -581,8 +561,6 @@ public:
         if (containsDDL) {
             transactionObj->setFlags(transactionObj->flags() | state::v2::Transaction::FLAG_CONTAINS_DDL);
         }
-        
-        // _pendingTxn->variableSet() = procMatcher->variableSet(*procCall);
         
         // transactionObj->setGid(_gid++);
         

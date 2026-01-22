@@ -9,15 +9,13 @@
 #include <vector>
 #include <optional>
 #include <map>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <ultparser_query.pb.h>
 
-#include "Query.hpp"
-
 #include "../StateItem.h"
 #include "utils/log.hpp"
-
-class ProcCall;
 
 namespace ultraverse::state::v2 {
     
@@ -58,22 +56,11 @@ namespace ultraverse::state::v2 {
          */
         ProcMatcher(const std::vector<std::string> &procedureCodes);
         
-        /**
-         * 주어진 쿼리가 프로시저의 몇번째 줄인지 매칭을 시도합니다.
-         * @return 성공적으로 매칭된 경우 프로시저 소스 코드의 라인 넘버,
-         *         매칭에 실패한 경우에는 음수를 반환합니다.
-         */
-        int matchForward(const std::string &statement, int fromIndex);
-        
-        
         TraceResult trace(
             const std::map<std::string, StateData>& initialVariables,
             const std::vector<std::string>& keyColumns = {}
         ) const;
         
-        
-        std::vector<StateItem> variableSet(const ProcCall &procCall) const;
-        std::vector<std::shared_ptr<Query>> asQuery(int index, const ProcCall &procCall, const std::vector<std::string> &keyColumns) const;
         
         const std::vector<std::string> &parameters() const;
         const std::vector<std::shared_ptr<ultparser::Query>> codes() const;
