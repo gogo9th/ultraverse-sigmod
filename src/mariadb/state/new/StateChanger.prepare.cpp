@@ -6,6 +6,7 @@
 #include <atomic>
 #include <future>
 #include <sstream>
+#include <stdexcept>
 
 #include <execution>
 
@@ -462,7 +463,15 @@ namespace ultraverse::state::v2 {
                 }
 
                 if (_plan.hasUserQuery(transaction->gid())) {
-                    auto userQuery = std::move(loadUserQuery(_plan.userQueries()[transaction->gid()]));
+                    const auto &userQueryPath = _plan.userQueries().at(transaction->gid());
+                    auto userQuery = loadUserQuery(userQueryPath);
+                    if (!userQuery) {
+                        std::ostringstream message;
+                        message << "failed to load user query for gid " << transaction->gid()
+                                << " from " << userQueryPath;
+                        _logger->error("{}", message.str());
+                        throw std::runtime_error(message.str());
+                    }
                     userQuery->setGid(transaction->gid());
                     userQuery->setTimestamp(transaction->timestamp());
                     rowCluster.addPrependTarget(transaction->gid(), userQuery, cachedResolver);

@@ -16,6 +16,7 @@ namespace ultraverse::state::v2 {
         // read entire file
         std::ifstream ifs(path);
         if (!ifs.is_open()) {
+            _logger->error("failed to open user query file: {}", path);
             return nullptr;
         }
 
