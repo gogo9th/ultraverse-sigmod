@@ -83,6 +83,9 @@ set(LIBULTRAVERSE_BASE_SRCS
     utils/log.hpp
     utils/StringUtil.cpp
     utils/StringUtil.hpp
+    
+    config/UltraverseConfig.cpp
+    config/UltraverseConfig.hpp
 
     mariadb/state/new/CombinedIterator.cpp 
     mariadb/state/new/CombinedIterator.hpp

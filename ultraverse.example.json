@@ -1,0 +1,37 @@
+{
+  "binlog": {
+    "path": "/var/lib/mysql",
+    "indexName": "mysql-bin.index"
+  },
+  "stateLog": {
+    "path": ".",
+    "name": "ultraverse"
+  },
+  "keyColumns": [
+    "users.id",
+    "orders.user_id+orders.item_id"
+  ],
+  "columnAliases": {
+    "users.uid": ["users.id"],
+    "orders.uid": ["orders.user_id"]
+  },
+  "database": {
+    "host": "localhost",
+    "port": 3306,
+    "name": "mydb",
+    "username": "root",
+    "password": ""
+  },
+  "statelogd": {
+    "threadCount": 0,
+    "oneshotMode": false,
+    "procedureLogPath": "",
+    "developmentFlags": []
+  },
+  "stateChange": {
+    "threadCount": 0,
+    "backupFile": "",
+    "keepIntermediateDatabase": false,
+    "rangeComparisonMethod": "eqonly"
+  }
+}
