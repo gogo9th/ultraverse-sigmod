@@ -11,11 +11,8 @@ endif()
 
 find_package(Boost REQUIRED)
 
-include_directories(../dependencies/sql-parser/src)
-include_directories(../dependencies/sql-parser/src/parser)
 include_directories(../dependencies/nlohmann-json/include)
 include_directories(../dependencies/cereal/include)
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/../dependencies/sql-parser)
 include_directories(${Boost_INCLUDE_DIRS})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen)
@@ -54,6 +51,9 @@ target_link_libraries(relationship-resolver-test ultraverse Catch2::Catch2WithMa
 
 add_executable(statehash-test statehash-test.cpp)
 target_link_libraries(statehash-test ultraverse Catch2::Catch2WithMain)
+
+add_executable(ultraverseconfig-test ultraverseconfig-test.cpp)
+target_link_libraries(ultraverseconfig-test ultraverse Catch2::Catch2WithMain)
 
 add_executable(stateitem-test stateitem-test.cpp)
 target_link_libraries(stateitem-test ultraverse Catch2::Catch2WithMain)
@@ -97,6 +97,7 @@ if (APPLE)
     target_link_options(rowgraph-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(relationship-resolver-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(statehash-test PRIVATE "-L/opt/homebrew/lib")
+    target_link_options(ultraverseconfig-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(stateitem-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(sqlparser-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(tabledependencygraph-test PRIVATE "-L/opt/homebrew/lib")
@@ -112,6 +113,7 @@ add_test(NAME statecluster-test COMMAND statecluster-test)
 add_test(NAME rowgraph-test COMMAND rowgraph-test)
 add_test(NAME relationship-resolver-test COMMAND relationship-resolver-test)
 add_test(NAME statehash-test COMMAND statehash-test)
+add_test(NAME ultraverseconfig-test COMMAND ultraverseconfig-test)
 add_test(NAME stateitem-test COMMAND stateitem-test)
 add_test(NAME sqlparser-test COMMAND sqlparser-test)
 add_test(NAME tabledependencygraph-test COMMAND tabledependencygraph-test)

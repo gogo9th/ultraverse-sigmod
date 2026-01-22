@@ -10,10 +10,6 @@
 
 #include "DBEvent.hpp"
 
-#include "SQLParser.h"
-#include "bison_parser.h"
-#include "util/sqlhelper.h"
-
 #include "utils/StringUtil.hpp"
 
 
@@ -24,10 +20,6 @@ namespace ultraverse::base {
         _queryType(UNKNOWN)
     {
     
-    }
-    
-    bool QueryEventBase::tokenize() {
-        return hsql::SQLParser::tokenize(statement(), &_tokens, &_tokenPos);
     }
     
     bool QueryEventBase::parse() {
@@ -188,8 +180,30 @@ namespace ultraverse::base {
     }
     
     bool QueryEventBase::processDDL(const ultparser::DDLQuery &ddlQuery) {
-        _logger->warn("FIXME: DDL is not supported yet.");
-        return false;
+        switch (ddlQuery.type()) {
+            case ultparser::DDLQuery::CREATE:
+                _queryType = CREATE_TABLE;
+                break;
+            case ultparser::DDLQuery::ALTER:
+                _queryType = ALTER_TABLE;
+                break;
+            case ultparser::DDLQuery::DROP:
+                _queryType = DROP_TABLE;
+                break;
+            case ultparser::DDLQuery::TRUNCATE:
+                _queryType = TRUNCATE_TABLE;
+                break;
+            case ultparser::DDLQuery::RENAME:
+                _queryType = RENAME_TABLE;
+                break;
+            case ultparser::DDLQuery::UNKNOWN:
+            default:
+                _queryType = DDL_UNKNOWN;
+                break;
+        }
+
+        _logger->warn("DDL is not supported yet.");
+        return true;
     }
     
     bool QueryEventBase::processDML(const ultparser::DMLQuery &dmlQuery) {
@@ -665,226 +679,6 @@ namespace ultraverse::base {
         }
     }
     
-    bool QueryEventBase::parseSelect() {
-        static const auto tolower = [](unsigned char c) { return std::tolower(c); };
-
-        constexpr int PHASE_COLUMNS = 1;
-        constexpr int PHASE_TABLE_NAME = 2;
-        constexpr int PHASE_WHERE_COL = 3;
-        constexpr int PHASE_WHERE_VAL = 4;
-
-        int phase = PHASE_COLUMNS;
-        int depth = 0;
-
-        bool isNameConst = false;
-        bool isNameConstVal = false;
-        bool skip = false;
-
-        std::vector<int16_t> tokens;
-        std::vector<size_t> tokenPos;
-        hsql::SQLParser::tokenize(statement(), &tokens, &tokenPos);
-
-        std::string tableName;
-        std::string whereCol;
-        std::set<std::string> readSet;
-        std::unordered_map<std::string, int64_t> whereSet;
-
-        int i = 0;
-        for (auto &token: tokens) {
-            if (token == SQL_SELECT) {
-                phase = PHASE_COLUMNS;
-                skip = false;
-                goto NEXT_TOKEN;
-            } else if (token == SQL_FROM) {
-                phase = PHASE_TABLE_NAME;
-                skip = false;
-                goto NEXT_TOKEN;
-            } else if (token == SQL_WHERE) {
-                phase = PHASE_WHERE_COL;
-                skip = false;
-                goto NEXT_TOKEN;
-            }
-
-            if (token == SQL_NAME_CONST) {
-                isNameConst = true;
-                goto NEXT_TOKEN;
-            }
-
-            if (token == '(') {
-                depth++;
-                goto NEXT_TOKEN;
-            }
-
-            if (token == ')') {
-                depth--;
-                goto NEXT_TOKEN;
-            }
-
-            if (token == ',' || token == SQL_AND || token == SQL_OR) {
-                if (depth == 0) {
-                    skip = false;
-                    isNameConst = false;
-                    isNameConstVal = false;
-                }
-                goto NEXT_TOKEN;
-            } else if (skip) {
-                goto NEXT_TOKEN;
-            }
-
-            {
-                std::string value;
-                if (i + 1 == tokens.size()) {
-                    value = statement().substr(tokenPos[i]);
-                } else {
-                    tokenPos[i + 1] - tokenPos[i];
-                    value = statement().substr(tokenPos[i], tokenPos[i + 1] - tokenPos[i]);
-                }
-
-
-                if (phase == PHASE_COLUMNS) {
-                    std::transform(value.begin(), value.end(), value.begin(), tolower);
-                    readSet.insert(utility::normalizeColumnName(value));
-                    skip = true;
-                } else if (phase == PHASE_WHERE_COL) {
-                    std::transform(value.begin(), value.end(), value.begin(), tolower);
-                    readSet.insert(utility::normalizeColumnName(value));
-                    whereCol = utility::normalizeColumnName(value);
-
-                    phase = PHASE_WHERE_VAL;
-                } else if (phase == PHASE_WHERE_VAL) {
-                    if (token == '=' ||
-                        token == SQL_LESS ||
-                        token == SQL_LESSEQ ||
-                        token == SQL_EQUAL ||
-                        token == SQL_EQUALS ||
-                        token == SQL_GREATER ||
-                        token == SQL_GREATEREQ
-                    ) {
-                        goto NEXT_TOKEN;
-                    }
-
-                    if (isNameConst && !isNameConstVal) {
-                        isNameConstVal = true;
-                        goto NEXT_TOKEN;
-                    }
-
-                    try {
-                        whereSet.emplace(whereCol, (int64_t) std::stoll(value));
-                    } catch (std::invalid_argument &e) {
-
-                    }
-
-                    skip = true;
-                    phase = PHASE_WHERE_COL;
-                } else if (phase == PHASE_TABLE_NAME) {
-                    if (tableName.empty()) {
-                        tableName = utility::normalizeColumnName(value);
-                        std::transform(tableName.begin(), tableName.end(), tableName.begin(), tolower);
-                    }
-                    skip = true;
-                }
-            }
-
-            NEXT_TOKEN:
-            i++;
-        }
-
-        for (const auto &token: readSet) {
-            if (token.find('.') == std::string::npos) {
-                _readColumns.insert(tableName + "." + token);
-            } else {
-                _readColumns.insert(token);
-            }
-        }
-
-        for (const auto &pair: whereSet) {
-            StateItem stateItem;
-            StateData data;
-
-            data.Set(pair.second);
-
-            if (pair.first.find('.') == std::string::npos) {
-                stateItem.name = tableName + "." + pair.first;
-            } else {
-                stateItem.name = pair.first;
-            }
-
-            stateItem.condition_type = EN_CONDITION_NONE;
-            stateItem.function_type = FUNCTION_EQ;
-
-
-            stateItem.data_list.emplace_back(std::move(data));
-            _whereSet.emplace_back(std::move(stateItem));
-        }
-
-        return true;
-    }
-
-    bool QueryEventBase::parseDDL(int limit) {
-        std::vector<int16_t> tokens;
-        std::vector<size_t> tokenPos;
-        hsql::SQLParser::tokenize(statement(), &tokens, &tokenPos);
-
-        int i = 0;
-        int j = 0;
-        for (auto &token: tokens) {
-            if (token == SQL_IDENTIFIER) {
-                std::string value;
-                if (i + 1 == tokens.size()) {
-                    value = statement().substr(tokenPos[i]);
-                } else {
-                    tokenPos[i + 1] - tokenPos[i];
-                    value = statement().substr(tokenPos[i], tokenPos[i + 1] - tokenPos[i]);
-                }
-
-                _writeColumns.insert(utility::normalizeColumnName(value) + ".*");
-                j++;
-            }
-            i++;
-            
-            if (limit > 0 && j >= limit) {
-                return true;
-            }
-        }
-        
-        return true;
-    }
-    
-    void QueryEventBase::extractReadWriteSet(const hsql::InsertStatement *insert) {
-        std::string tableName = utility::normalizeColumnName(insert->tableName);
-        
-        _writeColumns.insert(tableName + ".*");
-        
-        if (insert->type == hsql::InsertType::kInsertSelect) {
-            extractReadWriteSet(insert->select);
-        }
-    }
-    
-    void QueryEventBase::extractReadWriteSet(const hsql::DeleteStatement *del) {
-        std::string tableName = utility::normalizeColumnName(del->tableName);
-    
-        _writeColumns.insert(tableName + ".*");
-        
-        std::vector<std::string> readSet;
-        StateItem whereExpr;
-        walkExpr(del->expr, whereExpr, readSet, tableName, true);
-        
-        _readColumns.insert(readSet.begin(), readSet.end());
-        _whereSet.push_back(whereExpr);
-    }
-    
-    void QueryEventBase::extractReadWriteSet(const hsql::UpdateStatement *update) {
-        throw std::runtime_error("deprecated");
-    }
-    
-    void QueryEventBase::extractReadWriteSet(const hsql::SelectStatement *select) {
-        throw std::runtime_error("deprecated");
-    }
-    
-    void QueryEventBase::walkExpr(const hsql::Expr *expr, StateItem &parent, std::vector<std::string> &readSet, const std::string &rootTable, bool isRoot) {
-        throw std::runtime_error("deprecated");
-    }
-    
     StateItem *QueryEventBase::findStateItem(const std::string &name) {
         auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&name](StateItem &item) {
             return item.name == name;
@@ -935,41 +729,23 @@ namespace ultraverse::base {
         }
     }
     
-    std::vector<int16_t> QueryEventBase::tokens() const {
-        return _tokens;
-    }
-    
-    std::vector<size_t> QueryEventBase::tokenPos() const {
-        return _tokenPos;
-    }
-    
     bool QueryEventBase::isDDL() const {
-        if (_tokens.empty()) {
-            return false;
-        }
         return (
-            _tokens[0] == SQL_CREATE  ||
-            _tokens[0] == SQL_ALTER   ||
-            _tokens[0] == SQL_DROP    ||
-            _tokens[0] == SQL_RENAME  ||
-            _tokens[0] == SQL_COMMENT ||
-            _tokens[0] == SQL_TRUNCATE
+            _queryType == DDL_UNKNOWN   ||
+            _queryType == CREATE_TABLE ||
+            _queryType == ALTER_TABLE  ||
+            _queryType == DROP_TABLE   ||
+            _queryType == RENAME_TABLE ||
+            _queryType == TRUNCATE_TABLE
         );
     }
     
     bool QueryEventBase::isDML() const {
-        if (_tokens.empty()) {
-            return false;
-        }
         return (
-            _tokens[0] == SQL_SELECT  ||
-            _tokens[0] == SQL_INSERT  ||
-            _tokens[0] == SQL_UPDATE  ||
-            _tokens[0] == SQL_DELETE  ||
-            _tokens[0] == SQL_MERGE   ||
-            _tokens[0] == SQL_CALL    ||
-            _tokens[0] == SQL_EXPLAIN ||
-            _tokens[0] == SQL_LOCK
+            _queryType == SELECT ||
+            _queryType == INSERT ||
+            _queryType == UPDATE ||
+            _queryType == DELETE
         );
     }
     

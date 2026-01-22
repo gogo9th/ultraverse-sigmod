@@ -4,6 +4,8 @@
 
 #include <stdexcept>
 
+#include <libultparser/libultparser.h>
+
 #include "mariadb/DBEvent.hpp"
 #include "StateChanger.hpp"
 
@@ -11,43 +13,84 @@
 namespace ultraverse::state::v2 {
     
     std::shared_ptr<Transaction> StateChanger::loadUserQuery(const std::string &path) {
-        std::vector<std::string> queries;
-        
-        std::ifstream stream(path);
-        std::string query;
-        
-        while (std::getline(stream, query, '\n')) {
-            query.erase(
-                std::remove(query.begin(), query.end(), '\r'),
-                query.end()
-            );
-            
-            if (!query.empty()) {
-                queries.push_back(query);
-            }
+        // read entire file
+        std::ifstream ifs(path);
+        if (!ifs.is_open()) {
+            return nullptr;
         }
-        
-        return std::move(parseUserQuery(queries));
+
+        std::stringstream buffer;
+        buffer << ifs.rdbuf();
+
+        return std::move(parseUserQuery(buffer.str()));
     }
     
-    std::shared_ptr<Transaction> StateChanger::parseUserQuery(const std::vector<std::string> &queries) {
+    std::shared_ptr<Transaction> StateChanger::parseUserQuery(const std::string &sql) {
+        static thread_local uintptr_t s_parser = 0;
+        if (s_parser == 0) {
+            s_parser = ult_sql_parser_create();
+        }
+
+        ultparser::ParseResult parseResult;
+
+        char *parseResultCStr = nullptr;
+        int64_t parseResultCStrSize = ult_sql_parse_new(
+            s_parser,
+            (char *) sql.c_str(),
+            static_cast<int64_t>(sql.size()),
+            &parseResultCStr
+        );
+
+        if (parseResultCStrSize <= 0) {
+            _logger->error("could not parse SQL statement: {}", sql);
+            return nullptr;
+        }
+
+        if (!parseResult.ParseFromArray(parseResultCStr, parseResultCStrSize)) {
+            free(parseResultCStr);
+
+            _logger->error("could not parse SQL statement: {}", sql);
+            return nullptr;
+        }
+        free(parseResultCStr);
+
+        if (parseResult.result() != ultparser::ParseResult::SUCCESS) {
+            _logger->error("parser error: {}", parseResult.error());
+            return nullptr;
+        }
+
+        if (!parseResult.warnings().empty()) {
+            for (const auto &warning: parseResult.warnings()) {
+                _logger->warn("parser warning: {}", warning);
+            }
+        }
+
+        auto &statements = parseResult.statements();
         std::vector<mariadb::QueryEvent> queryEvents;
         auto transaction = std::make_shared<Transaction>();
-        
+
         transaction->setXid(0);
         transaction->setGid(0);
         transaction->setTimestamp(0);
-        
+
         transaction->setFlags(Transaction::FLAG_FORCE_EXECUTE);
-        
-        std::transform(
-            queries.begin(), queries.end(),
-            std::back_inserter(queryEvents),
-            [this] (const std::string &queryString) {
-                return mariadb::QueryEvent(_plan.dbName(), queryString, 0);
+
+        queryEvents.reserve(statements.size());
+        for (const auto &pbStatement : statements) {
+            if (pbStatement.has_dml()) {
+                queryEvents.emplace_back(_plan.dbName(), pbStatement, 0);
+                continue;
             }
-        );
-        
+
+            if (pbStatement.has_ddl()) {
+                _logger->error("DDL statement is not supported yet: {}", pbStatement.ddl().statement());
+                continue;
+            }
+
+            _logger->warn("unsupported statement type in user query: {}", (int) pbStatement.type());
+        }
+
+
         std::vector<std::string> keyColsVec(
             _plan.keyColumns().begin(),
             _plan.keyColumns().end()
@@ -60,16 +103,9 @@ namespace ultraverse::state::v2 {
             query->setDatabase(event.database());
             query->setStatement(event.statement());
             
-            event.tokenize();
-            
             if (!event.isDML()) {
                 _logger->error("DDL statement is not supported yet: {}", event.statement());
                 continue;
-            }
-            
-            if (!event.parse()) {
-                _logger->warn("cannot parse SQL statement: {}", event.statement());
-                event.parseDDL(1);
             }
             
             event.buildRWSet(keyColsVec);

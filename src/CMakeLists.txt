@@ -1,9 +1,5 @@
 set(CMAKE_CXX_STANDARD 20)
 
-if (APPLE)
-    set(BISON_EXECUTABLE "/opt/homebrew/opt/bison/bin/bison" CACHE PATH "Bison executable")
-endif()
-
 set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "Use external fmt library" FORCE)
 
 Include(FetchContent)
@@ -24,8 +20,6 @@ FetchContent_MakeAvailable(fmt)
 FetchContent_MakeAvailable(spdlog)
 
 find_package(PkgConfig REQUIRED)
-find_package(BISON 3.0.0 REQUIRED)
-find_package(FLEX REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
 
@@ -61,7 +55,6 @@ set(ULTRAVERSE_DEPENDENCIES
     
     ${PROTOBUF_LIBRARIES}
     
-    sqlparser
     OpenSSL::SSL
     
     tbb
@@ -83,6 +76,9 @@ set(LIBULTRAVERSE_BASE_SRCS
     utils/log.hpp
     utils/StringUtil.cpp
     utils/StringUtil.hpp
+    
+    config/UltraverseConfig.cpp
+    config/UltraverseConfig.hpp
 
     mariadb/state/new/CombinedIterator.cpp 
     mariadb/state/new/CombinedIterator.hpp
@@ -169,11 +165,8 @@ set(ULTRAVERSE_APP_BASE_SRCS
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp)
-include_directories(../dependencies/sql-parser/src)
-include_directories(../dependencies/sql-parser/src/parser)
 include_directories(../dependencies/nlohmann-json/include)
 include_directories(../dependencies/cereal/include)
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/../dependencies/sql-parser)
 include_directories(${Boost_INCLUDE_DIRS})
 include_directories(${PYTHON3_INCLUDE_DIRS})
 

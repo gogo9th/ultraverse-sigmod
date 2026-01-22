@@ -33,6 +33,7 @@
 #include "mariadb/state/new/ProcMatcher.hpp"
 
 #include "base/TaskExecutor.hpp"
+#include "config/UltraverseConfig.hpp"
 #include "utils/log.hpp"
 #include "utils/StringUtil.hpp"
 #include "Application.hpp"
@@ -78,7 +79,7 @@ public:
     }
     
     std::string optString() override {
-        return "b:o:c:r:p:k:dGnQvVh";
+        return "c:vVh";
     }
     
     int main() override {
@@ -86,20 +87,13 @@ public:
             std::cout <<
             "statelogd - state-logging daemon\n"
             "\n"
-            "Options: \n"
-            "    -b file        specify binlog.index file\n"
-            "    -o file        specify log output name\n"
-            "    -p file        use procedure log to append additional queries (SELECT ...)\n"
-            "    -k columns     key columns (eg. user.id,article.id or orders.user_id+orders.item_id)\n"
-            "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
-            "    -r file        restore state and resume from given .ultchkpoint file\n"
-            "    -d             force discard previous log and start over\n"
-            "    -G             print processed transactions with GIDs\n"
-            "    -Q             print query statements for processed transactions\n"
-            "    -n             do not read binlog.index continuously (quit after reaching EOF)\n"
+            "Usage: statelogd -c CONFIG_FILE [-v|-V] [-h]\n"
+            "\n"
+            "Options:\n"
+            "    -c file        JSON config file path (required)\n"
             "    -v             set logger level to DEBUG\n"
             "    -V             set logger level to TRACE\n"
-            "    -h             print this help and exit application\n";
+            "    -h             print this help and exit\n";
 
             return 0;
         }
@@ -111,46 +105,31 @@ public:
         if (isArgSet('V')) {
             setLogLevel(spdlog::level::trace);
         }
-        
-        { // @start(keyColumns)
-            if (!isArgSet('k')) {
-                _logger->error("key column(s) must be specified");
-                return 1;
-            }
-            
-            _keyColumns = buildKeyColumnList(getArg('k'));
-        } // @end (keyColumns)
 
-        
-        if (!isArgSet('b')) {
-            _logger->error("FATAL: binlog.index file must be specified (-b)");
+        if (!isArgSet('c')) {
+            _logger->error("config file must be specified (-c)");
             return 1;
-        } else {
-            _binlogIndexPath = getArg('b');
         }
-        
-        if (!isArgSet('o')) {
-            _logger->error("FATAL: output.ultstatelog file must be specified (-o)");
+
+        auto configOpt = ultraverse::config::UltraverseConfig::loadFromFile(getArg('c'));
+        if (!configOpt) {
+            _logger->error("failed to load config file");
             return 1;
-        } else {
-            _stateLogName = getArg('o');
         }
+        const auto &config = *configOpt;
 
-        _threadNum = isArgSet('c') ?
-            std::stoi(getArg('c')) :
-            std::thread::hardware_concurrency() + 1;
-
-        if (isArgSet('r')) {
-            _checkpointPath = getArg('r');
-        }
-        
-        if (isArgSet('G')) {
-            _printTransactions = true;
-        }
-
-        if (isArgSet('Q')) {
-            _printQueries = true;
-        }
+        _binlogIndexPath = config.binlog.path + "/" + config.binlog.indexName;
+        _stateLogName = config.stateLog.path + "/" + config.stateLog.name;
+        _keyColumns = config.keyColumns;
+        _threadNum = config.statelogd.threadCount > 0
+            ? config.statelogd.threadCount
+            : std::thread::hardware_concurrency() + 1;
+        _printTransactions = std::find(config.statelogd.developmentFlags.begin(),
+            config.statelogd.developmentFlags.end(), "print-gids") != config.statelogd.developmentFlags.end();
+        _printQueries = std::find(config.statelogd.developmentFlags.begin(),
+            config.statelogd.developmentFlags.end(), "print-queries") != config.statelogd.developmentFlags.end();
+        _procedureLogPath = config.statelogd.procedureLogPath;
+        _oneshotMode = config.statelogd.oneshotMode;
 
         writerMain();
         return 0;
@@ -182,11 +161,11 @@ public:
                 _binlogReader->terminate();
             }
         }
-        _binlogReader->setPollDisabled(isArgSet('n'));
+        _binlogReader->setPollDisabled(_oneshotMode);
 
-        if (isArgSet('p')) {
+        if (!_procedureLogPath.empty()) {
             _procLogReader = std::make_unique<state::v2::ProcLogReader>();
-            _procLogReader->open(".", getArg('p'));
+            _procLogReader->open(".", _procedureLogPath);
         }
 
 
@@ -619,76 +598,50 @@ public:
             statementContext->clear();
         }
 
-        event->tokenize();
-        
-        
-        if (event->isDDL()) {
-            event->parse();
-            event->parseDDL();
-            event->buildRWSet(_keyColumns);
+        if (!event->parse()) {
+            _logger->warn("cannot parse SQL statement: {}", event->statement());
+            return pendingQuery;
+        }
 
+        if (event->isDDL()) {
             pendingQuery->setFlags(
                 pendingQuery->flags() |
                 state::v2::Query::FLAG_IS_DDL
             );
-
-            pendingQuery->readSet().insert(
-                pendingQuery->readSet().end(),
-                event->readSet().begin(),event->readSet().end()
-            );
-            pendingQuery->writeSet().insert(
-                pendingQuery->writeSet().end(),
-                event->writeSet().begin(), event->writeSet().end()
-            );
-
-            {
-                state::v2::ColumnSet readColumns;
-                state::v2::ColumnSet writeColumns;
-                event->columnRWSet(readColumns, writeColumns);
-                pendingQuery->readColumns().insert(readColumns.begin(), readColumns.end());
-                pendingQuery->writeColumns().insert(writeColumns.begin(), writeColumns.end());
-            }
-
-            /*
-            tr->setFlags(
-                _pendingTxn->flags() |
-                state::v2::Transaction::FLAG_CONTAINS_DDL
-            );
-             */
-
-        } else if (event->isDML()) {
-            // rowset, changeset이 없으므로 해시 계산 불가능
-            if (!event->parse()) {
-                // HACK: writeSet만이라도 건짐
-                event->parseDDL(1);
-            }
-            
-            event->buildRWSet(_keyColumns);
-            
-            pendingQuery->readSet().insert(
-                pendingQuery->readSet().end(),
-                event->readSet().begin(), event->readSet().end()
-            );
-            pendingQuery->writeSet().insert(
-                pendingQuery->writeSet().end(),
-                event->writeSet().begin(), event->writeSet().end()
-            );
-
-            {
-                state::v2::ColumnSet readColumns;
-                state::v2::ColumnSet writeColumns;
-                event->columnRWSet(readColumns, writeColumns);
-                pendingQuery->readColumns().insert(readColumns.begin(), readColumns.end());
-                pendingQuery->writeColumns().insert(writeColumns.begin(), writeColumns.end());
-            }
-
-            /*
-            pendingTxn->setFlags(
-                _pendingTxn->flags() |
-                state::v2::Transaction::FLAG_UNRELIABLE_HASH
-            );
-             */
         }
+
+        event->buildRWSet(_keyColumns);
+
+        pendingQuery->readSet().insert(
+            pendingQuery->readSet().end(),
+            event->readSet().begin(), event->readSet().end()
+        );
+        pendingQuery->writeSet().insert(
+            pendingQuery->writeSet().end(),
+            event->writeSet().begin(), event->writeSet().end()
+        );
+
+        {
+            state::v2::ColumnSet readColumns;
+            state::v2::ColumnSet writeColumns;
+            event->columnRWSet(readColumns, writeColumns);
+            pendingQuery->readColumns().insert(readColumns.begin(), readColumns.end());
+            pendingQuery->writeColumns().insert(writeColumns.begin(), writeColumns.end());
+        }
+
+        /*
+        tr->setFlags(
+            _pendingTxn->flags() |
+            state::v2::Transaction::FLAG_CONTAINS_DDL
+        );
+         */
+
+        /*
+        pendingTxn->setFlags(
+            _pendingTxn->flags() |
+            state::v2::Transaction::FLAG_UNRELIABLE_HASH
+        );
+         */
         
         return pendingQuery;
         /*
@@ -819,7 +772,7 @@ public:
             );
 
             if (!dummyEvent.parse()) {
-                dummyEvent.parseDDL(1);
+                _logger->warn("cannot parse ROW_QUERY statement: {}", rowQueryEvent->statement());
             }
             dummyEvent.buildRWSet(_keyColumns);
 
@@ -1117,6 +1070,8 @@ private:
     bool _discardCheckpoint = false;
     
     int _threadNum = 1;
+    bool _oneshotMode = false;
+    std::string _procedureLogPath;
     
     int _gid = 0;
     bool _printTransactions = false;

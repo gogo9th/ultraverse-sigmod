@@ -18,7 +18,6 @@ add_subdirectory(parserlib)
 
 add_subdirectory(src)
 add_subdirectory(dependencies/cereal)
-add_subdirectory(dependencies/sql-parser)
 
 add_subdirectory(tests)
 #add_subdirectory(external/Catch2)

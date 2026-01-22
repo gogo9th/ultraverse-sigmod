@@ -65,7 +65,7 @@ namespace ultraverse::state::v2 {
         void replayThreadMain(int workerId, RowGraph &rowGraph);
         
         std::shared_ptr<Transaction> loadUserQuery(const std::string &path);
-        std::shared_ptr<Transaction> parseUserQuery(const std::vector<std::string> &queries);
+        std::shared_ptr<Transaction> parseUserQuery(const std::string &sql);
         
         void loadBackup(const std::string &dbName, const std::string &fileName);
         

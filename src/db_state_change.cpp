@@ -1,9 +1,15 @@
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
+#include <ctime>
+#include <getopt.h>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <thread>
 
 #include "Application.hpp"
+#include "config/UltraverseConfig.hpp"
 #include "db_state_change.hpp"
 
 using namespace ultraverse::mariadb;
@@ -88,93 +94,178 @@ namespace ultraverse {
     }
     
     std::string DBStateChangeApp::optString() {
-        return "b:i:d:s:g:e:k:a:C:S:r:NwDvVh";
+        return "+vVh";
     }
     
     int DBStateChangeApp::main() {
-        if (isArgSet('h')) {
-            std::cerr <<
-            "statechange - rollback database state\n"
+        auto printHelp = []() {
+            std::cout <<
+            "db_state_change - database state change tool\n"
             "\n"
-            "Usage:\n"
-            "    statechange [options] action1:action2:..."
+            "Usage: db_state_change [OPTIONS] CONFIG_JSON ACTION\n"
             "\n"
-            "Available Actions:\n"
-            "    make_cluster           creates row cluster file\n"
-            "    rollback=gid           rollbacks specified transaction\n"
-            "    prepend=gid,sqlfile    appends query before specified transaction\n"
-            "    replay                replays transactions from replay plan\n"
-            "    full_replay            full replay (replay all transactions)\n"
+            "Options:\n"
+            "    --gid-range START...END    GID range to process\n"
+            "    --skip-gids GID1,GID2,...  GIDs to skip\n"
+            "    --dry-run                  Dry run mode\n"
+            "    -v                         set logger level to DEBUG\n"
+            "    -V                         set logger level to TRACE\n"
+            "    -h                         print this help and exit\n"
             "\n"
-            "Options: \n"
-            "    -b sqlfile     database backup\n"
-            "    -i file        ultraverse state log (.ultstatelog)\n"
-            "    -d database    database name\n"
-            "    -s gid         start gid\n"
-            "    -e gid         end gid\n"
-            "    -k columns     key columns (eg. user.id,article.id or orders.user_id+orders.item_id)\n"
-            "    -a colA=colB   column aliases (eg. user.name=user.id,...)\n"
-            "    -C threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
-            "    -S gid,gid,... list of gids to skip processing\n"
-            "    -r reportfile  report file\n"
-            "    -N             do not drop intermediate database\n"
-            "    -w             write state log which contains state changed\n"
-            "    -D             dry-run\n"
-            "    -v             set logger level to DEBUG\n"
-            "    -V             set logger level to TRACE\n"
-            "    -h             print this help and exit application\n"
+            "Environment:\n"
+            "    ULTRAVERSE_REPORT_NAME     Report file name (optional)\n"
             "\n"
-            "Environment Variables: \n"
-            "    DB_HOST           Database Host\n"
-            "    DB_PORT           Database Port\n"
-            "    DB_USER           Database User\n"
-            "    DB_PASS           Database Password\n"
-            "    BINLOG_PATH       Path to MySQL-variant binlog (default = /var/lib/mysql)\n"
-            "    RANGE_COMP_METHOD Range comparison method (intersect,eqonly; default=eqonly)\n"
-            "\n"
-            "Notes:\n"
-            "    prepare phase writes <stateLogName>.ultreplayplan in state log path\n"
-            "    replay action reads the same .ultreplayplan file\n";
-            
-            return 0;
+            "Actions:\n"
+            "    make_cluster               Create cluster files\n"
+            "    rollback=gid1,gid2,...     Rollback specified GIDs\n"
+            "    auto-rollback=ratio        Auto rollback with ratio\n"
+            "    prepend=gid,sqlfile        Prepend SQL file before GID\n"
+            "    full-replay                Full replay\n"
+            "    replay                     Replay from plan file\n";
+        };
+
+        bool showHelp = false;
+        bool debugLog = false;
+        bool traceLog = false;
+        bool gidRangeSet = false;
+        bool skipGidsSet = false;
+        bool dryRun = false;
+        gid_t startGid = 0;
+        gid_t endGid = 0;
+        std::vector<uint64_t> skipGids;
+
+        auto trim = [](std::string value) {
+            const auto isSpace = [](unsigned char ch) { return std::isspace(ch); };
+            value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), isSpace));
+            value.erase(std::find_if_not(value.rbegin(), value.rend(), isSpace).base(), value.end());
+            return value;
+        };
+
+        opterr = 0;
+        optind = 1;
+
+        static struct option long_options[] = {
+            {"gid-range", required_argument, 0, 's'},
+            {"skip-gids", required_argument, 0, 'S'},
+            {"dry-run", no_argument, 0, 'D'},
+            {0, 0, 0, 0}
+        };
+
+        int option = 0;
+        while ((option = getopt_long(argc(), argv(), "vVh", long_options, nullptr)) != -1) {
+            switch (option) {
+                case 'v':
+                    debugLog = true;
+                    break;
+                case 'V':
+                    traceLog = true;
+                    break;
+                case 'h':
+                    showHelp = true;
+                    break;
+                case 's': {
+                    std::string rangeExpr = optarg != nullptr ? std::string(optarg) : "";
+                    auto sepPos = rangeExpr.find("...");
+                    if (sepPos == std::string::npos || rangeExpr.find("...", sepPos + 3) != std::string::npos) {
+                        _logger->error("invalid --gid-range format, expected START...END");
+                        return 1;
+                    }
+                    auto startStr = trim(rangeExpr.substr(0, sepPos));
+                    auto endStr = trim(rangeExpr.substr(sepPos + 3));
+                    if (startStr.empty() || endStr.empty()) {
+                        _logger->error("invalid --gid-range format, expected START...END");
+                        return 1;
+                    }
+                    try {
+                        startGid = static_cast<gid_t>(std::stoull(startStr));
+                        endGid = static_cast<gid_t>(std::stoull(endStr));
+                    } catch (const std::exception &) {
+                        _logger->error("invalid --gid-range value, expected numeric START...END");
+                        return 1;
+                    }
+                    if (startGid > endGid) {
+                        _logger->error("invalid --gid-range value, START must be <= END");
+                        return 1;
+                    }
+                    gidRangeSet = true;
+                    break;
+                }
+                case 'S': {
+                    std::string gidsExpr = optarg != nullptr ? std::string(optarg) : "";
+                    auto parsed = buildSkipGidList(gidsExpr);
+                    skipGids.insert(skipGids.end(), parsed.begin(), parsed.end());
+                    skipGidsSet = true;
+                    break;
+                }
+                case 'D':
+                    dryRun = true;
+                    break;
+                case '?':
+                default:
+                    _logger->error("invalid option");
+                    printHelp();
+                    return 1;
+            }
         }
-        
-        int threadNum = std::thread::hardware_concurrency() * 2;
-        
-        if (isArgSet('C')) {
-            threadNum = std::stoi(getArg('C'));
-        }
-        
-        if (isArgSet('v')) {
+
+        if (traceLog) {
+            setLogLevel(spdlog::level::trace);
+        } else if (debugLog) {
             setLogLevel(spdlog::level::debug);
         }
-        
-        if (isArgSet('V')) {
-            setLogLevel(spdlog::level::trace);
+
+        if (showHelp) {
+            printHelp();
+            return 0;
         }
-        
-        if (
-            getEnv("DB_HOST").empty() ||
-            getEnv("DB_PORT").empty() ||
-            getEnv("DB_USER").empty() ||
-            getEnv("DB_PASS").empty()
-        ) {
-            _logger->error("Database credential not provided - see \"Environment Variables\" section in ./db_state_change -h");
+
+        int positionalCount = argc() - optind;
+        if (positionalCount != 2) {
+            _logger->error("CONFIG_JSON and ACTION must be specified");
+            printHelp();
             return 1;
         }
-    
+
+        const std::string configPath = argv()[argc() - 2];
+        const std::string actionExpr = argv()[argc() - 1];
+
+        auto configOpt = ultraverse::config::UltraverseConfig::loadFromFile(configPath);
+        if (!configOpt) {
+            _logger->error("failed to load config file");
+            return 1;
+        }
+        const auto &config = *configOpt;
+
+        if (config.database.host.empty() ||
+            config.database.username.empty() ||
+            config.database.password.empty()) {
+            _logger->error("Database credential not provided - check config JSON or DB_* environment variables");
+            return 1;
+        }
+
+        int threadNum = config.stateChange.threadCount > 0
+            ? config.stateChange.threadCount
+            : static_cast<int>(std::thread::hardware_concurrency() * 2);
+
         DBHandlePool<mariadb::MySQLDBHandle> dbHandlePool(
             threadNum,
-            getEnv("DB_HOST"),
-            std::stoi(getEnv("DB_PORT")),
-            getEnv("DB_USER"),
-            getEnv("DB_PASS")
+            config.database.host,
+            config.database.port,
+            config.database.username,
+            config.database.password
         );
         DBHandlePoolAdapter<mariadb::MySQLDBHandle> dbHandlePoolAdapter(dbHandlePool);
-    
-        auto actions = parseActions(argv()[argc() - 1]);
+
+        std::vector<std::shared_ptr<Action>> actions;
+        try {
+            actions = parseActions(actionExpr);
+        } catch (std::exception &e) {
+            std::cerr << e.what() << std::endl;
+            return 1;
+        }
         if (actions.empty()) {
-            throw std::runtime_error("");
+            _logger->error("no action specified");
+            return 1;
         }
         
         bool makeClusterMap = std::find_if(actions.begin(), actions.end(), [](auto &action) {
@@ -204,19 +295,97 @@ namespace ultraverse {
          */
         
         StateChangePlan changePlan;
-        
-        try {
-            preparePlan(actions, changePlan);
-        } catch (std::exception &e) {
-            std::cerr << e.what() << std::endl;
-            return 1;
+
+        if (!config.stateChange.backupFile.empty()) {
+            changePlan.setDBDumpPath(config.stateChange.backupFile);
+        } else {
+            _logger->warn("database dump file is not specified!");
+            _logger->warn("- this may leads to unexpected result");
+            _logger->warn("- all queries will be executed until gid reaches rollback target");
         }
-        
+
+        changePlan.setStateLogPath(config.stateLog.path);
+        changePlan.setStateLogName(config.stateLog.name);
+        changePlan.setDBName(config.database.name);
+
+        std::string keyColumnsExpr;
+        for (size_t idx = 0; idx < config.keyColumns.size(); ++idx) {
+            if (idx > 0) {
+                keyColumnsExpr += ",";
+            }
+            keyColumnsExpr += config.keyColumns[idx];
+        }
+        changePlan.setKeyColumnGroups(buildKeyColumnGroups(keyColumnsExpr));
+
+        for (const auto &entry : config.columnAliases) {
+            for (const auto &alias : entry.second) {
+                changePlan.columnAliases().emplace_back(entry.first, alias);
+            }
+        }
+
+        changePlan.setBinlogPath(config.binlog.path);
         changePlan.setThreadNum(threadNum);
-        
-        changePlan.setDBHost(getEnv("DB_HOST"));
-        changePlan.setDBUsername(getEnv("DB_USER"));
-        changePlan.setDBPassword(getEnv("DB_PASS"));
+        changePlan.setDropIntermediateDB(!config.stateChange.keepIntermediateDatabase);
+        changePlan.setRangeComparisonMethod(
+            config.stateChange.rangeComparisonMethod == "intersect" ? INTERSECT : EQ_ONLY
+        );
+
+        changePlan.setDBHost(config.database.host);
+        changePlan.setDBUsername(config.database.username);
+        changePlan.setDBPassword(config.database.password);
+        changePlan.setDryRun(dryRun);
+
+        if (gidRangeSet) {
+            changePlan.setStartGid(startGid);
+            changePlan.setEndGid(endGid);
+        }
+        if (skipGidsSet) {
+            changePlan.skipGids().insert(changePlan.skipGids().end(), skipGids.begin(), skipGids.end());
+        }
+
+        const char *reportEnv = std::getenv("ULTRAVERSE_REPORT_NAME");
+        if (reportEnv != nullptr && *reportEnv != '\0') {
+            changePlan.setReportPath(reportEnv);
+        } else {
+            std::time_t now = std::time(nullptr);
+            std::tm timeInfo = *std::localtime(&now);
+            std::ostringstream reportName;
+            reportName << "statechange_" << actionExpr << "_"
+                       << std::put_time(&timeInfo, "%Y%m%d_%H%M%S");
+            changePlan.setReportPath(reportName.str());
+        }
+
+        for (auto &action: actions) {
+            {
+                auto rollbackAction = std::dynamic_pointer_cast<RollbackAction>(action);
+                if (rollbackAction != nullptr) {
+                    changePlan.rollbackGids().push_back(rollbackAction->gid());
+                }
+            }
+
+            {
+                auto prependAction = std::dynamic_pointer_cast<PrependAction>(action);
+                if (prependAction != nullptr) {
+                    changePlan.userQueries().insert({ prependAction->gid(), prependAction->sqlFile() });
+                }
+            }
+
+            {
+                auto fullReplayAction = std::dynamic_pointer_cast<FullReplayAction>(action);
+                if (fullReplayAction != nullptr) {
+                    changePlan.setFullReplay(true);
+                }
+            }
+
+            {
+                auto autoRollbackAction = std::dynamic_pointer_cast<AutoRollbackAction>(action);
+                if (autoRollbackAction != nullptr) {
+                    changePlan.setAutoRollbackRatio(autoRollbackAction->ratio());
+                }
+            }
+        }
+
+        std::sort(changePlan.rollbackGids().begin(), changePlan.rollbackGids().end());
     
         StateChanger stateChanger(dbHandlePoolAdapter, changePlan);
         
@@ -572,6 +741,8 @@ namespace ultraverse {
 
 
 int main(int argc, char **argv) {
+    opterr = 0;
+    optind = 1;
     ultraverse::DBStateChangeApp application;
     return application.exec(argc, argv);
 }

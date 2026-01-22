@@ -9,10 +9,6 @@
 
 #include <fmt/color.h>
 
-#include <bison_parser.h>
-#include <SQLParser.h>
-#include <SQLParserResult.h>
-
 #include "StateLogWriter.hpp"
 #include "GIDIndexWriter.hpp"
 #include "cluster/RowCluster.hpp"
