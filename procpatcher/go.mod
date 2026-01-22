@@ -74,4 +74,4 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 )
 
-replace github.com/pingcap/tidb/pkg/parser => github.com/unstabler/tidb/pkg/parser v0.0.0-20260122115123-d7e3dcec7180
+replace github.com/pingcap/tidb/pkg/parser => github.com/unstabler/tidb/pkg/parser v0.0.0-20260122130756-2a800978c5c9

@@ -1,288 +1,375 @@
 package delimiter
 
 import (
-	"regexp"
 	"strings"
 )
 
-// DelimiterInfo stores information about a DELIMITER statement
-type DelimiterInfo struct {
-	OriginalLine string // The original DELIMITER line
-	Delimiter    string // The delimiter value (e.g., "$$", "//", ";")
+// Statement represents a SQL statement separated by delimiter directives.
+// Start/End are byte offsets in the original SQL (End is exclusive, delimiter excluded).
+type Statement struct {
+	Text  string
+	Start int
+	End   int
+	// HasCode is true if the statement contains non-whitespace, non-comment tokens.
+	HasCode bool
 }
 
-var delimiterRegex = regexp.MustCompile(`(?im)^[ \t]*DELIMITER[ \t]+(\S+)[ \t]*\r?\n?`)
+// NormalizeDelimiters removes DELIMITER directives and normalizes statement
+// terminators to semicolons so the SQL can be parsed by tidb/parser.
+func NormalizeDelimiters(sql string) (string, error) {
+	statements, err := SplitStatements(sql)
+	if err != nil {
+		return "", err
+	}
 
-// RemoveDelimiters removes DELIMITER statements from SQL and returns the clean SQL
-// along with information about what delimiters were used.
-// It also replaces custom delimiters at statement ends with semicolons.
-func RemoveDelimiters(sql string) (cleanSQL string, delimiters []DelimiterInfo) {
-	delimiters = []DelimiterInfo{}
+	var out strings.Builder
+	first := true
+	for _, stmt := range statements {
+		if !stmt.HasCode {
+			continue
+		}
+		if !first {
+			out.WriteString("\n")
+		}
+		first = false
+		out.WriteString(strings.TrimSpace(stmt.Text))
+		out.WriteString(";")
+	}
+
+	return out.String(), nil
+}
+
+// SplitStatements splits SQL by honoring DELIMITER directives and tracking
+// string/comment state so delimiters inside them are ignored.
+func SplitStatements(sql string) ([]Statement, error) {
 	currentDelimiter := ";"
-	result := strings.Builder{}
+	data := []byte(sql)
 
-	// Find all DELIMITER statements
-	matches := delimiterRegex.FindAllStringSubmatchIndex(sql, -1)
-	if len(matches) == 0 {
-		return sql, delimiters
-	}
+	var statements []Statement
+	stmtStart := 0
+	hasContent := false
 
-	lastEnd := 0
-	for _, match := range matches {
-		start := match[0]
-		end := match[1]
-		delimValue := sql[match[2]:match[3]]
-		originalLine := sql[start:end]
-
-		// Store delimiter info
-		delimiters = append(delimiters, DelimiterInfo{
-			OriginalLine: originalLine,
-			Delimiter:    delimValue,
-		})
-
-		// Copy content from last end to this start, replacing custom delimiters with semicolons
-		chunk := sql[lastEnd:start]
-		if currentDelimiter != ";" {
-			// Only replace the custom delimiter at statement boundaries, not inside strings
-			chunk = replaceDelimiterOutsideStrings(chunk, currentDelimiter, ";")
-		}
-		result.WriteString(chunk)
-
-		currentDelimiter = delimValue
-		lastEnd = end
-	}
-
-	// Handle remaining content after last DELIMITER statement
-	remaining := sql[lastEnd:]
-	if currentDelimiter != ";" {
-		remaining = replaceDelimiterOutsideStrings(remaining, currentDelimiter, ";")
-	}
-	result.WriteString(remaining)
-
-	return result.String(), delimiters
-}
-
-// RestoreDelimiters wraps SQL with DELIMITER statements if custom delimiters were used.
-// IMPORTANT: This does NOT replace semicolons inside procedure/function bodies.
-// It only adds DELIMITER statements at the beginning and end.
-func RestoreDelimiters(sql string, delimiters []DelimiterInfo) string {
-	if len(delimiters) == 0 {
-		return sql
-	}
-
-	// Find if there's a custom delimiter (not ";")
-	customDelim := ""
-	for _, d := range delimiters {
-		if d.Delimiter != ";" {
-			customDelim = d.Delimiter
-			break
-		}
-	}
-
-	if customDelim == "" {
-		return sql
-	}
-
-	// Wrap with DELIMITER statements
-	// Replace only the statement-ending semicolons (top-level), not those inside procedures
-	return "DELIMITER " + customDelim + "\n" + replaceTopLevelSemicolons(sql, customDelim) + "\nDELIMITER ;\n"
-}
-
-// replaceDelimiterOutsideStrings replaces oldDelim with newDelim, but only outside of string literals.
-func replaceDelimiterOutsideStrings(sql string, oldDelim string, newDelim string) string {
-	var result strings.Builder
-	inSingleQuote := false
-	inDoubleQuote := false
+	lineStart := true
+	inSingle := false
+	inDouble := false
 	inBacktick := false
+	inLineComment := false
+	inBlockComment := false
 
-	oldDelimRunes := []rune(oldDelim)
-	runes := []rune(sql)
+	flush := func(end int) {
+		if end < stmtStart {
+			stmtStart = end
+		}
+		if end > stmtStart {
+			text := sql[stmtStart:end]
+			statements = append(statements, Statement{
+				Text:    text,
+				Start:   stmtStart,
+				End:     end,
+				HasCode: hasContent,
+			})
+		}
+		hasContent = false
+	}
 
-	for i := 0; i < len(runes); i++ {
-		ch := runes[i]
+	for i := 0; i < len(data); {
+		if lineStart && !inSingle && !inDouble && !inBacktick && !inLineComment && !inBlockComment {
+			if next, delim, ok := consumeDelimiterDirectiveBytes(data, i); ok {
+				flush(i)
+				stmtStart = next
+				if delim != "" {
+					currentDelimiter = delim
+				}
+				i = next
+				lineStart = true
+				continue
+			}
+		}
 
-		// Check for escape sequences
-		if ch == '\\' && i+1 < len(runes) {
-			result.WriteRune(ch)
+		ch := data[i]
+
+		if inLineComment {
+			if isLineBreakByte(ch) {
+				inLineComment = false
+				lineStart = true
+			} else {
+				lineStart = false
+			}
 			i++
-			result.WriteRune(runes[i])
 			continue
 		}
 
-		// Track string state
-		if ch == '\'' && !inDoubleQuote && !inBacktick {
-			inSingleQuote = !inSingleQuote
-		} else if ch == '"' && !inSingleQuote && !inBacktick {
-			inDoubleQuote = !inDoubleQuote
-		} else if ch == '`' && !inSingleQuote && !inDoubleQuote {
-			inBacktick = !inBacktick
+		if inBlockComment {
+			if ch == '*' && i+1 < len(data) && data[i+1] == '/' {
+				i += 2
+				inBlockComment = false
+				lineStart = false
+				continue
+			}
+			if isLineBreakByte(ch) {
+				lineStart = true
+			} else {
+				lineStart = false
+			}
+			i++
+			continue
 		}
 
-		// Check for delimiter match outside strings
-		if !inSingleQuote && !inDoubleQuote && !inBacktick {
-			if i+len(oldDelimRunes) <= len(runes) {
-				match := true
-				for j, r := range oldDelimRunes {
-					if runes[i+j] != r {
-						match = false
-						break
-					}
-				}
-				if match {
-					result.WriteString(newDelim)
-					i += len(oldDelimRunes) - 1
+		if inSingle {
+			if ch == '\\' && i+1 < len(data) {
+				i += 2
+				lineStart = false
+				continue
+			}
+			if ch == '\'' {
+				if i+1 < len(data) && data[i+1] == '\'' {
+					i += 2
+					lineStart = false
 					continue
 				}
+				inSingle = false
 			}
-		}
-
-		result.WriteRune(ch)
-	}
-
-	return result.String()
-}
-
-// replaceTopLevelSemicolons replaces semicolons that end top-level statements with the custom delimiter.
-// Semicolons inside BEGIN...END blocks are preserved.
-func replaceTopLevelSemicolons(sql string, customDelim string) string {
-	var result strings.Builder
-	inSingleQuote := false
-	inDoubleQuote := false
-	inBacktick := false
-	beginEndDepth := 0
-
-	runes := []rune(sql)
-	i := 0
-
-	for i < len(runes) {
-		ch := runes[i]
-
-		// Check for escape sequences in strings
-		if (inSingleQuote || inDoubleQuote) && ch == '\\' && i+1 < len(runes) {
-			result.WriteRune(ch)
-			i++
-			result.WriteRune(runes[i])
-			i++
-			continue
-		}
-
-		// Track string state
-		if ch == '\'' && !inDoubleQuote && !inBacktick {
-			inSingleQuote = !inSingleQuote
-			result.WriteRune(ch)
-			i++
-			continue
-		}
-		if ch == '"' && !inSingleQuote && !inBacktick {
-			inDoubleQuote = !inDoubleQuote
-			result.WriteRune(ch)
-			i++
-			continue
-		}
-		if ch == '`' && !inSingleQuote && !inDoubleQuote {
-			inBacktick = !inBacktick
-			result.WriteRune(ch)
-			i++
-			continue
-		}
-
-		// Skip string content
-		if inSingleQuote || inDoubleQuote || inBacktick {
-			result.WriteRune(ch)
-			i++
-			continue
-		}
-
-		// Check for BEGIN keyword (case insensitive)
-		if matchKeyword(runes, i, "BEGIN") {
-			beginEndDepth++
-			result.WriteString("BEGIN")
-			i += 5
-			continue
-		}
-
-		// Check for END keyword (case insensitive)
-		// Need to be careful not to match END IF, END WHILE, etc. as block ends
-		if matchKeyword(runes, i, "END") {
-			// Check if it's followed by IF, WHILE, LOOP, REPEAT, CASE (these don't decrease depth)
-			endLen := 3
-			afterEnd := i + 3
-			// Skip whitespace
-			for afterEnd < len(runes) && (runes[afterEnd] == ' ' || runes[afterEnd] == '\t' || runes[afterEnd] == '\n' || runes[afterEnd] == '\r') {
-				afterEnd++
-			}
-
-			isBlockEnd := true
-			if matchKeyword(runes, afterEnd, "IF") ||
-			   matchKeyword(runes, afterEnd, "WHILE") ||
-			   matchKeyword(runes, afterEnd, "LOOP") ||
-			   matchKeyword(runes, afterEnd, "REPEAT") ||
-			   matchKeyword(runes, afterEnd, "CASE") ||
-			   matchKeyword(runes, afterEnd, "FOR") {
-				isBlockEnd = false
-			}
-
-			if isBlockEnd && beginEndDepth > 0 {
-				beginEndDepth--
-			}
-			result.WriteString("END")
-			i += endLen
-			continue
-		}
-
-		// Replace semicolons only at top level (outside BEGIN...END blocks)
-		if ch == ';' {
-			if beginEndDepth == 0 {
-				result.WriteString(customDelim)
+			if isLineBreakByte(ch) {
+				lineStart = true
 			} else {
-				result.WriteRune(ch)
+				lineStart = false
 			}
 			i++
 			continue
 		}
 
-		result.WriteRune(ch)
+		if inDouble {
+			if ch == '\\' && i+1 < len(data) {
+				i += 2
+				lineStart = false
+				continue
+			}
+			if ch == '"' {
+				if i+1 < len(data) && data[i+1] == '"' {
+					i += 2
+					lineStart = false
+					continue
+				}
+				inDouble = false
+			}
+			if isLineBreakByte(ch) {
+				lineStart = true
+			} else {
+				lineStart = false
+			}
+			i++
+			continue
+		}
+
+		if inBacktick {
+			if ch == '`' {
+				if i+1 < len(data) && data[i+1] == '`' {
+					i += 2
+					lineStart = false
+					continue
+				}
+				inBacktick = false
+			}
+			if isLineBreakByte(ch) {
+				lineStart = true
+			} else {
+				lineStart = false
+			}
+			i++
+			continue
+		}
+
+		if matchesDelimiterBytes(data, i, currentDelimiter) {
+			flush(i)
+			i += len(currentDelimiter)
+			stmtStart = i
+			lineStart = false
+			continue
+		}
+
+		if ch == '-' && i+1 < len(data) && data[i+1] == '-' {
+			if i+2 >= len(data) || isSpaceOrControlByte(data[i+2]) {
+				inLineComment = true
+				i += 2
+				lineStart = false
+				continue
+			}
+		}
+
+		if ch == '#' {
+			inLineComment = true
+			i++
+			lineStart = false
+			continue
+		}
+
+		if ch == '/' && i+1 < len(data) && data[i+1] == '*' {
+			inBlockComment = true
+			i += 2
+			lineStart = false
+			continue
+		}
+
+		if ch == '\'' {
+			inSingle = true
+		} else if ch == '"' {
+			inDouble = true
+		} else if ch == '`' {
+			inBacktick = true
+		}
+
+		if !isWhitespaceByte(ch) {
+			hasContent = true
+		}
+
+		if isLineBreakByte(ch) {
+			lineStart = true
+		} else {
+			lineStart = false
+		}
 		i++
 	}
 
-	return result.String()
+	flush(len(data))
+	return statements, nil
 }
 
-// matchKeyword checks if the keyword appears at position i (case insensitive)
-// and is followed by a non-alphanumeric character (word boundary)
-func matchKeyword(runes []rune, i int, keyword string) bool {
-	if i+len(keyword) > len(runes) {
+// PickDelimiter chooses a delimiter that does not appear in the SQL text.
+func PickDelimiter(sql string) string {
+	candidates := []string{"$$", "//", ";;", "||", "##", "@@"}
+	for _, cand := range candidates {
+		if !strings.Contains(sql, cand) {
+			return cand
+		}
+	}
+
+	base := "__ULTRAVERSE_DELIM__"
+	if !strings.Contains(sql, base) {
+		return base
+	}
+	for i := 1; ; i++ {
+		cand := base + "_" + itoa(i)
+		if !strings.Contains(sql, cand) {
+			return cand
+		}
+	}
+}
+
+func consumeDelimiterDirectiveBytes(data []byte, start int) (next int, delim string, ok bool) {
+	i := start
+	for i < len(data) && isHorizontalSpaceByte(data[i]) {
+		i++
+	}
+	if !matchKeywordAtBytes(data, i, "DELIMITER") {
+		return start, "", false
+	}
+
+	j := i + len("DELIMITER")
+	if j >= len(data) || !isWhitespaceByte(data[j]) {
+		return start, "", false
+	}
+	for j < len(data) && isHorizontalSpaceByte(data[j]) {
+		j++
+	}
+	if j >= len(data) || isLineBreakByte(data[j]) {
+		return start, "", false
+	}
+
+	k := j
+	for k < len(data) && !isWhitespaceByte(data[k]) {
+		k++
+	}
+	delim = string(data[j:k])
+
+	for k < len(data) && !isLineBreakByte(data[k]) {
+		k++
+	}
+	if k < len(data) && data[k] == '\r' {
+		k++
+		if k < len(data) && data[k] == '\n' {
+			k++
+		}
+	} else if k < len(data) && data[k] == '\n' {
+		k++
+	}
+
+	return k, delim, true
+}
+
+func matchesDelimiterBytes(data []byte, pos int, delim string) bool {
+	if delim == "" {
 		return false
 	}
-
-	// Check if preceded by alphanumeric (not a word start)
-	if i > 0 {
-		prev := runes[i-1]
-		if isAlphanumeric(prev) || prev == '_' {
+	if pos+len(delim) > len(data) {
+		return false
+	}
+	for i := 0; i < len(delim); i++ {
+		if data[pos+i] != delim[i] {
 			return false
 		}
 	}
-
-	for j, ch := range keyword {
-		r := runes[i+j]
-		// Case insensitive comparison
-		if !((r == rune(ch)) || (r >= 'a' && r <= 'z' && r-32 == rune(ch)) || (r >= 'A' && r <= 'Z' && r == rune(ch))) {
-			return false
-		}
-	}
-
-	// Check word boundary after keyword
-	afterPos := i + len(keyword)
-	if afterPos < len(runes) {
-		after := runes[afterPos]
-		if isAlphanumeric(after) || after == '_' {
-			return false
-		}
-	}
-
 	return true
 }
 
-func isAlphanumeric(r rune) bool {
+func matchKeywordAtBytes(data []byte, pos int, keyword string) bool {
+	if pos+len(keyword) > len(data) {
+		return false
+	}
+	for i := 0; i < len(keyword); i++ {
+		if !equalIgnoreCaseByte(data[pos+i], keyword[i]) {
+			return false
+		}
+	}
+	after := pos + len(keyword)
+	if after < len(data) && (isAlphaNumericByte(data[after]) || data[after] == '_') {
+		return false
+	}
+	return true
+}
+
+func equalIgnoreCaseByte(a byte, b byte) bool {
+	if a == b {
+		return true
+	}
+	if a >= 'a' && a <= 'z' {
+		a -= 32
+	}
+	if b >= 'a' && b <= 'z' {
+		b -= 32
+	}
+	return a == b
+}
+
+func isAlphaNumericByte(r byte) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
+func isWhitespaceByte(r byte) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r'
+}
+
+func isHorizontalSpaceByte(r byte) bool {
+	return r == ' ' || r == '\t'
+}
+
+func isLineBreakByte(r byte) bool {
+	return r == '\n' || r == '\r'
+}
+
+func isSpaceOrControlByte(r byte) bool {
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' || r == '\v'
+}
+
+func itoa(v int) string {
+	if v == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + v%10)
+		v /= 10
+	}
+	return string(buf[i:])
 }

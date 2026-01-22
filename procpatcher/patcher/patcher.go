@@ -3,12 +3,9 @@ package patcher
 import (
 	"fmt"
 	"regexp"
-	"sort"
-	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
 	_ "github.com/pingcap/tidb/pkg/types/parser_driver"
 
 	"procpatcher/delimiter"
@@ -29,19 +26,27 @@ func Patch(sql string) (*PatchResult, error) {
 		Warnings: []string{},
 	}
 
-	// Step 1: Remove DELIMITER statements (tidb/parser doesn't support them)
-	cleanSQL, delimiters := delimiter.RemoveDelimiters(sql)
-
-	// Step 2: Parse the SQL
-	p := parser.New()
-	stmts, _, err := p.Parse(cleanSQL, "", "")
+	statements, err := delimiter.SplitStatements(sql)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse SQL: %w", err)
+		return nil, fmt.Errorf("failed to split statements: %w", err)
 	}
 
-	// Step 3: Find and patch ProcedureInfo statements
-	for _, stmt := range stmts {
-		procInfo, ok := stmt.(*ast.ProcedureInfo)
+	p := parser.New()
+	var insertions []textInsertion
+	seq := 0
+
+	for _, stmt := range statements {
+		if !stmt.HasCode {
+			continue
+		}
+		parsed, err := p.ParseOneStmt(stmt.Text, "", "")
+		if err != nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("Warning: failed to parse statement at offset %d, leaving unchanged: %v", stmt.Start, err))
+			continue
+		}
+
+		procInfo, ok := parsed.(*ast.ProcedureInfo)
 		if !ok {
 			continue
 		}
@@ -53,8 +58,7 @@ func Patch(sql string) (*PatchResult, error) {
 		}
 
 		// Check if already patched (idempotency)
-		procSQL := restoreNode(procInfo)
-		if hintTablePattern.MatchString(procSQL) {
+		if hintTablePattern.MatchString(stmt.Text) {
 			result.Warnings = append(result.Warnings,
 				fmt.Sprintf("Warning: Procedure '%s' already patched, skipping", procName))
 			continue
@@ -92,166 +96,41 @@ func Patch(sql string) (*PatchResult, error) {
 			continue
 		}
 
-		// Find insertion points
-		inserter := NewProcedureInserter(procName, params)
-		inserter.ProcessBlock(block, label)
+		inserter := NewProcedureInserter(procName, params, label)
+		inserter.ProcessBlock(block, label, true)
+		newline := detectNewline(stmt.Text)
 
-		// Modify the AST by inserting hint statements
-		insertPoints := inserter.GetInsertionPoints()
-		modifyAST(procName, params, insertPoints)
-	}
-
-	// Step 4: Restore the modified SQL
-	var outputBuilder strings.Builder
-	for i, stmt := range stmts {
-		if i > 0 {
-			outputBuilder.WriteString("\n\n")
+		for _, ip := range inserter.GetInsertionPoints() {
+			lineStart := findLineStart(stmt.Text, ip.Stmt.OriginTextPosition())
+			indent := lineIndent(stmt.Text, lineStart)
+			localVars := visibleLocals(ip.Scope, params)
+			insertSQL := BuildHintInsertSQL(procName, params, localVars)
+			insertText := indent + insertSQL + ";" + newline
+			insertions = append(insertions, textInsertion{
+				Offset: stmt.Start + lineStart,
+				Text:   insertText,
+				Seq:    seq,
+			})
+			seq++
 		}
 
-		restored := restoreNode(stmt)
-
-		// Format procedures and functions for readability
-		switch stmt.(type) {
-		case *ast.ProcedureInfo, *ast.FunctionInfo:
-			restored = FormatProcedureSQL(restored)
+		endLineStart, endIndent, ok := findProcedureEndInsertion(stmt.Text)
+		if !ok {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("Warning: Procedure '%s' end not found, skipping end insert", procName))
+			continue
 		}
-
-		outputBuilder.WriteString(restored)
-		outputBuilder.WriteString(";")
+		insertSQL := BuildHintInsertSQL(procName, params, visibleLocals(inserter.GetRootBlockScope(), params))
+		insertText := endIndent + insertSQL + ";" + newline
+		insertions = append(insertions, textInsertion{
+			Offset: stmt.Start + endLineStart,
+			Text:   insertText,
+			Seq:    seq,
+		})
+		seq++
 	}
 
-	patchedCleanSQL := outputBuilder.String()
-
-	// Step 5: Restore DELIMITER statements
-	result.PatchedSQL = delimiter.RestoreDelimiters(patchedCleanSQL, delimiters)
+	result.PatchedSQL = applyInsertions(sql, insertions)
 
 	return result, nil
-}
-
-// modifyAST inserts hint statements at the insertion points
-func modifyAST(procName string, params []Variable, insertPoints []InsertionPoint) {
-	// Group insertion points by their container type
-	blockInserts := make(map[*ast.ProcedureBlock][]InsertionPoint)
-	ifBlockInserts := make(map[*ast.ProcedureIfBlock][]InsertionPoint)
-	elseBlockInserts := make(map[*ast.ProcedureElseBlock][]InsertionPoint)
-
-	for _, ip := range insertPoints {
-		if ip.BlockStmt != nil {
-			blockInserts[ip.BlockStmt] = append(blockInserts[ip.BlockStmt], ip)
-		} else if ip.IfBlock != nil {
-			ifBlockInserts[ip.IfBlock] = append(ifBlockInserts[ip.IfBlock], ip)
-		} else if ip.ElseBlock != nil {
-			elseBlockInserts[ip.ElseBlock] = append(elseBlockInserts[ip.ElseBlock], ip)
-		}
-	}
-
-	// Helper to build INSERT statement for an insertion point
-	buildInsertStmt := func(ip InsertionPoint) ast.StmtNode {
-		// Get visible variables at this scope
-		vars := ip.Scope.GetAllVisibleVariables()
-
-		// Separate params from local vars
-		paramSet := make(map[string]bool)
-		for _, p := range params {
-			paramSet[p.Name] = true
-		}
-
-		var localVars []Variable
-		for _, v := range vars {
-			if !paramSet[v.Name] {
-				localVars = append(localVars, v)
-			}
-		}
-
-		// Build the INSERT statement
-		insertSQL := BuildHintInsertSQL(procName, params, localVars)
-		return createInsertStmt(insertSQL)
-	}
-
-	// Process BEGIN...END blocks
-	for block, points := range blockInserts {
-		// Sort by index descending so we can insert without shifting affecting later inserts
-		sort.Slice(points, func(i, j int) bool {
-			return points[i].Index > points[j].Index
-		})
-
-		for _, ip := range points {
-			insertStmt := buildInsertStmt(ip)
-			if insertStmt == nil {
-				continue
-			}
-
-			if ip.Type == InsertBeforeEnd {
-				block.ProcedureProcStmts = append(block.ProcedureProcStmts, insertStmt)
-			} else {
-				newStmts := make([]ast.StmtNode, 0, len(block.ProcedureProcStmts)+1)
-				newStmts = append(newStmts, block.ProcedureProcStmts[:ip.Index]...)
-				newStmts = append(newStmts, insertStmt)
-				newStmts = append(newStmts, block.ProcedureProcStmts[ip.Index:]...)
-				block.ProcedureProcStmts = newStmts
-			}
-		}
-	}
-
-	// Process IF THEN blocks
-	for ifBlock, points := range ifBlockInserts {
-		sort.Slice(points, func(i, j int) bool {
-			return points[i].Index > points[j].Index
-		})
-
-		for _, ip := range points {
-			insertStmt := buildInsertStmt(ip)
-			if insertStmt == nil {
-				continue
-			}
-
-			// Insert before LEAVE statement
-			newStmts := make([]ast.StmtNode, 0, len(ifBlock.ProcedureIfStmts)+1)
-			newStmts = append(newStmts, ifBlock.ProcedureIfStmts[:ip.Index]...)
-			newStmts = append(newStmts, insertStmt)
-			newStmts = append(newStmts, ifBlock.ProcedureIfStmts[ip.Index:]...)
-			ifBlock.ProcedureIfStmts = newStmts
-		}
-	}
-
-	// Process ELSE blocks
-	for elseBlock, points := range elseBlockInserts {
-		sort.Slice(points, func(i, j int) bool {
-			return points[i].Index > points[j].Index
-		})
-
-		for _, ip := range points {
-			insertStmt := buildInsertStmt(ip)
-			if insertStmt == nil {
-				continue
-			}
-
-			// Insert before LEAVE statement
-			newStmts := make([]ast.StmtNode, 0, len(elseBlock.ProcedureIfStmts)+1)
-			newStmts = append(newStmts, elseBlock.ProcedureIfStmts[:ip.Index]...)
-			newStmts = append(newStmts, insertStmt)
-			newStmts = append(newStmts, elseBlock.ProcedureIfStmts[ip.Index:]...)
-			elseBlock.ProcedureIfStmts = newStmts
-		}
-	}
-}
-
-// createInsertStmt creates an INSERT statement node
-func createInsertStmt(sql string) ast.StmtNode {
-	p := parser.New()
-	stmts, _, err := p.Parse(sql, "", "")
-	if err != nil || len(stmts) == 0 {
-		return nil
-	}
-	return stmts[0]
-}
-
-// restoreNode converts an AST node back to SQL
-func restoreNode(node ast.Node) string {
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	if err := node.Restore(ctx); err != nil {
-		return ""
-	}
-	return sb.String()
 }

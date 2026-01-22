@@ -1,6 +1,8 @@
 package patcher
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
@@ -8,42 +10,38 @@ import (
 type InsertionPoint struct {
 	Type  InsertionType
 	Scope *Scope
-	Index int    // Index in the statement list
-	Label string // For LEAVE statements, the target label
-
-	// One of these will be set depending on the parent container
-	BlockStmt *ast.ProcedureBlock    // BEGIN...END block
-	IfBlock   *ast.ProcedureIfBlock  // IF/ELSEIF THEN branch
-	ElseBlock *ast.ProcedureElseBlock // ELSE branch
+	Stmt  ast.StmtNode
 }
 
 type InsertionType int
 
 const (
-	InsertBeforeEnd InsertionType = iota
-	InsertBeforeLeave
+	InsertBeforeEarlyExit InsertionType = iota
 )
 
 // ProcedureInserter finds insertion points and modifies the AST
 type ProcedureInserter struct {
 	procName     string
 	params       []Variable
+	procLabel    string
 	scopeTracker *ScopeTracker
 	insertPoints []InsertionPoint
+	rootScope    *Scope
 }
 
 // NewProcedureInserter creates a new inserter for a procedure
-func NewProcedureInserter(procName string, params []Variable) *ProcedureInserter {
+func NewProcedureInserter(procName string, params []Variable, procLabel string) *ProcedureInserter {
 	return &ProcedureInserter{
 		procName:     procName,
 		params:       params,
+		procLabel:    procLabel,
 		scopeTracker: NewScopeTracker(params),
 		insertPoints: []InsertionPoint{},
 	}
 }
 
 // ProcessBlock processes a BEGIN...END block and finds insertion points
-func (pi *ProcedureInserter) ProcessBlock(block *ast.ProcedureBlock, label string) {
+func (pi *ProcedureInserter) ProcessBlock(block *ast.ProcedureBlock, label string, isRoot bool) {
 	if block == nil {
 		return
 	}
@@ -53,18 +51,12 @@ func (pi *ProcedureInserter) ProcessBlock(block *ast.ProcedureBlock, label strin
 
 	// Enter new scope
 	pi.scopeTracker.EnterBlock(label, declaredVars)
+	if isRoot {
+		pi.rootScope = pi.scopeTracker.GetCurrentScope()
+	}
 
 	// Process statements to find insertion points
-	pi.processBlockStatements(block, block.ProcedureProcStmts)
-
-	// The END of this block is an insertion point
-	pi.insertPoints = append(pi.insertPoints, InsertionPoint{
-		Type:      InsertBeforeEnd,
-		Scope:     pi.scopeTracker.GetCurrentScope(),
-		BlockStmt: block,
-		Index:     len(block.ProcedureProcStmts), // Insert at the end
-		Label:     label,
-	})
+	pi.processBlockStatements(block.ProcedureProcStmts)
 
 	// Leave scope
 	pi.scopeTracker.LeaveBlock()
@@ -77,12 +69,12 @@ func (pi *ProcedureInserter) ProcessLabeledBlock(labelBlock *ast.ProcedureLabelB
 	}
 
 	label := labelBlock.LabelName
-	pi.ProcessBlock(labelBlock.Block, label)
+	pi.ProcessBlock(labelBlock.Block, label, false)
 }
 
 // processBlockStatements processes statements inside a BEGIN...END block
-func (pi *ProcedureInserter) processBlockStatements(parentBlock *ast.ProcedureBlock, stmts []ast.StmtNode) {
-	for i, stmt := range stmts {
+func (pi *ProcedureInserter) processBlockStatements(stmts []ast.StmtNode) {
+	for _, stmt := range stmts {
 		switch s := stmt.(type) {
 		case *ast.ProcedureLabelBlock:
 			// Labeled BEGIN...END block
@@ -90,16 +82,28 @@ func (pi *ProcedureInserter) processBlockStatements(parentBlock *ast.ProcedureBl
 
 		case *ast.ProcedureJump:
 			// LEAVE or ITERATE statement
-			if s.IsLeave {
+			if s.IsLeave && pi.isProcExitLabel(s.Name) {
 				// LEAVE statement - need to insert before it
 				pi.insertPoints = append(pi.insertPoints, InsertionPoint{
-					Type:      InsertBeforeLeave,
-					Scope:     pi.scopeTracker.GetCurrentScope(),
-					BlockStmt: parentBlock,
-					Index:     i,
-					Label:     s.Name,
+					Type:  InsertBeforeEarlyExit,
+					Scope: pi.scopeTracker.GetCurrentScope(),
+					Stmt:  s,
 				})
 			}
+
+		case *ast.ProcedureSignalStmt:
+			pi.insertPoints = append(pi.insertPoints, InsertionPoint{
+				Type:  InsertBeforeEarlyExit,
+				Scope: pi.scopeTracker.GetCurrentScope(),
+				Stmt:  s,
+			})
+
+		case *ast.ProcedureReturnStmt:
+			pi.insertPoints = append(pi.insertPoints, InsertionPoint{
+				Type:  InsertBeforeEarlyExit,
+				Scope: pi.scopeTracker.GetCurrentScope(),
+				Stmt:  s,
+			})
 
 		case *ast.ProcedureIfInfo:
 			// Process IF branches
@@ -111,32 +115,44 @@ func (pi *ProcedureInserter) processBlockStatements(parentBlock *ast.ProcedureBl
 
 		case *ast.ProcedureWhileStmt:
 			// Process WHILE body (no new scope, just find LEAVE statements)
-			pi.processBlockStatements(parentBlock, s.Body)
+			pi.processBlockStatements(s.Body)
 
 		case *ast.ProcedureRepeatStmt:
 			// Process REPEAT body
-			pi.processBlockStatements(parentBlock, s.Body)
+			pi.processBlockStatements(s.Body)
 		}
 	}
 }
 
 // processIfStatements processes statements inside an IF THEN branch
 func (pi *ProcedureInserter) processIfStatements(ifBlock *ast.ProcedureIfBlock, stmts []ast.StmtNode) {
-	for i, stmt := range stmts {
+	for _, stmt := range stmts {
 		switch s := stmt.(type) {
 		case *ast.ProcedureLabelBlock:
 			pi.ProcessLabeledBlock(s)
 
 		case *ast.ProcedureJump:
-			if s.IsLeave {
+			if s.IsLeave && pi.isProcExitLabel(s.Name) {
 				pi.insertPoints = append(pi.insertPoints, InsertionPoint{
-					Type:    InsertBeforeLeave,
-					Scope:   pi.scopeTracker.GetCurrentScope(),
-					IfBlock: ifBlock,
-					Index:   i,
-					Label:   s.Name,
+					Type:  InsertBeforeEarlyExit,
+					Scope: pi.scopeTracker.GetCurrentScope(),
+					Stmt:  s,
 				})
 			}
+
+		case *ast.ProcedureSignalStmt:
+			pi.insertPoints = append(pi.insertPoints, InsertionPoint{
+				Type:  InsertBeforeEarlyExit,
+				Scope: pi.scopeTracker.GetCurrentScope(),
+				Stmt:  s,
+			})
+
+		case *ast.ProcedureReturnStmt:
+			pi.insertPoints = append(pi.insertPoints, InsertionPoint{
+				Type:  InsertBeforeEarlyExit,
+				Scope: pi.scopeTracker.GetCurrentScope(),
+				Stmt:  s,
+			})
 
 		case *ast.ProcedureIfInfo:
 			pi.processIfInfo(s)
@@ -155,21 +171,33 @@ func (pi *ProcedureInserter) processIfStatements(ifBlock *ast.ProcedureIfBlock, 
 
 // processElseStatements processes statements inside an ELSE branch
 func (pi *ProcedureInserter) processElseStatements(elseBlock *ast.ProcedureElseBlock, stmts []ast.StmtNode) {
-	for i, stmt := range stmts {
+	for _, stmt := range stmts {
 		switch s := stmt.(type) {
 		case *ast.ProcedureLabelBlock:
 			pi.ProcessLabeledBlock(s)
 
 		case *ast.ProcedureJump:
-			if s.IsLeave {
+			if s.IsLeave && pi.isProcExitLabel(s.Name) {
 				pi.insertPoints = append(pi.insertPoints, InsertionPoint{
-					Type:      InsertBeforeLeave,
-					Scope:     pi.scopeTracker.GetCurrentScope(),
-					ElseBlock: elseBlock,
-					Index:     i,
-					Label:     s.Name,
+					Type:  InsertBeforeEarlyExit,
+					Scope: pi.scopeTracker.GetCurrentScope(),
+					Stmt:  s,
 				})
 			}
+
+		case *ast.ProcedureSignalStmt:
+			pi.insertPoints = append(pi.insertPoints, InsertionPoint{
+				Type:  InsertBeforeEarlyExit,
+				Scope: pi.scopeTracker.GetCurrentScope(),
+				Stmt:  s,
+			})
+
+		case *ast.ProcedureReturnStmt:
+			pi.insertPoints = append(pi.insertPoints, InsertionPoint{
+				Type:  InsertBeforeEarlyExit,
+				Scope: pi.scopeTracker.GetCurrentScope(),
+				Stmt:  s,
+			})
 
 		case *ast.ProcedureIfInfo:
 			pi.processIfInfo(s)
@@ -244,6 +272,29 @@ func (pi *ProcedureInserter) processLoopBody(stmts []ast.StmtNode) {
 		case *ast.ProcedureLabelBlock:
 			pi.ProcessLabeledBlock(s)
 
+		case *ast.ProcedureJump:
+			if s.IsLeave && pi.isProcExitLabel(s.Name) {
+				pi.insertPoints = append(pi.insertPoints, InsertionPoint{
+					Type:  InsertBeforeEarlyExit,
+					Scope: pi.scopeTracker.GetCurrentScope(),
+					Stmt:  s,
+				})
+			}
+
+		case *ast.ProcedureSignalStmt:
+			pi.insertPoints = append(pi.insertPoints, InsertionPoint{
+				Type:  InsertBeforeEarlyExit,
+				Scope: pi.scopeTracker.GetCurrentScope(),
+				Stmt:  s,
+			})
+
+		case *ast.ProcedureReturnStmt:
+			pi.insertPoints = append(pi.insertPoints, InsertionPoint{
+				Type:  InsertBeforeEarlyExit,
+				Scope: pi.scopeTracker.GetCurrentScope(),
+				Stmt:  s,
+			})
+
 		case *ast.ProcedureIfInfo:
 			pi.processIfInfo(s)
 
@@ -256,10 +307,7 @@ func (pi *ProcedureInserter) processLoopBody(stmts []ast.StmtNode) {
 		case *ast.ProcedureRepeatStmt:
 			pi.processLoopBody(s.Body)
 
-		// Note: We don't add insertion points for LEAVE inside loops here
-		// because they typically exit the loop, not the procedure
-		// The LEAVE statements targeting procedure labels are handled
-		// in processIfStatements/processElseStatements
+			// Note: only LEAVE targeting the procedure label is inserted.
 		}
 	}
 }
@@ -277,4 +325,16 @@ func (pi *ProcedureInserter) GetProcName() string {
 // GetParams returns the procedure parameters
 func (pi *ProcedureInserter) GetParams() []Variable {
 	return pi.params
+}
+
+// GetRootBlockScope returns the root block scope (outermost BEGIN...END).
+func (pi *ProcedureInserter) GetRootBlockScope() *Scope {
+	return pi.rootScope
+}
+
+func (pi *ProcedureInserter) isProcExitLabel(label string) bool {
+	if pi.procLabel == "" {
+		return false
+	}
+	return strings.EqualFold(pi.procLabel, label)
 }
