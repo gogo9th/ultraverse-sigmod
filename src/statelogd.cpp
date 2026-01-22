@@ -911,24 +911,77 @@ public:
         
         // _logger->debug(jsonStr);
         
-        auto jsonObj = std::move(json::parse(jsonStr));
+        auto jsonObj = json::parse(jsonStr, nullptr, false);
+        if (jsonObj.is_discarded()) {
+            _logger->error("failed to parse procedure hint JSON: {}", jsonStr);
+            return nullptr;
+        }
+        if (!jsonObj.is_array() || jsonObj.size() < 2) {
+            _logger->error("procedure hint JSON must be an array with at least 2 elements: {}", jsonStr);
+            return nullptr;
+        }
         
-        uint64_t callId = jsonObj.at(0).get<uint64_t>();
-        std::string procName = jsonObj.at(1).get<std::string>();
+        uint64_t callId = 0;
+        const auto &callIdElem = jsonObj.at(0);
+        if (callIdElem.is_number_unsigned()) {
+            callId = callIdElem.get<uint64_t>();
+        } else if (callIdElem.is_number_integer()) {
+            auto signedId = callIdElem.get<int64_t>();
+            if (signedId < 0) {
+                _logger->error("procedure hint callId is negative: {}", signedId);
+                return nullptr;
+            }
+            callId = static_cast<uint64_t>(signedId);
+        } else if (callIdElem.is_string()) {
+            try {
+                callId = std::stoull(callIdElem.get<std::string>());
+            } catch (const std::exception &e) {
+                _logger->error("procedure hint callId is not a valid integer: {}", callIdElem.get<std::string>());
+                return nullptr;
+            }
+        } else {
+            _logger->error("procedure hint callId has unsupported type: {}", callIdElem.type_name());
+            return nullptr;
+        }
+        
+        const auto &procNameElem = jsonObj.at(1);
+        if (!procNameElem.is_string()) {
+            _logger->error("procedure hint procName must be a string: {}", procNameElem.type_name());
+            return nullptr;
+        }
+        std::string procName = procNameElem.get<std::string>();
         
         std::vector<std::string> args;
         std::vector<StateData> args2;
         
-        for (int i = 2; i < jsonObj.size(); i++) {
+        auto toHexLiteral = [](const std::string &input) {
+            static const char *hex = "0123456789ABCDEF";
+            std::string out;
+            out.reserve(2 + input.size() * 2 + 1);
+            out.push_back('X');
+            out.push_back('\'');
+            for (unsigned char ch : input) {
+                out.push_back(hex[(ch >> 4) & 0x0F]);
+                out.push_back(hex[ch & 0x0F]);
+            }
+            out.push_back('\'');
+            return out;
+        };
+        
+        for (size_t i = 2; i < jsonObj.size(); i++) {
             const auto &elem = jsonObj.at(i);
             
             switch (elem.type()) {
                 case json::value_t::string: {
                     auto strval = elem.get<std::string>();
-                    // strval = utility::replaceAll(strval, "\"", "\\\"");
-                    
-                    args.push_back(fmt::format("'{}'", strval));
-                    args2.emplace_back(elem.get<std::string>());
+                    args.push_back(toHexLiteral(strval));
+                    args2.emplace_back(strval);
+                }
+                    break;
+                case json::value_t::boolean: {
+                    bool value = elem.get<bool>();
+                    args.push_back(value ? "1" : "0");
+                    args2.emplace_back(static_cast<int64_t>(value ? 1 : 0));
                 }
                     break;
                 case json::value_t::number_integer:
@@ -947,9 +1000,18 @@ public:
                     args.emplace_back("NULL");
                     args2.emplace_back();
                     break;
+                case json::value_t::array:
+                case json::value_t::object: {
+                    auto dumped = elem.dump();
+                    _logger->warn("procedure hint arg type {} converted to JSON string", elem.type_name());
+                    args.push_back(toHexLiteral(dumped));
+                    args2.emplace_back(dumped);
+                }
+                    break;
                 default:
-                    _logger->error("unsupported type: {}", elem.type_name());
-                    assert(false);
+                    _logger->error("unsupported procedure hint arg type: {}", elem.type_name());
+                    args.emplace_back("NULL");
+                    args2.emplace_back();
                     break;
             }
         }
@@ -972,6 +1034,7 @@ public:
         auto procCall = std::make_shared<ProcCall>();
         procCall->setCallId(callId);
         procCall->setProcName(procName);
+        procCall->setCallInfo(jsonStr);
         procCall->statements().push_back(sstream.str());
         procCall->setParameters(args2);
         
