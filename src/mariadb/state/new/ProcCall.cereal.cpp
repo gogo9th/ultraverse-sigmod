@@ -13,6 +13,8 @@ void ProcCall::save(Archive &archive) const {
   archive(_callId);
   archive(_procName);
   archive(_callInfo);
+  archive(_args);
+  archive(_vars);
   
   archive(_statements.size());
   for (const auto &statement: _statements) {
@@ -25,6 +27,8 @@ void ProcCall::load(Archive &archive) {
   archive(_callId);
   archive(_procName);
   archive(_callInfo);
+  archive(_args);
+  archive(_vars);
 
   size_t size = 0;
   archive(size);

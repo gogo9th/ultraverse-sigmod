@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <iostream>
 #include <fstream>
+#include <optional>
 #include <pthread.h>
 #include <signal.h>
 
@@ -495,6 +496,10 @@ public:
             // process as normal transaction
             return finalizeTransaction(transaction);
         }
+
+        if (procCall->statements().empty()) {
+            procCall->statements().push_back(buildCallStatement(*procCall, *procMatcher));
+        }
         
         while (!queries.empty()) {
             auto pendingQuery = std::move(queries.front());
@@ -805,8 +810,7 @@ public:
 
                 assert(transaction->procCall == nullptr);
 
-                const auto &json = pendingQuery->writeSet().begin()->data_list.at(0).getAs<std::string>();
-                transaction->procCall = prepareProcedureCall(json);
+                transaction->procCall = prepareProcedureCall(pendingQuery->writeSet());
             }
         } else {
             auto appendItems = [](const std::vector<StateItem> &items, std::vector<StateItem> &target) {
@@ -860,138 +864,288 @@ public:
         return statement.find("INSERT INTO __ULTRAVERSE_PROCEDURE_HINT") == 0;
     }
 
-    std::shared_ptr<ProcCall> prepareProcedureCall(const std::string &jsonStr) {
-        using namespace nlohmann;
-        
-        // _logger->debug(jsonStr);
-        
-        auto jsonObj = json::parse(jsonStr, nullptr, false);
+    std::optional<StateData> findProcedureHintValue(
+        const std::vector<StateItem> &items,
+        const std::string &column
+    ) {
+        const std::string table = "__ultraverse_procedure_hint";
+        const std::string target = table + "." + column;
+        const std::string suffix = "." + column;
+        for (const auto &item : items) {
+            if (item.data_list.empty()) {
+                continue;
+            }
+            const std::string name = utility::toLower(item.name);
+            if (name == target || name == column || name.ends_with(suffix)) {
+                return item.data_list.front();
+            }
+        }
+        return std::nullopt;
+    }
+
+    bool extractUint64(const StateData &data, uint64_t &out) {
+        switch (data.Type()) {
+            case en_column_data_int: {
+                int64_t value = 0;
+                if (!data.Get(value) || value < 0) {
+                    return false;
+                }
+                out = static_cast<uint64_t>(value);
+                return true;
+            }
+            case en_column_data_uint: {
+                uint64_t value = 0;
+                if (!data.Get(value)) {
+                    return false;
+                }
+                out = value;
+                return true;
+            }
+            case en_column_data_double: {
+                double value = 0.0;
+                if (!data.Get(value) || value < 0) {
+                    return false;
+                }
+                out = static_cast<uint64_t>(value);
+                return true;
+            }
+            case en_column_data_string:
+            case en_column_data_decimal: {
+                std::string value;
+                if (!data.Get(value)) {
+                    return false;
+                }
+                try {
+                    out = std::stoull(value);
+                } catch (const std::exception &) {
+                    return false;
+                }
+                return true;
+            }
+            case en_column_data_null:
+            default:
+                return false;
+        }
+    }
+
+    bool extractString(const StateData &data, std::string &out) {
+        if (data.Type() == en_column_data_null) {
+            return false;
+        }
+        if (data.Type() != en_column_data_string && data.Type() != en_column_data_decimal) {
+            return false;
+        }
+        return data.Get(out);
+    }
+
+    std::optional<nlohmann::json> parseJsonObject(const std::string &payload, const std::string &label) {
+        if (payload.empty()) {
+            return nlohmann::json::object();
+        }
+        auto jsonObj = nlohmann::json::parse(payload, nullptr, false);
         if (jsonObj.is_discarded()) {
-            _logger->error("failed to parse procedure hint JSON: {}", jsonStr);
-            return nullptr;
+            _logger->error("failed to parse procedure hint {} JSON: {}", label, payload);
+            return std::nullopt;
         }
-        if (!jsonObj.is_array() || jsonObj.size() < 2) {
-            _logger->error("procedure hint JSON must be an array with at least 2 elements: {}", jsonStr);
-            return nullptr;
+        if (jsonObj.is_null()) {
+            return nlohmann::json::object();
         }
-        
-        uint64_t callId = 0;
-        const auto &callIdElem = jsonObj.at(0);
-        if (callIdElem.is_number_unsigned()) {
-            callId = callIdElem.get<uint64_t>();
-        } else if (callIdElem.is_number_integer()) {
-            auto signedId = callIdElem.get<int64_t>();
-            if (signedId < 0) {
-                _logger->error("procedure hint callId is negative: {}", signedId);
-                return nullptr;
-            }
-            callId = static_cast<uint64_t>(signedId);
-        } else if (callIdElem.is_string()) {
-            try {
-                callId = std::stoull(callIdElem.get<std::string>());
-            } catch (const std::exception &e) {
-                _logger->error("procedure hint callId is not a valid integer: {}", callIdElem.get<std::string>());
-                return nullptr;
-            }
-        } else {
-            _logger->error("procedure hint callId has unsupported type: {}", callIdElem.type_name());
-            return nullptr;
+        if (!jsonObj.is_object()) {
+            _logger->error("procedure hint {} JSON must be an object: {}", label, payload);
+            return std::nullopt;
         }
-        
-        const auto &procNameElem = jsonObj.at(1);
-        if (!procNameElem.is_string()) {
-            _logger->error("procedure hint procName must be a string: {}", procNameElem.type_name());
-            return nullptr;
-        }
-        std::string procName = procNameElem.get<std::string>();
-        
-        std::vector<std::string> args;
-        std::vector<StateData> args2;
-        
-        auto toHexLiteral = [](const std::string &input) {
-            static const char *hex = "0123456789ABCDEF";
-            std::string out;
-            out.reserve(2 + input.size() * 2 + 1);
-            out.push_back('X');
-            out.push_back('\'');
-            for (unsigned char ch : input) {
-                out.push_back(hex[(ch >> 4) & 0x0F]);
-                out.push_back(hex[ch & 0x0F]);
-            }
-            out.push_back('\'');
-            return out;
-        };
-        
-        for (size_t i = 2; i < jsonObj.size(); i++) {
-            const auto &elem = jsonObj.at(i);
-            
+        return jsonObj;
+    }
+
+    std::map<std::string, StateData> jsonObjectToStateMap(const nlohmann::json &jsonObj) {
+        std::map<std::string, StateData> result;
+
+        for (auto it = jsonObj.begin(); it != jsonObj.end(); ++it) {
+            const std::string key = it.key();
+            const auto &elem = it.value();
+            StateData data;
+
             switch (elem.type()) {
-                case json::value_t::string: {
+                case nlohmann::json::value_t::string: {
                     auto strval = elem.get<std::string>();
-                    args.push_back(toHexLiteral(strval));
-                    args2.emplace_back(strval);
+                    data.Set(strval.c_str(), strval.size());
                 }
                     break;
-                case json::value_t::boolean: {
+                case nlohmann::json::value_t::boolean: {
                     bool value = elem.get<bool>();
-                    args.push_back(value ? "1" : "0");
-                    args2.emplace_back(static_cast<int64_t>(value ? 1 : 0));
+                    data.Set(static_cast<int64_t>(value ? 1 : 0));
                 }
                     break;
-                case json::value_t::number_integer:
-                    args.push_back(std::to_string(elem.get<int64_t>()));
-                    args2.emplace_back(elem.get<int64_t>());
+                case nlohmann::json::value_t::number_integer:
+                    data.Set(elem.get<int64_t>());
                     break;
-                case json::value_t::number_unsigned:
-                    args.push_back(std::to_string(elem.get<uint64_t>()));
-                    args2.emplace_back(elem.get<uint64_t>());
+                case nlohmann::json::value_t::number_unsigned:
+                    data.Set(elem.get<uint64_t>());
                     break;
-                case json::value_t::number_float:
-                    args.push_back(std::to_string(elem.get<double>()));
-                    args2.emplace_back(elem.get<double>());
+                case nlohmann::json::value_t::number_float:
+                    data.Set(elem.get<double>());
                     break;
-                case json::value_t::null:
-                    args.emplace_back("NULL");
-                    args2.emplace_back();
+                case nlohmann::json::value_t::null:
+                    data = StateData();
                     break;
-                case json::value_t::array:
-                case json::value_t::object: {
+                case nlohmann::json::value_t::array:
+                case nlohmann::json::value_t::object: {
                     auto dumped = elem.dump();
-                    _logger->warn("procedure hint arg type {} converted to JSON string", elem.type_name());
-                    args.push_back(toHexLiteral(dumped));
-                    args2.emplace_back(dumped);
+                    _logger->warn("procedure hint value {} converted to JSON string", key);
+                    data.Set(dumped.c_str(), dumped.size());
                 }
                     break;
                 default:
-                    _logger->error("unsupported procedure hint arg type: {}", elem.type_name());
-                    args.emplace_back("NULL");
-                    args2.emplace_back();
+                    _logger->error("unsupported procedure hint value type for {}: {}", key, elem.type_name());
+                    data = StateData();
                     break;
             }
+
+            result.emplace(key, std::move(data));
         }
-        
+
+        return result;
+    }
+
+    std::string toHexLiteral(const std::string &input) {
+        static const char *hex = "0123456789ABCDEF";
+        std::string out;
+        out.reserve(2 + input.size() * 2 + 1);
+        out.push_back('X');
+        out.push_back('\'');
+        for (unsigned char ch : input) {
+            out.push_back(hex[(ch >> 4) & 0x0F]);
+            out.push_back(hex[ch & 0x0F]);
+        }
+        out.push_back('\'');
+        return out;
+    }
+
+    std::string formatStateDataLiteral(const StateData &data) {
+        switch (data.Type()) {
+            case en_column_data_null:
+                return "NULL";
+            case en_column_data_int: {
+                int64_t value = 0;
+                data.Get(value);
+                return std::to_string(value);
+            }
+            case en_column_data_uint: {
+                uint64_t value = 0;
+                data.Get(value);
+                return std::to_string(value);
+            }
+            case en_column_data_double: {
+                double value = 0.0;
+                data.Get(value);
+                return std::to_string(value);
+            }
+            case en_column_data_decimal: {
+                std::string value;
+                if (data.Get(value)) {
+                    return value;
+                }
+                return "NULL";
+            }
+            case en_column_data_string: {
+                std::string value;
+                if (data.Get(value)) {
+                    return toHexLiteral(value);
+                }
+                return "NULL";
+            }
+            default:
+                return "NULL";
+        }
+    }
+
+    std::string buildCallStatement(
+        const ProcCall &procCall,
+        const ultraverse::state::v2::ProcMatcher &procMatcher
+    ) {
         std::stringstream sstream;
-        sstream << "CALL " << procName << "(";
-        
-        for (int i = 0; i < args.size(); i++) {
-            sstream << args[i];
-            
-            if (i < args.size() - 1) {
+        sstream << "CALL " << procCall.procName() << "(";
+
+        const auto &params = procMatcher.parameters();
+        for (size_t i = 0; i < params.size(); i++) {
+            const auto &param = params[i];
+            const auto it = procCall.args().find(param);
+            if (it == procCall.args().end()) {
+                _logger->warn("procedure hint missing arg {} for {}", param, procCall.procName());
+                sstream << "NULL";
+            } else {
+                sstream << formatStateDataLiteral(it->second);
+            }
+
+            if (i + 1 < params.size()) {
                 sstream << ", ";
             }
         }
-        
+
         sstream << ")";
-        
-        // _logger->info("procedure call: {} [{}]", sstream.str(), jsonStr);
-        
+        return sstream.str();
+    }
+
+    std::shared_ptr<ProcCall> prepareProcedureCall(const std::vector<StateItem> &writeSet) {
+        using nlohmann::json;
+
+        auto callIdData = findProcedureHintValue(writeSet, "callid");
+        auto procNameData = findProcedureHintValue(writeSet, "procname");
+        auto argsData = findProcedureHintValue(writeSet, "args");
+        auto varsData = findProcedureHintValue(writeSet, "vars");
+
+        if (!callIdData.has_value() || !procNameData.has_value() ||
+            !argsData.has_value() || !varsData.has_value()) {
+            _logger->error("procedure hint row is missing required columns");
+            return nullptr;
+        }
+
+        uint64_t callId = 0;
+        if (!extractUint64(*callIdData, callId)) {
+            _logger->error("procedure hint callid is invalid");
+            return nullptr;
+        }
+
+        std::string procName;
+        if (!extractString(*procNameData, procName)) {
+            _logger->error("procedure hint procname is invalid");
+            return nullptr;
+        }
+
+        std::string argsPayload;
+        if (argsData->Type() != en_column_data_null && !extractString(*argsData, argsPayload)) {
+            _logger->error("procedure hint args is invalid");
+            return nullptr;
+        }
+
+        std::string varsPayload;
+        if (varsData->Type() != en_column_data_null && !extractString(*varsData, varsPayload)) {
+            _logger->error("procedure hint vars is invalid");
+            return nullptr;
+        }
+
+        auto argsJson = parseJsonObject(argsPayload, "args");
+        if (!argsJson.has_value()) {
+            return nullptr;
+        }
+        auto varsJson = parseJsonObject(varsPayload, "vars");
+        if (!varsJson.has_value()) {
+            return nullptr;
+        }
+
         auto procCall = std::make_shared<ProcCall>();
         procCall->setCallId(callId);
         procCall->setProcName(procName);
-        procCall->setCallInfo(jsonStr);
-        procCall->statements().push_back(sstream.str());
-        procCall->setParameters(args2);
-        
+        procCall->setArgs(jsonObjectToStateMap(*argsJson));
+        procCall->setVars(jsonObjectToStateMap(*varsJson));
+
+        json callInfo = json::object();
+        callInfo["callid"] = callId;
+        callInfo["procname"] = procName;
+        callInfo["args"] = *argsJson;
+        callInfo["vars"] = *varsJson;
+        procCall->setCallInfo(callInfo.dump());
+
         return procCall;
     }
     
