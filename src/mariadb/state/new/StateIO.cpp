@@ -4,9 +4,11 @@
 
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
 #include <fcntl.h>
 #include <sstream>
 #include <stdexcept>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -15,6 +17,35 @@
 
 #include "StateIO.hpp"
 #include "StateClusterWriter.hpp"
+
+namespace {
+    std::string resolveMysqlBinaryPath() {
+        constexpr const char *kMysqlBinaryEnvVars[] = {
+            "MYSQL_BIN_PATH",
+            "MYSQL_BIN",
+            "MYSQL_PATH"
+        };
+
+        for (const auto *envName : kMysqlBinaryEnvVars) {
+            const char *envValue = std::getenv(envName);
+            if (envValue == nullptr || envValue[0] == '\0') {
+                continue;
+            }
+
+            std::string candidate(envValue);
+            struct stat st {};
+            if (::stat(candidate.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+                if (!candidate.empty() && candidate.back() != '/') {
+                    candidate.push_back('/');
+                }
+                candidate.append("mysql");
+            }
+            return candidate;
+        }
+
+        return "/usr/bin/mysql";
+    }
+}
 
 namespace ultraverse::state::v2 {
     MockedStateLogReader::MockedStateLogReader() {
@@ -213,9 +244,10 @@ namespace ultraverse::state::v2 {
         if (pid == 0) {
             dup2(fd, STDIN_FILENO);
             std::string password = "-p" + _password;
+            const std::string mysqlPath = resolveMysqlBinaryPath();
             int retval = execl(
-                "/usr/bin/mysql",
-                "mysql",
+                mysqlPath.c_str(),
+                mysqlPath.c_str(),
                 "-h", _host.c_str(),
                 "-u", _username.c_str(),
                 password.c_str(),

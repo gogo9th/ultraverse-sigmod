@@ -18,22 +18,26 @@ namespace ultraverse::state::v2 {
     }
     
     void StateLogWriter::open(std::ios_base::openmode openMode) {
+        std::scoped_lock<std::mutex> _scopedLock(_mutex);
         std::string fileName = _logPath + "/" + _logName + ".ultstatelog";
         _stream = std::ofstream(fileName, openMode);
     }
     
     void StateLogWriter::close() {
+        std::scoped_lock<std::mutex> _scopedLock(_mutex);
         _stream.flush();
         _stream.close();
     }
 
     bool StateLogWriter::seek(int64_t position) {
+        std::scoped_lock<std::mutex> _scopedLock(_mutex);
         _stream.seekp(position);
 
         return _stream.good();
     }
 
     int64_t StateLogWriter::pos() {
+        std::scoped_lock<std::mutex> _scopedLock(_mutex);
         return _stream.tellp();
     }
     

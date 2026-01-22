@@ -10,13 +10,13 @@
 using LoggerPtr = std::shared_ptr<spdlog::logger>;
 
 inline auto initLoggerSink() {
-    auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_st>();
+    auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
     sink->set_level(spdlog::level::trace);
     
     return sink;
 }
 
-std::shared_ptr<spdlog::sinks::stderr_color_sink_st> loggerSink = initLoggerSink();
+std::shared_ptr<spdlog::sinks::stderr_color_sink_mt> loggerSink = initLoggerSink();
 std::map<std::string, LoggerPtr> loggerMap;
 std::mutex loggerMutex;
 
