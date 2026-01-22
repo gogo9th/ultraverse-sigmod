@@ -120,7 +120,8 @@ public:
 
         _binlogIndexPath = config.binlog.path + "/" + config.binlog.indexName;
         _stateLogName = config.stateLog.path + "/" + config.stateLog.name;
-        _keyColumns = config.keyColumns;
+        _keyColumnGroups = utility::parseKeyColumnGroups(config.keyColumns);
+        _keyColumns = utility::flattenKeyColumnGroups(_keyColumnGroups);
         _threadNum = config.statelogd.threadCount > 0
             ? config.statelogd.threadCount
             : std::thread::hardware_concurrency() + 1;
@@ -1025,31 +1026,7 @@ public:
     }
     
     std::vector<std::string> buildKeyColumnList(std::string expression) {
-        std::vector<std::string> keyColumns;
-
-        auto trim = [](std::string value) {
-            const auto isSpace = [](unsigned char ch) { return std::isspace(ch); };
-            value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), isSpace));
-            value.erase(std::find_if_not(value.rbegin(), value.rend(), isSpace).base(), value.end());
-            return value;
-        };
-
-        std::stringstream sstream(expression);
-        std::string groupExpr;
-
-        while (std::getline(sstream, groupExpr, ',')) {
-            std::stringstream groupStream(groupExpr);
-            std::string column;
-
-            while (std::getline(groupStream, column, '+')) {
-                auto trimmed = trim(column);
-                if (!trimmed.empty()) {
-                    keyColumns.push_back(std::move(trimmed));
-                }
-            }
-        }
-        
-        return keyColumns;
+        return utility::flattenKeyColumnGroups(utility::parseKeyColumnGroups(expression));
     }
 
 private:
@@ -1102,6 +1079,7 @@ private:
     std::mutex _txnMutex;
     
     std::vector<std::string> _keyColumns;
+    std::vector<std::vector<std::string>> _keyColumnGroups;
 
     std::atomic<bool> _stopRequested{false};
     std::atomic<bool> _terminateRequested{false};

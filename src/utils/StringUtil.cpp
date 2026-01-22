@@ -2,10 +2,11 @@
 // Created by cheesekun on 1/9/23.
 //
 
-#include <sstream>
-#include <vector>
-#include <utility>
 #include <algorithm>
+#include <cctype>
+#include <sstream>
+#include <utility>
+#include <vector>
 
 #include "StringUtil.hpp"
 
@@ -78,5 +79,69 @@ namespace ultraverse::utility {
         std::transform(result.begin(), result.end(), result.begin(), tolower);
 
         return std::move(result);
+    }
+
+    namespace {
+        std::string trimWhitespace(std::string value) {
+            const auto isSpace = [](unsigned char ch) { return std::isspace(ch); };
+            value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), isSpace));
+            value.erase(std::find_if_not(value.rbegin(), value.rend(), isSpace).base(), value.end());
+            return value;
+        }
+    }
+
+    std::vector<std::vector<std::string>> parseKeyColumnGroups(const std::string &expression) {
+        std::vector<std::vector<std::string>> groups;
+
+        std::stringstream sstream(expression);
+        std::string groupExpr;
+
+        while (std::getline(sstream, groupExpr, ',')) {
+            std::vector<std::string> group;
+            std::stringstream groupStream(groupExpr);
+            std::string column;
+
+            while (std::getline(groupStream, column, '+')) {
+                auto trimmed = trimWhitespace(column);
+                if (!trimmed.empty()) {
+                    group.push_back(std::move(trimmed));
+                }
+            }
+
+            if (!group.empty()) {
+                groups.push_back(std::move(group));
+            }
+        }
+
+        return std::move(groups);
+    }
+
+    std::vector<std::vector<std::string>> parseKeyColumnGroups(const std::vector<std::string> &expressions) {
+        std::vector<std::vector<std::string>> groups;
+
+        for (const auto &expression : expressions) {
+            auto parsed = parseKeyColumnGroups(expression);
+            for (auto &group : parsed) {
+                if (!group.empty()) {
+                    groups.push_back(std::move(group));
+                }
+            }
+        }
+
+        return std::move(groups);
+    }
+
+    std::vector<std::string> flattenKeyColumnGroups(const std::vector<std::vector<std::string>> &groups) {
+        std::vector<std::string> columns;
+
+        for (const auto &group : groups) {
+            for (const auto &column : group) {
+                if (!column.empty()) {
+                    columns.push_back(column);
+                }
+            }
+        }
+
+        return std::move(columns);
     }
 }

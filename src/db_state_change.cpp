@@ -11,6 +11,7 @@
 #include "Application.hpp"
 #include "config/UltraverseConfig.hpp"
 #include "db_state_change.hpp"
+#include "utils/StringUtil.hpp"
 
 using namespace ultraverse::mariadb;
 using namespace ultraverse::state;
@@ -308,14 +309,7 @@ namespace ultraverse {
         changePlan.setStateLogName(config.stateLog.name);
         changePlan.setDBName(config.database.name);
 
-        std::string keyColumnsExpr;
-        for (size_t idx = 0; idx < config.keyColumns.size(); ++idx) {
-            if (idx > 0) {
-                keyColumnsExpr += ",";
-            }
-            keyColumnsExpr += config.keyColumns[idx];
-        }
-        changePlan.setKeyColumnGroups(buildKeyColumnGroups(keyColumnsExpr));
+        changePlan.setKeyColumnGroups(utility::parseKeyColumnGroups(config.keyColumns));
 
         for (const auto &entry : config.columnAliases) {
             for (const auto &alias : entry.second) {
@@ -670,36 +664,7 @@ namespace ultraverse {
     }
     
     std::vector<std::vector<std::string>> DBStateChangeApp::buildKeyColumnGroups(std::string expression) {
-        std::vector<std::vector<std::string>> groups;
-
-        auto trim = [](std::string value) {
-            const auto isSpace = [](unsigned char ch) { return std::isspace(ch); };
-            value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), isSpace));
-            value.erase(std::find_if_not(value.rbegin(), value.rend(), isSpace).base(), value.end());
-            return value;
-        };
-
-        std::stringstream sstream(expression);
-        std::string groupExpr;
-
-        while (std::getline(sstream, groupExpr, ',')) {
-            std::vector<std::string> group;
-            std::stringstream groupStream(groupExpr);
-            std::string column;
-
-            while (std::getline(groupStream, column, '+')) {
-                auto trimmed = trim(column);
-                if (!trimmed.empty()) {
-                    group.push_back(std::move(trimmed));
-                }
-            }
-
-            if (!group.empty()) {
-                groups.push_back(std::move(group));
-            }
-        }
-
-        return groups;
+        return utility::parseKeyColumnGroups(expression);
     }
     
     std::set<std::pair<std::string, std::string>> DBStateChangeApp::buildColumnAliasesList(std::string expression) {

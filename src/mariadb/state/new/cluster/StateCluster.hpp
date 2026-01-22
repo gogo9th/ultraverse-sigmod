@@ -89,6 +89,12 @@ namespace ultraverse::state::v2 {
                                                    const std::vector<StateItem> &items,
                                                    const RelationshipResolver &resolver);
         };
+
+        struct GroupProjection {
+            size_t groupIndex = 0;
+            std::vector<std::string> columns;
+        };
+
     public:
         StateCluster(const std::set<std::string> &keyColumns,
                      const std::vector<std::vector<std::string>> &keyColumnGroups = {});
@@ -194,7 +200,8 @@ namespace ultraverse::state::v2 {
 
         std::set<std::string> _keyColumns;
         std::vector<std::vector<std::string>> _keyColumnGroups;
-        std::unordered_map<std::string, std::vector<size_t>> _keyColumnGroupsByTable;
+        std::vector<bool> _groupIsComposite;
+        std::unordered_map<std::string, std::vector<GroupProjection>> _keyColumnGroupsByTable;
         std::unordered_map<std::string, Cluster> _clusters;
         
         std::shared_mutex _targetCacheLock;

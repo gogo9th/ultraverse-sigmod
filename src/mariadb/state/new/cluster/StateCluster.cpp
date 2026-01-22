@@ -66,13 +66,13 @@ namespace ultraverse::state::v2 {
             return normalizedGroups;
         }
 
-        std::unordered_map<std::string, std::vector<size_t>> buildKeyColumnGroupsByTable(
-            const std::vector<std::vector<std::string>> &keyColumnGroups) {
-            std::unordered_map<std::string, std::vector<size_t>> mapping;
+        std::vector<bool> buildGroupCompositeFlags(const std::vector<std::vector<std::string>> &groups) {
+            std::vector<bool> flags;
+            flags.reserve(groups.size());
 
-            for (size_t index = 0; index < keyColumnGroups.size(); index++) {
-                const auto &group = keyColumnGroups[index];
-                if (group.empty()) {
+            for (const auto &group : groups) {
+                if (group.size() <= 1) {
+                    flags.push_back(false);
                     continue;
                 }
 
@@ -92,11 +92,40 @@ namespace ultraverse::state::v2 {
                     }
                 }
 
-                if (!sameTable || tableName.empty()) {
+                flags.push_back(sameTable && !tableName.empty());
+            }
+
+            return flags;
+        }
+
+        std::unordered_map<std::string, std::vector<StateCluster::GroupProjection>> buildKeyColumnGroupsByTable(
+            const std::vector<std::vector<std::string>> &keyColumnGroups) {
+            std::unordered_map<std::string, std::vector<StateCluster::GroupProjection>> mapping;
+
+            for (size_t index = 0; index < keyColumnGroups.size(); index++) {
+                const auto &group = keyColumnGroups[index];
+                if (group.empty()) {
                     continue;
                 }
 
-                mapping[tableName].push_back(index);
+                std::unordered_map<std::string, std::vector<std::string>> projections;
+                for (const auto &column : group) {
+                    const auto pair = utility::splitTableName(column);
+                    if (pair.first.empty()) {
+                        continue;
+                    }
+                    projections[pair.first].push_back(column);
+                }
+
+                for (auto &pair : projections) {
+                    if (pair.second.empty()) {
+                        continue;
+                    }
+                    StateCluster::GroupProjection projection;
+                    projection.groupIndex = index;
+                    projection.columns = std::move(pair.second);
+                    mapping[pair.first].push_back(std::move(projection));
+                }
             }
 
             return mapping;
@@ -273,6 +302,7 @@ namespace ultraverse::state::v2 {
         _logger(createLogger("StateCluster")),
         _keyColumns(normalizeKeyColumns(keyColumns)),
         _keyColumnGroups(normalizeKeyColumnGroups(keyColumns, keyColumnGroups)),
+        _groupIsComposite(buildGroupCompositeFlags(_keyColumnGroups)),
         _keyColumnGroupsByTable(buildKeyColumnGroupsByTable(_keyColumnGroups)),
         _clusters()
     {
@@ -429,7 +459,11 @@ namespace ultraverse::state::v2 {
         }
         
         
-        for (const auto &group : _keyColumnGroups) {
+        for (size_t groupIndex = 0; groupIndex < _keyColumnGroups.size(); groupIndex++) {
+            if (groupIndex >= _groupIsComposite.size() || !_groupIsComposite[groupIndex]) {
+                continue;
+            }
+            const auto &group = _keyColumnGroups[groupIndex];
             if (group.empty()) {
                 continue;
             }
@@ -657,7 +691,8 @@ namespace ultraverse::state::v2 {
         }
         size_t matched = 0;
         
-        for (const auto &group : _keyColumnGroups) {
+        for (size_t groupIndex = 0; groupIndex < _keyColumnGroups.size(); groupIndex++) {
+            const auto &group = _keyColumnGroups[groupIndex];
             if (group.empty()) {
                 continue;
             }
@@ -678,12 +713,19 @@ namespace ultraverse::state::v2 {
                 }
             }
 
-            if (count == 0) {
+            if (groupIndex < _groupIsComposite.size() && _groupIsComposite[groupIndex]) {
+                if (count == 0) {
+                    continue;
+                } else if (count == group.size()) {
+                    matched++;
+                } else {
+                    return false;
+                }
                 continue;
-            } else if (count == group.size()) {
+            }
+
+            if (count > 0) {
                 matched++;
-            } else {
-                return false;
             }
         }
         
@@ -695,25 +737,24 @@ namespace ultraverse::state::v2 {
         
         for (const auto &pair : _keyColumnGroupsByTable) {
             const auto &tableName = pair.first;
-            const auto &groupIndices = pair.second;
+            const auto &projections = pair.second;
 
             bool changed = false;
             bool isWildcard = false;
             std::vector<std::string> whereGroups;
 
-            for (auto groupIndex : groupIndices) {
-                if (groupIndex >= _keyColumnGroups.size()) {
+            for (const auto &projection : projections) {
+                if (projection.groupIndex >= _keyColumnGroups.size()) {
                     continue;
                 }
-                const auto &group = _keyColumnGroups[groupIndex];
-                if (group.empty()) {
+                if (projection.columns.empty()) {
                     continue;
                 }
 
                 bool groupWildcard = false;
                 std::vector<std::string> whereColumns;
 
-                for (const auto &keyColumn : group) {
+                for (const auto &keyColumn : projection.columns) {
                     std::string resolvedColumn = resolver.resolveChain(keyColumn);
                     std::vector<std::string> conds;
 
@@ -772,7 +813,9 @@ namespace ultraverse::state::v2 {
                 }
 
                 if (!whereColumns.empty()) {
-                    whereGroups.push_back(fmt::format("({})", fmt::join(whereColumns, " AND ")));
+                    const bool isComposite =
+                        projection.groupIndex < _groupIsComposite.size() && _groupIsComposite[projection.groupIndex];
+                    whereGroups.push_back(fmt::format("({})", fmt::join(whereColumns, isComposite ? " AND " : " OR ")));
                 }
             }
 

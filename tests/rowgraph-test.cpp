@@ -1,4 +1,5 @@
 #include <chrono>
+#include <set>
 #include <string>
 #include <unordered_set>
 
@@ -157,6 +158,83 @@ TEST_CASE("RowGraph resolves row aliases to key columns") {
     auto entryGids = entrypointGids(graph);
     REQUIRE(entryGids.find(1) != entryGids.end());
     REQUIRE(entryGids.find(2) == entryGids.end());
+}
+
+TEST_CASE("RowGraph uses key-set intersection for multi-table groups") {
+    NoopRelationshipResolver resolver;
+    std::set<std::string> keyColumns{"flight.f_id", "customer.c_id"};
+    std::vector<std::vector<std::string>> keyGroups{{"flight.f_id", "customer.c_id"}};
+    RowGraph graph(keyColumns, resolver, keyGroups);
+
+    auto txn1 = makeTxn(1, "test", {}, {makeEq("flight.f_id", 1)});
+    auto txn2 = makeTxn(2, "test", {}, {makeEq("customer.c_id", 2)});
+    auto txn3 = makeTxn(3, "test", {}, {makeEq("flight.f_id", 1), makeEq("customer.c_id", 2)});
+
+    auto n1 = graph.addNode(txn1);
+    auto n2 = graph.addNode(txn2);
+    auto n3 = graph.addNode(txn3);
+
+    REQUIRE(waitUntilAllReady(graph, {n1, n2, n3}, std::chrono::milliseconds(5000)));
+
+    auto entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(1) != entryGids.end());
+    REQUIRE(entryGids.find(2) != entryGids.end());
+    REQUIRE(entryGids.find(3) == entryGids.end());
+}
+
+TEST_CASE("RowGraph does not wildcard missing columns in multi-table groups") {
+    MockedRelationshipResolver resolver;
+    resolver.addForeignKey("reservation.f_id", "flight.f_id");
+    resolver.addForeignKey("reservation.c_id", "customer.c_id");
+
+    std::set<std::string> keyColumns{"flight.f_id", "customer.c_id"};
+    std::vector<std::vector<std::string>> keyGroups{{"flight.f_id", "customer.c_id"}};
+    RowGraph graph(keyColumns, resolver, keyGroups);
+
+    auto txnFlight = makeTxn(1, "test", {}, {makeEq("flight.f_id", 1)});
+    auto txnCustomer = makeTxn(2, "test", {}, {makeEq("customer.c_id", 2)});
+    auto txnReservation = makeTxn(3, "test", {makeEq("reservation.c_id", 2)}, {});
+
+    auto n1 = graph.addNode(txnFlight);
+    auto n2 = graph.addNode(txnCustomer);
+    auto n3 = graph.addNode(txnReservation);
+
+    REQUIRE(waitUntilAllReady(graph, {n1, n2, n3}, std::chrono::milliseconds(5000)));
+
+    auto entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(1) != entryGids.end());
+    REQUIRE(entryGids.find(2) != entryGids.end());
+    REQUIRE(entryGids.find(3) == entryGids.end());
+
+    graph.nodeFor(n2)->finalized = true;
+    entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(3) != entryGids.end());
+}
+
+TEST_CASE("RowGraph limits table wildcard to touched table in multi-table groups") {
+    NoopRelationshipResolver resolver;
+    std::set<std::string> keyColumns{"flight.f_id", "customer.c_id"};
+    std::vector<std::vector<std::string>> keyGroups{{"flight.f_id", "customer.c_id"}};
+    RowGraph graph(keyColumns, resolver, keyGroups);
+
+    auto txnFlight = makeTxn(1, "test", {}, {makeEq("flight.f_id", 1)});
+    auto txnCustomer = makeTxn(2, "test", {}, {makeEq("customer.c_id", 2)});
+    auto txnFlightOnly = makeTxn(3, "test", {makeEq("flight.name", 1)}, {});
+
+    auto n1 = graph.addNode(txnFlight);
+    auto n2 = graph.addNode(txnCustomer);
+    auto n3 = graph.addNode(txnFlightOnly);
+
+    REQUIRE(waitUntilAllReady(graph, {n1, n2, n3}, std::chrono::milliseconds(5000)));
+
+    auto entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(1) != entryGids.end());
+    REQUIRE(entryGids.find(2) != entryGids.end());
+    REQUIRE(entryGids.find(3) == entryGids.end());
+
+    graph.nodeFor(n1)->finalized = true;
+    entryGids = entrypointGids(graph);
+    REQUIRE(entryGids.find(3) != entryGids.end());
 }
 
 TEST_CASE("RowGraph resolves column alias through foreign key chain") {

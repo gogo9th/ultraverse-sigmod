@@ -211,7 +211,9 @@ namespace ultraverse::state::v2 {
         
         std::set<std::string> _keyColumns;
         std::vector<std::vector<std::string>> _keyColumnGroups;
-        std::unordered_map<std::string, std::vector<size_t>> _keyColumnGroupsByTable;
+        std::unordered_map<std::string, std::vector<size_t>> _compositeGroupsByTable;
+        std::unordered_map<std::string, std::vector<std::string>> _keyColumnsByTable;
+        std::vector<bool> _groupIsComposite;
         std::unordered_map<std::string, size_t> _groupIndexByColumn;
         std::unordered_set<std::string> _compositeColumns;
         

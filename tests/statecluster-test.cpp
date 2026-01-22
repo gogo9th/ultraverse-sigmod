@@ -204,6 +204,79 @@ TEST_CASE("StateCluster shouldReplay requires composite key match") {
     REQUIRE_FALSE(cluster.shouldReplay(mismatchedTxn->gid()));
 }
 
+TEST_CASE("StateCluster shouldReplay matches any key in multi-table groups") {
+    NoopRelationshipResolver resolver;
+
+    StateCluster cluster({"flight.f_id", "customer.c_id"}, {{"flight.f_id", "customer.c_id"}});
+    auto rollbackTxn = makeTxn(1, "test", {}, {makeEq("flight.f_id", 1)});
+    auto flightTxn = makeTxn(2, "test", {makeEq("flight.f_id", 1)}, {});
+    auto customerTxn = makeTxn(3, "test", {makeEq("customer.c_id", 2)}, {});
+    auto bothTxn = makeTxn(4, "test", {makeEq("flight.f_id", 1), makeEq("customer.c_id", 2)}, {});
+
+    cluster.insert(rollbackTxn, resolver);
+    cluster.insert(flightTxn, resolver);
+    cluster.insert(customerTxn, resolver);
+    cluster.insert(bothTxn, resolver);
+    cluster.merge();
+
+    cluster.addRollbackTarget(rollbackTxn, resolver, true);
+
+    REQUIRE(cluster.shouldReplay(flightTxn->gid()));
+    REQUIRE_FALSE(cluster.shouldReplay(customerTxn->gid()));
+    REQUIRE(cluster.shouldReplay(bothTxn->gid()));
+}
+
+TEST_CASE("StateCluster does not wildcard missing keys for multi-table groups") {
+    NoopRelationshipResolver resolver;
+
+    StateCluster cluster({"flight.f_id", "customer.c_id"}, {{"flight.f_id", "customer.c_id"}});
+    auto txn = makeTxn(1, "test", {makeEq("customer.c_id", 2)}, {});
+
+    cluster.insert(txn, resolver);
+    cluster.merge();
+
+    auto &flightCluster = cluster.clusters().at("flight.f_id");
+    REQUIRE(flightCluster.read.empty());
+
+    auto &customerCluster = cluster.clusters().at("customer.c_id");
+    REQUIRE(customerCluster.read.find(StateRange{2}) != customerCluster.read.end());
+}
+
+TEST_CASE("StateCluster generateReplaceQuery projects multi-table groups per table") {
+    NoopRelationshipResolver resolver;
+
+    StateCluster cluster({"flight.f_id", "customer.c_id"}, {{"flight.f_id", "customer.c_id"}});
+    auto rollbackTxn = makeTxn(
+        1,
+        "test",
+        {},
+        {makeEq("flight.f_id", 1), makeEq("customer.c_id", 2)}
+    );
+
+    cluster.insert(rollbackTxn, resolver);
+    cluster.merge();
+
+    cluster.addRollbackTarget(rollbackTxn, resolver, true);
+
+    auto query = cluster.generateReplaceQuery("targetdb", "intermediate", resolver);
+
+    auto flightPos = query.find("DELETE FROM flight WHERE");
+    REQUIRE(flightPos != std::string::npos);
+    auto flightEnd = query.find(";\n", flightPos);
+    REQUIRE(flightEnd != std::string::npos);
+    auto flightWhere = query.substr(flightPos, flightEnd - flightPos);
+    REQUIRE(flightWhere.find("flight.f_id") != std::string::npos);
+    REQUIRE(flightWhere.find("customer.c_id") == std::string::npos);
+
+    auto customerPos = query.find("DELETE FROM customer WHERE");
+    REQUIRE(customerPos != std::string::npos);
+    auto customerEnd = query.find(";\n", customerPos);
+    REQUIRE(customerEnd != std::string::npos);
+    auto customerWhere = query.substr(customerPos, customerEnd - customerPos);
+    REQUIRE(customerWhere.find("customer.c_id") != std::string::npos);
+    REQUIRE(customerWhere.find("flight.f_id") == std::string::npos);
+}
+
 TEST_CASE("StateCluster generateReplaceQuery uses WHERE for non-wildcard keys") {
     NoopRelationshipResolver resolver;
 
