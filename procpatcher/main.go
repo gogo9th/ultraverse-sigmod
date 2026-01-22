@@ -74,8 +74,8 @@ func generateHelperSQL() string {
 CREATE TABLE IF NOT EXISTS __ULTRAVERSE_PROCEDURE_HINT (
     callid BIGINT UNSIGNED NOT NULL,
     procname VARCHAR(255) NOT NULL,
-    args JSON,
-    vars JSON,
+    args VARCHAR(4096),
+    vars VARCHAR(4096),
     PRIMARY KEY (callid)
 ) ENGINE = BLACKHOLE;
 `

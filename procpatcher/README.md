@@ -25,8 +25,8 @@ It also generates `__ultraverse__helper.sql` alongside the patched output.
 CREATE TABLE IF NOT EXISTS __ULTRAVERSE_PROCEDURE_HINT (
     callid BIGINT UNSIGNED NOT NULL,
     procname VARCHAR(255) NOT NULL,
-    args JSON,
-    vars JSON,
+    args VARCHAR(4096),
+    vars VARCHAR(4096),
     PRIMARY KEY (callid)
 ) ENGINE = BLACKHOLE;
 ```
@@ -61,4 +61,3 @@ warning to stderr.
   `procpatcher` detects `DELIMITER` lines while splitting statements, and applies patches by inserting into the original
   text to preserve formatting.
 - If a statement cannot be parsed, it is left **unchanged** and a warning is printed.
-
