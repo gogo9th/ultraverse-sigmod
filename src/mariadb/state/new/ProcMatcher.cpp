@@ -725,9 +725,8 @@ namespace ultraverse::state::v2 {
             
             std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->variableSet()));
 
-            event->tokenize();
             if (!event->parse()) {
-                event->parseDDL(1);
+                _logger->warn("cannot parse procedure statement: {}", statement);
             }
             event->buildRWSet(keyColumns);
             

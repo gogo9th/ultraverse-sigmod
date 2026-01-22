@@ -5,12 +5,11 @@ from esperanza.benchbase.benchmark_session import BenchmarkSession
 from esperanza.utils.download_mysql import download_mysql
 from esperanza.utils.state_change_report import read_state_change_report
 
-DB_STATE_CHANGE_BASE_OPTIONS = [
-    '-b', 'dbdump.sql',
-    '-i', 'benchbase',
-    '-d', 'benchbase',
-    '-k', 'updateonly.id',
+KEY_COLUMNS = [
+    'updateonly.id',
 ]
+BACKUP_FILE = "dbdump.sql"
+COLUMN_ALIASES: dict[str, list[str]] = {}
 
 
 def decide_rollback_gids(session: BenchmarkSession, ratio: float) -> list[int]:
@@ -21,15 +20,12 @@ def decide_rollback_gids(session: BenchmarkSession, ratio: float) -> list[int]:
     rollback_log_name = f"rollback_auto_decision_{ratio}"
     decision_stdout_name = rollback_log_name + ".stdout"
     decision_stderr_name = rollback_log_name + ".stderr"
-    decision_report_name = rollback_log_name + ".report.json"
+    decision_report_name = session.report_name_from_stdout(decision_stdout_name)
 
     session.run_db_state_change(
-        DB_STATE_CHANGE_BASE_OPTIONS + [
-            '-r', decision_report_name,
-            f"auto-rollback={ratio}"
-        ],
+        f"auto-rollback={ratio}",
         stdout_name=decision_stdout_name,
-        stderr_name=decision_stderr_name
+        stderr_name=decision_stderr_name,
     )
 
     decision_report = read_state_change_report(f"{session.session_path}/{decision_report_name}")
@@ -42,33 +38,26 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int]):
     rollback_log_name = f"rollback_{rollback_gids[0]}_{rollback_gids[-1]}"
     rollback_stdout_name = rollback_log_name + ".stdout"
     rollback_stderr_name = rollback_log_name + ".stderr"
-    rollback_report_name = rollback_log_name + ".report.json"
+    rollback_report_name = session.report_name_from_stdout(rollback_stdout_name)
 
     replay_log_name = rollback_log_name + ".replay"
     replay_stdout_name = replay_log_name + ".stdout"
     replay_stderr_name = replay_log_name + ".stderr"
-    replay_report_name = replay_log_name + ".report.json"
+    replay_report_name = session.report_name_from_stdout(replay_stdout_name)
 
     rollback_action = f"rollback={','.join(map(str, rollback_gids))}"
     session.run_db_state_change(
-        DB_STATE_CHANGE_BASE_OPTIONS + [
-            '-r', rollback_report_name,
-            rollback_action
-        ],
+        rollback_action,
         stdout_name=rollback_stdout_name,
-        stderr_name=rollback_stderr_name
+        stderr_name=rollback_stderr_name,
     )
 
     rollback_report = read_state_change_report(f"{session.session_path}/{rollback_report_name}")
 
     session.run_db_state_change(
-        DB_STATE_CHANGE_BASE_OPTIONS + [
-            '-N',
-            '-r', replay_report_name,
-            'replay'
-        ],
+        "replay",
         stdout_name=replay_stdout_name,
-        stderr_name=replay_stderr_name
+        stderr_name=replay_stderr_name,
     )
 
     replay_report = read_state_change_report(f"{session.session_path}/{replay_report_name}")
@@ -82,16 +71,12 @@ def perform_full_replay(session: BenchmarkSession):
     full_replay_log_name = "full_replay"
     full_replay_stdout_name = full_replay_log_name + ".stdout"
     full_replay_stderr_name = full_replay_log_name + ".stderr"
-    full_replay_report_name = full_replay_log_name + ".report.json"
+    full_replay_report_name = session.report_name_from_stdout(full_replay_stdout_name)
 
     session.run_db_state_change(
-        DB_STATE_CHANGE_BASE_OPTIONS + [
-            '-N',
-            '-r', full_replay_report_name,
-            'full-replay'
-        ],
+        "full-replay",
         stdout_name=full_replay_stdout_name,
-        stderr_name=full_replay_stderr_name
+        stderr_name=full_replay_stderr_name,
     )
 
     replay_report = read_state_change_report(f"{session.session_path}/{full_replay_report_name}")
@@ -114,7 +99,8 @@ if __name__ == "__main__":
     session.prepare()
 
     # statelogd를 실행해서 binary log에서 statelog를 생성한다.
-    session.run_statelogd(['-k', 'updateonly.id'])
+    session.run_statelogd(key_columns=KEY_COLUMNS)
+    session.update_config(backup_file=BACKUP_FILE, column_aliases=COLUMN_ALIASES)
 
     # db_state_change를 실행하기 위해 mysqld를 실행한다.
     logger.info("starting mysqld...")
@@ -125,7 +111,7 @@ if __name__ == "__main__":
 
     # 클러스터 생성한다
     logger.info("creating cluster...")
-    session.run_db_state_change(DB_STATE_CHANGE_BASE_OPTIONS + ['make_cluster'])
+    session.run_db_state_change("make_cluster")
 
     # state change를 행한다
     perform_state_change(session, [0])

@@ -38,6 +38,12 @@ namespace ultraverse::mariadb {
             const std::string &statement,
             uint64_t timestamp
         );
+
+        QueryEvent(
+            const std::string &schema,
+            const ultparser::Query &pbStatement,
+            uint64_t timestamp
+        );
     
         uint64_t timestamp() override;
     

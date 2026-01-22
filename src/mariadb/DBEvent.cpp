@@ -44,6 +44,23 @@ namespace ultraverse::mariadb {
     {
     
     }
+
+    QueryEvent::QueryEvent(
+        const std::string &schema,
+        const ultparser::Query &pbStatement,
+        uint64_t timestamp
+    ):
+        _database(schema),
+        _statement(pbStatement.dml().statement()),
+
+        _timestamp(timestamp),
+        _error(0)
+    {
+        assert(pbStatement.has_dml());
+
+        // TODO: warn unless processDML()
+        processDML(pbStatement.dml());
+    }
     
     
     uint64_t QueryEvent::timestamp() {
