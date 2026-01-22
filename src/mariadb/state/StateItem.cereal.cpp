@@ -46,9 +46,12 @@ void StateData::load(Archive &archive) {
     } else if (type == en_column_data_string || type == en_column_data_decimal) {
         std::string strVal;
         archive(strVal);
-        d.str = new char[strVal.size() + 1];
-        memset(d.str, 0, strVal.size() + 1);
-        strncpy(d.str, strVal.c_str(), strVal.size());
+        str_len = strVal.size();
+        d.str = (char *)malloc(str_len + 1);
+        if (d.str != nullptr) {
+            memcpy(d.str, strVal.data(), str_len);
+            d.str[str_len] = 0;
+        }
     }
 }
 

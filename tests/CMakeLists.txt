@@ -61,6 +61,9 @@ target_link_libraries(keycolumnparser-test ultraverse Catch2::Catch2WithMain)
 add_executable(stateitem-test stateitem-test.cpp)
 target_link_libraries(stateitem-test ultraverse Catch2::Catch2WithMain)
 
+add_executable(query-transaction-serialization-test query-transaction-serialization-test.cpp)
+target_link_libraries(query-transaction-serialization-test ultraverse Catch2::Catch2WithMain)
+
 add_executable(sqlparser-test sqlparser-test.cpp)
 target_link_libraries(sqlparser-test ultraverse Catch2::Catch2WithMain)
 
@@ -103,6 +106,7 @@ if (APPLE)
     target_link_options(ultraverseconfig-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(keycolumnparser-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(stateitem-test PRIVATE "-L/opt/homebrew/lib")
+    target_link_options(query-transaction-serialization-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(sqlparser-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(tabledependencygraph-test PRIVATE "-L/opt/homebrew/lib")
     target_link_options(naminghistory-test PRIVATE "-L/opt/homebrew/lib")
