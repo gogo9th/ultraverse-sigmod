@@ -1,0 +1,40 @@
+<agent-task mode="planning">
+    <objective>
+        # statement offset 기록을 추가하고, AST 노드에서 원문 위치를 안정적으로 가져오게 해줘.
+
+        # 배경
+        - 현재 OriginTextPosition()은 expr에만 기록되고, stmt에는 기록되지 않음.
+        - procpatcher에서 원문을 보존한 채 삽입 위치를 계산하려면, StmtNode의 시작/끝 offset이 필요함.
+
+        # 목표
+        1. StmtNode(또는 모든 Node/stmtNode)에 start offset을 기록.
+        2. 가능하면 end offset도 기록할 수 있도록 확장(새 필드/메서드).
+        3. 파서가 각 statement를 만들 때 해당 offset을 정확히 채우도록 수정.
+        4. 최소한 ProcedureInfo, FunctionInfo, 그리고 일반 statement에서 동작 확인.
+
+        # 힌트/참고
+        - 현재 yySetOffset은 expr만 설정함: pkg/parser/yy_parser.go.
+        - ParserConfig.SkipPositionRecording이 있어 위치 기록 on/off 가능.
+        - AST node는 SetOriginTextPosition / OriginTextPosition 지원.
+        - parser.y에서 statement 생성 시점에 startOffset / endOffset 접근 가능.
+        - parser.lexer에서 statement 범위(시작/끝) 얻는 방식 검토 필요.
+
+        # 수정 대상 파일(예상)
+        - pkg/parser/yy_parser.go
+        - pkg/parser/parser.y → goyacc 재생성(parser.go)
+        - 필요 시 pkg/parser/lexer.go 또는 Scanner 관련
+        - pkg/parser/ast/base.go (end offset 저장 시)
+
+        # 요구 사항
+        - 기존 포맷/동작을 깨지 말 것.
+        - offset은 원문 기준 byte offset으로 유지(기존 OriginTextPosition 관례).
+        - 테스트 추가/보강: parser_test.go에 stmt offset 검증 케이스 추가.
+
+        # 검증
+        - Parse 후 stmt.OriginTextPosition()이 0이 아닌 값으로 세팅되는지.
+        - 복수 statement에서 각각 start offset이 올바른지.
+    </objective>
+    <agent-rule>
+        - **Harmony (和) is important; be harmonious**: AI-generated code is generally not welcomed. Please respect the existing code conventions as much as possible to ensure your code harmonizes with the work of other TiDB contributors.
+    </agent-rule>
+</agent-task>
