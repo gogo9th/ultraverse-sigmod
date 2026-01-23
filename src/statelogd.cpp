@@ -486,6 +486,11 @@ public:
         auto transactionObj = std::make_shared<state::v2::Transaction>();
         auto &queries = transaction->queryObjs;
         bool containsDDL = false;
+
+        std::vector<StateItem> mergedReadSet;
+        std::vector<StateItem> mergedWriteSet;
+        state::v2::ColumnSet mergedReadColumns;
+        state::v2::ColumnSet mergedWriteColumns;
         
         auto procMatcher = procedureDefinition(procCall->procName());
         
@@ -521,6 +526,21 @@ public:
             if (pendingQuery->flags() & state::v2::Query::FLAG_IS_DDL) {
                 containsDDL = true;
             }
+
+            mergedReadSet.insert(
+                mergedReadSet.end(),
+                pendingQuery->readSet().begin(), pendingQuery->readSet().end()
+            );
+            mergedWriteSet.insert(
+                mergedWriteSet.end(),
+                pendingQuery->writeSet().begin(), pendingQuery->writeSet().end()
+            );
+            mergedReadColumns.insert(
+                pendingQuery->readColumns().begin(), pendingQuery->readColumns().end()
+            );
+            mergedWriteColumns.insert(
+                pendingQuery->writeColumns().begin(), pendingQuery->writeColumns().end()
+            );
         }
         
         {
@@ -549,6 +569,21 @@ public:
                 procCallQuery->writeSet().end(),
                 traceResult.writeSet.begin(), traceResult.writeSet.end()
             );
+
+            procCallQuery->readSet().insert(
+                procCallQuery->readSet().end(),
+                mergedReadSet.begin(), mergedReadSet.end()
+            );
+            procCallQuery->writeSet().insert(
+                procCallQuery->writeSet().end(),
+                mergedWriteSet.begin(), mergedWriteSet.end()
+            );
+
+            procCallQuery->readColumns().insert(procMatcher->readSet().begin(), procMatcher->readSet().end());
+            procCallQuery->writeColumns().insert(procMatcher->writeSet().begin(), procMatcher->writeSet().end());
+
+            procCallQuery->readColumns().insert(mergedReadColumns.begin(), mergedReadColumns.end());
+            procCallQuery->writeColumns().insert(mergedWriteColumns.begin(), mergedWriteColumns.end());
             
             *transactionObj << procCallQuery;
             

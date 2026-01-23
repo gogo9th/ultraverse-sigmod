@@ -195,9 +195,10 @@ class BenchmarkSession:
                 if not line:
                     break
                 print("\33[2K\r", end='')
-                print(line.decode('utf-8').strip(), end='')
+                text = line.decode('utf-8', errors='replace')
+                print(text.strip(), end='')
                 sys.stdout.flush()
-                f.write(line.decode('utf-8'))
+                f.write(text)
 
         print()
 
