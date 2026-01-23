@@ -6,11 +6,9 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -56,37 +54,7 @@ namespace {
         }
     };
 
-    class ScopedIStreamRedirect {
-    public:
-        ScopedIStreamRedirect(std::istream &stream, std::streambuf *newBuf):
-            _stream(stream),
-            _oldBuf(stream.rdbuf(newBuf)) {
-        }
-
-        ~ScopedIStreamRedirect() {
-            _stream.rdbuf(_oldBuf);
-        }
-
-    private:
-        std::istream &_stream;
-        std::streambuf *_oldBuf;
-    };
-
-    class ScopedOStreamRedirect {
-    public:
-        ScopedOStreamRedirect(std::ostream &stream, std::streambuf *newBuf):
-            _stream(stream),
-            _oldBuf(stream.rdbuf(newBuf)) {
-        }
-
-        ~ScopedOStreamRedirect() {
-            _stream.rdbuf(_oldBuf);
-        }
-
-    private:
-        std::ostream &_stream;
-        std::streambuf *_oldBuf;
-    };
+    std::string makeTempDir(const std::string &prefix);
 
     StateChangePlan makePlan(int threadNum) {
         StateChangePlan plan;
@@ -95,6 +63,8 @@ namespace {
         plan.setDropIntermediateDB(false);
         plan.setFullReplay(false);
         plan.setDryRun(false);
+        plan.setStateLogPath(makeTempDir("statechanger_plan"));
+        plan.setStateLogName("plan");
         plan.keyColumns().insert("items.id");
         return plan;
     }
@@ -145,21 +115,6 @@ namespace {
         return txn;
     }
 
-    std::vector<gid_t> parseGidLines(const std::string &output) {
-        std::vector<gid_t> gids;
-        std::istringstream stream(output);
-        std::string line;
-
-        while (std::getline(stream, line)) {
-            if (line.empty()) {
-                continue;
-            }
-            gids.push_back(static_cast<gid_t>(std::stoull(line)));
-        }
-
-        return gids;
-    }
-
     std::optional<gid_t> parseGidToken(const std::string &query) {
         auto pos = query.find("/*TXN:");
         if (pos == std::string::npos) {
@@ -206,6 +161,19 @@ namespace {
         auto dir = std::filesystem::temp_directory_path() / (prefix + "_" + suffix);
         std::filesystem::create_directories(dir);
         return dir.string();
+    }
+
+    void seedEmptyInfoSchemaResults(const std::shared_ptr<MockedDBHandle::SharedState> &sharedState,
+                                    size_t count = 2) {
+        std::scoped_lock lock(sharedState->mutex);
+        for (size_t i = 0; i < count; i++) {
+            sharedState->results.push({});
+        }
+    }
+
+    std::vector<gid_t> loadReplayPlanGids(const StateChangePlan &plan) {
+        const auto path = plan.stateLogPath() + "/" + plan.stateLogName() + ".ultreplayplan";
+        return StateChangeReplayPlan::load(path).gids;
     }
 
     void writeReplayPlan(const std::string &dir,
@@ -349,6 +317,7 @@ namespace {
 
 TEST_CASE("StateChanger prepare outputs dependent GIDs only", "[statechanger][prepare]") {
     auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
 
     auto plan = makePlan(1);
     plan.rollbackGids().push_back(1);
@@ -388,22 +357,21 @@ TEST_CASE("StateChanger prepare outputs dependent GIDs only", "[statechanger][pr
 
     StateChanger changer(pool, plan, std::move(io));
 
-    std::ostringstream out;
-    ScopedOStreamRedirect coutRedirect(std::cout, out.rdbuf());
-
     changer.prepare();
 
-    auto gids = parseGidLines(out.str());
+    auto gids = loadReplayPlanGids(plan);
     REQUIRE(gids.size() == 1);
     REQUIRE(gids[0] == 2);
 }
 
 TEST_CASE("StateChanger prepare handles multiple rollback targets and partial-key filtering", "[statechanger][prepare]") {
     auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
 
     auto plan = makePlan(1);
     plan.keyColumns().insert("items.type");
     plan.keyColumns().insert("orders.id");
+    plan.setKeyColumnGroups({{"items.id", "items.type"}, {"orders.id"}});
 
     StateCluster cluster(plan.keyColumns());
     ultraverse::state::v2::StateChangeContext context;
@@ -488,12 +456,9 @@ TEST_CASE("StateChanger prepare handles multiple rollback targets and partial-ke
 
     StateChanger changer(pool, plan, std::move(io));
 
-    std::ostringstream out;
-    ScopedOStreamRedirect coutRedirect(std::cout, out.rdbuf());
-
     changer.prepare();
 
-    auto gids = parseGidLines(out.str());
+    auto gids = loadReplayPlanGids(plan);
     std::sort(gids.begin(), gids.end());
     std::sort(expected.begin(), expected.end());
 
@@ -505,6 +470,7 @@ TEST_CASE("StateChanger prepare handles multiple rollback targets and partial-ke
 
 TEST_CASE("StateChanger prepare includes column-wise dependent queries without key columns", "[statechanger][prepare][columnwise]") {
     auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
 
     auto plan = makePlan(1);
     plan.rollbackGids().push_back(1);
@@ -547,12 +513,9 @@ TEST_CASE("StateChanger prepare includes column-wise dependent queries without k
 
     StateChanger changer(pool, plan, std::move(io));
 
-    std::ostringstream out;
-    ScopedOStreamRedirect coutRedirect(std::cout, out.rdbuf());
-
     changer.prepare();
 
-    auto gids = parseGidLines(out.str());
+    auto gids = loadReplayPlanGids(plan);
     REQUIRE(gids.size() == 1);
     REQUIRE(gids[0] == 2);
 }
@@ -563,6 +526,7 @@ TEST_CASE("StateChanger prepare includes column-wise dependent queries without k
  */
 TEST_CASE("StateChanger prepare propagates column taint transitively", "[statechanger][prepare][columnwise]") {
     auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
 
     auto plan = makePlan(1);
     plan.rollbackGids().push_back(1);
@@ -604,12 +568,9 @@ TEST_CASE("StateChanger prepare propagates column taint transitively", "[statech
 
     StateChanger changer(pool, plan, std::move(io));
 
-    std::ostringstream out;
-    ScopedOStreamRedirect coutRedirect(std::cout, out.rdbuf());
-
     changer.prepare();
 
-    auto gids = parseGidLines(out.str());
+    auto gids = loadReplayPlanGids(plan);
     std::sort(gids.begin(), gids.end());
 
     REQUIRE(gids.size() == 2);
@@ -619,6 +580,7 @@ TEST_CASE("StateChanger prepare propagates column taint transitively", "[statech
 
 TEST_CASE("StateChanger replay respects dependency order within chains", "[statechanger][replay]") {
     auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
 
     constexpr int kThreadNum = 4;
     static_assert(kReplayTotalTransactions % kReplayChains == 0, "chain count must divide total transactions");
@@ -695,6 +657,7 @@ TEST_CASE("StateChanger replay respects dependency order within chains", "[state
  */
 TEST_CASE("StateChanger replay interleaves independent chains", "[statechanger][replay][parallel]") {
     auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
 
     constexpr int kThreadNum = 2;
     auto plan = makePlan(kThreadNum);
@@ -768,6 +731,7 @@ TEST_CASE("StateChanger replay interleaves independent chains", "[statechanger][
 
 TEST_CASE("StateChanger replay-from runs pre-replay range before replay plan", "[statechanger][replay][replay-from]") {
     auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
 
     constexpr int kThreadNum = 2;
     auto plan = makePlan(kThreadNum);
@@ -835,6 +799,7 @@ TEST_CASE("StateChanger replay-from runs pre-replay range before replay plan", "
 
 TEST_CASE("StateChanger replay-from accepts gid 0", "[statechanger][replay][replay-from]") {
     auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
 
     constexpr int kThreadNum = 2;
     auto plan = makePlan(kThreadNum);
