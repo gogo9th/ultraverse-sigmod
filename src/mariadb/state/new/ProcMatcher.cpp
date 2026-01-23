@@ -17,6 +17,16 @@
 namespace ultraverse::state::v2 {
 
     namespace {
+        std::string normalizeVariableName(const std::string& name) {
+            if (name.empty()) {
+                return name;
+            }
+            if (name[0] == '@') {
+                return utility::toLower(name.substr(1));
+            }
+            return utility::toLower(name);
+        }
+
         // 두 KNOWN StateData에 대해 산술 연산 수행
         // 지원 타입: INTEGER(int64_t), DOUBLE
         // 반환: 계산 성공 시 StateData, 실패 시 std::nullopt
@@ -180,6 +190,15 @@ namespace ultraverse::state::v2 {
             for (const auto &parameter: procedureInfo.parameters()) {
                 instance._parameters.push_back(parameter.name());
             }
+
+            for (const auto &variable: procedureInfo.variables()) {
+                LocalVariableDef def;
+                def.name = variable.name();
+                if (variable.has_default_value()) {
+                    def.defaultExpr = variable.default_value();
+                }
+                instance._localVariables.push_back(std::move(def));
+            }
          
             for (const auto &statement: procedureInfo.statements()) {
                 instance._codes.push_back(std::make_shared<ultparser::Query>(statement));
@@ -299,16 +318,35 @@ namespace ultraverse::state::v2 {
     ) const {
         TraceResult result;
         SymbolTable symbols;
+
+        // Preload hinted/initial variables (params, locals, @vars) into symbols.
+        for (const auto& entry : initialVariables) {
+            const auto normalized = normalizeVariableName(entry.first);
+            if (!normalized.empty()) {
+                symbols[normalized] = VariableValue::known(entry.second);
+            }
+        }
         
         // 1. 프로시저 파라미터를 심볼 테이블에 초기화
         for (const auto& paramName : _parameters) {
-            auto it = initialVariables.find(paramName);
-            if (it != initialVariables.end()) {
-                symbols[paramName] = VariableValue::known(it->second);
-            } else {
-                symbols[paramName] = VariableValue{VariableValue::UNDEFINED, StateData()};
-                result.unresolvedVars.push_back(paramName);
+            const auto normalizedName = normalizeVariableName(paramName);
+            if (symbols.find(normalizedName) == symbols.end()) {
+                symbols[normalizedName] = VariableValue{VariableValue::UNDEFINED, StateData()};
+                result.unresolvedVars.push_back(normalizedName);
             }
+        }
+
+        // 1-1. DECLARE 변수 초기화
+        for (const auto& varDef : _localVariables) {
+            const auto normalizedName = normalizeVariableName(varDef.name);
+            if (symbols.find(normalizedName) != symbols.end()) {
+                continue;
+            }
+            VariableValue value = VariableValue::unknown();
+            if (varDef.defaultExpr.has_value()) {
+                value = evaluateExpr(varDef.defaultExpr.value(), symbols);
+            }
+            symbols[normalizedName] = value;
         }
         
         // 2. 각 문장을 순회하며 분석
@@ -328,7 +366,7 @@ namespace ultraverse::state::v2 {
         if (stmt.type() == ultparser::Query::SET) {
             const auto& setQuery = stmt.set();
             for (const auto& assignment : setQuery.assignments()) {
-                const std::string& varName = assignment.name();
+                const std::string varName = normalizeVariableName(assignment.name());
                 if (assignment.has_value()) {
                     symbols[varName] = evaluateExpr(assignment.value(), symbols);
                 } else {
@@ -368,8 +406,13 @@ namespace ultraverse::state::v2 {
             if (dml.type() == ultparser::DMLQuery::SELECT) {
                 // into_variables()에 변수명들이 있음
                 for (const auto& varName : dml.into_variables()) {
+                    const auto normalizedName = normalizeVariableName(varName);
+                    auto it = symbols.find(normalizedName);
+                    if (it != symbols.end() && it->second.state == VariableValue::KNOWN) {
+                        continue;
+                    }
                     // SELECT 결과는 런타임에만 알 수 있으므로 UNKNOWN
-                    symbols[varName] = VariableValue::unknown();
+                    symbols[normalizedName] = VariableValue::unknown();
                 }
             }
             // UPDATE 처리: WHERE → readSet, key column → writeSet
@@ -503,17 +546,25 @@ namespace ultraverse::state::v2 {
                 case ultparser::DMLQueryExpr::DECIMAL:
                     return VariableValue::known(StateData(expr.decimal()));
                 case ultparser::DMLQueryExpr::IDENTIFIER: {
-                    // @var 참조인 경우
                     const auto& id = expr.identifier();
-                    if (!id.empty() && id[0] == '@') {
-                        std::string varName = id.substr(1);
-                        auto it = symbols.find(varName);
-                        if (it != symbols.end()) {
-                            return it->second;
-                        }
+                    if (id.empty()) {
+                        return VariableValue::unknown();
+                    }
+
+                    if (id.find('.') != std::string::npos) {
+                        return VariableValue::unknown();
+                    }
+
+                    const auto normalized = normalizeVariableName(id);
+                    auto it = symbols.find(normalized);
+                    if (it != symbols.end()) {
+                        return it->second;
+                    }
+
+                    if (id[0] == '@') {
                         return VariableValue{VariableValue::UNDEFINED, StateData()};
                     }
-                    // 일반 identifier는 UNKNOWN
+
                     return VariableValue::unknown();
                 }
                 default:

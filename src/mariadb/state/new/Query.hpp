@@ -23,7 +23,7 @@ namespace ultraverse::state::v2 {
     
     class Query {
     public:
-        enum QueryType: uint8_t {
+        enum QueryType: int32_t {
             UNKNOWN,
             
             CREATE,
@@ -75,7 +75,7 @@ namespace ultraverse::state::v2 {
             bool hasRandSeed = false;
             uint64_t randSeed1 = 0;
             uint64_t randSeed2 = 0;
-            std::vector<UserVar> userVars;
+            std::vector<UserVar> userVars { 0 };
 
             bool empty() const {
                 return !hasLastInsertId && !hasInsertId && !hasRandSeed && userVars.empty();
@@ -152,13 +152,9 @@ namespace ultraverse::state::v2 {
         bool hasStatementContext() const;
 
         std::string varMappedStatement(const std::vector<StateItem> &variableSet) const;
-        
-        template <typename Archive>
-        void save(Archive &archive) const;
 
         template <typename Archive>
-        void load(Archive &archive, std::uint32_t const version);
-        
+        void serialize(Archive &archive);
     private:
         QueryType _type;
         uint64_t _timestamp;

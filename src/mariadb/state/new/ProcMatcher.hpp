@@ -109,10 +109,12 @@ namespace ultraverse::state::v2 {
         std::unordered_set<std::string> _readSet;
         std::unordered_set<std::string> _writeSet;
         
-        /**
-         * Map<VariableName, DefaultValue>
-         */
-        std::unordered_map<std::string, std::optional<StateData>> _variables;
+        struct LocalVariableDef {
+            std::string name;
+            std::optional<ultparser::DMLQueryExpr> defaultExpr;
+        };
+
+        std::vector<LocalVariableDef> _localVariables;
     };
 }
 

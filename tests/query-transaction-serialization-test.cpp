@@ -30,11 +30,19 @@ void requireStateItemEqual(const StateItem &lhs, const StateItem &rhs) {
     REQUIRE(lhs.function_type == rhs.function_type);
     REQUIRE(lhs.name == rhs.name);
     REQUIRE(lhs.arg_list.size() == rhs.arg_list.size());
+    for (size_t i = 0; i < lhs.arg_list.size(); ++i) {
+        requireStateItemEqual(lhs.arg_list[i], rhs.arg_list[i]);
+    }
     REQUIRE(lhs.data_list.size() == rhs.data_list.size());
     for (size_t i = 0; i < lhs.data_list.size(); ++i) {
         REQUIRE(lhs.data_list[i] == rhs.data_list[i]);
     }
     REQUIRE(lhs.sub_query_list.size() == rhs.sub_query_list.size());
+    for (size_t i = 0; i < lhs.sub_query_list.size(); ++i) {
+        requireStateItemEqual(lhs.sub_query_list[i], rhs.sub_query_list[i]);
+    }
+    REQUIRE(lhs._isRangeCacheBuilt == rhs._isRangeCacheBuilt);
+    REQUIRE(lhs._rangeCache == rhs._rangeCache);
 }
 
 void requireQueryEqual(Query &lhs, Query &rhs) {
@@ -128,19 +136,39 @@ Query buildQuery(const std::string &db, const std::string &stmt, uint64_t ts, ui
 
     return query;
 }
+
+StateItem buildStateItem() {
+    StateItem root;
+    root.condition_type = EN_CONDITION_OR;
+    root.function_type = FUNCTION_IN_INTERNAL;
+    root.name = "users.id";
+    root.data_list.emplace_back(StateData(static_cast<int64_t>(1)));
+    root.data_list.emplace_back(StateData(static_cast<int64_t>(2)));
+
+    StateItem arg;
+    arg.condition_type = EN_CONDITION_AND;
+    arg.function_type = FUNCTION_EQ;
+    arg.name = "users.name";
+    arg.data_list.emplace_back(StateData(std::string("alice")));
+    root.arg_list.push_back(arg);
+
+    root.sub_query_list.push_back(StateItem::Wildcard("orders.*"));
+
+    return root;
+}
 } // namespace
 
 TEST_CASE("Query cereal round-trip preserves fields", "[query][cereal]") {
     Query original = buildQuery("testdb", "UPDATE users SET name='alice' WHERE id=42", 123456, 3);
 
-    std::stringstream buffer;
+    std::stringstream buffer(std::ios_base::in | std::ios_base::out | std::ios_base::binary);
     {
         cereal::BinaryOutputArchive outputArchive(buffer);
         outputArchive(original);
     }
 
     Query restored;
-    buffer.seekg(0);
+    buffer.seekg(0, std::ios::beg);
     {
         cereal::BinaryInputArchive inputArchive(buffer);
         inputArchive(restored);
@@ -173,7 +201,7 @@ TEST_CASE("Transaction cereal round-trip preserves header and queries", "[transa
     }
 
     Transaction restored;
-    buffer.seekg(0);
+    buffer.seekg(0, std::ios::beg);
     {
         cereal::BinaryInputArchive inputArchive(buffer);
         inputArchive(restored);
@@ -192,4 +220,23 @@ TEST_CASE("Transaction cereal round-trip preserves header and queries", "[transa
 
     requireQueryEqual(*q1, *restoredQueries[0]);
     requireQueryEqual(*q2, *restoredQueries[1]);
+}
+
+TEST_CASE("StateItem cereal round-trip preserves fields", "[stateitem][cereal]") {
+    StateItem original = buildStateItem();
+
+    std::stringstream buffer(std::ios_base::in | std::ios_base::out | std::ios_base::binary);
+    {
+        cereal::BinaryOutputArchive outputArchive(buffer);
+        outputArchive(original);
+    }
+
+    StateItem restored;
+    buffer.seekg(0, std::ios::beg);
+    {
+        cereal::BinaryInputArchive inputArchive(buffer);
+        inputArchive(restored);
+    }
+
+    requireStateItemEqual(original, restored);
 }
