@@ -10,6 +10,8 @@
 
 #include "DBEvent.hpp"
 
+#include "mariadb/state/WhereClauseBuilder.hpp"
+
 #include "utils/StringUtil.hpp"
 
 
@@ -342,111 +344,45 @@ namespace ultraverse::base {
     }
     
     bool QueryEventBase::processWhere(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr) {
-        std::function<void(const ultparser::DMLQueryExpr&, StateItem &)> visit_node = [this, &primaryTable, &visit_node](const ultparser::DMLQueryExpr &expr, StateItem &parent) {
-            if (expr.value_type() == ultparser::DMLQueryExpr::SUBQUERY) {
-                _logger->debug("where clause contains subquery expression");
-                processExprForColumns(primaryTable, expr);
-                return;
-            }
-            if (expr.operator_() == ultparser::DMLQueryExpr::AND || expr.operator_() == ultparser::DMLQueryExpr::OR) {
-                assert(parent.function_type == FUNCTION_NONE);
-                parent.condition_type = expr.operator_() == ultparser::DMLQueryExpr::AND ? EN_CONDITION_AND : EN_CONDITION_OR;
-                
-                for (const auto &child: expr.expressions()) {
-                    StateItem item;
-                    visit_node(child, item);
-                    
-                    parent.arg_list.emplace_back(std::move(item));
-                }
-            } else {
-                assert(parent.condition_type == EN_CONDITION_NONE);
-                // std::cout << expr.left().DebugString() << " " << expr.operator_() << " " << expr.right().DebugString() << std::endl;
-                
-                if (expr.left().value_type() != ultparser::DMLQueryExpr::IDENTIFIER) {
-                    // FIXME: CONCAT(users.id, users.name) = 'foo' is not supported yet.
-                    _logger->warn("left side of where expression is not an identifier");
-                    return;
-                }
-                
-                std::string left = utility::toLower(expr.left().identifier());
-                const auto &right = expr.right();
-                
-                if (left.find('.') == std::string::npos) {
-                    left = primaryTable + "." + left;
-                }
-                
-                parent.name = left;
-                
-                switch (expr.operator_()) {
-                    case ultparser::DMLQueryExpr_Operator_EQ:
-                        parent.function_type = FUNCTION_EQ;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_NEQ:
-                        parent.function_type = FUNCTION_NE;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_LT:
-                        parent.function_type = FUNCTION_LT;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_LTE:
-                        parent.function_type = FUNCTION_LE;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_GT:
-                        parent.function_type = FUNCTION_GT;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_GTE:
-                        parent.function_type = FUNCTION_GE;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_LIKE:
-                        _logger->warn("LIKE operator is not supported yet");
-                        parent.function_type = FUNCTION_EQ;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_NOT_LIKE:
-                        _logger->warn("NOT LIKE operator is not supported yet");
-                        parent.function_type = FUNCTION_NE;
-                        break;
-                    
-                    case ultparser::DMLQueryExpr_Operator_IN:
-                        // treat as (a = 1 or a = 2 or a = 3)
-                        parent.function_type = FUNCTION_EQ;
-                        break;
-                        
-                    case ultparser::DMLQueryExpr_Operator_NOT_IN:
-                        // treat as (a != 1 and a != 2 and a != 3)
-                        parent.function_type = FUNCTION_NE;
-                        break;
-                    
-                    case ultparser::DMLQueryExpr_Operator_BETWEEN:
-                        // treat as (a >= 1 and a <= 3)
-                        parent.function_type = FUNCTION_EQ;
-                        break;
-                        
-                    case ultparser::DMLQueryExpr_Operator_NOT_BETWEEN:
-                        // treat as (a < 1 or a > 3)
-                        parent.function_type = FUNCTION_NE;
-                        break;
-                    default:
-                        _logger->warn("unsupported operator: {}", (int) expr.operator_());
-                        return;
-                }
-                
-                processRValue(parent, right);
-                this->_readColumns.insert(left);
-            }
+        ::ultraverse::state::WhereClauseOptions options;
+        options.primaryTable = primaryTable;
+        options.logger = _logger;
+        options.onReadColumn = [this](const std::string &columnName) {
+            _readColumns.insert(columnName);
         };
-        
-        std::function<void(StateItem &)> flatInsertNode = [this, &flatInsertNode](StateItem &item) {
-            if (item.condition_type == EN_CONDITION_AND || item.condition_type == EN_CONDITION_OR) {
-                std::for_each(item.arg_list.begin(), item.arg_list.end(), flatInsertNode);
-            } else {
-                _whereSet.emplace_back(item);
-            }
+        options.onValueExpr = [this](const std::string &tableName, const ultparser::DMLQueryExpr &valueExpr) {
+            processExprForColumns(tableName, valueExpr);
         };
-        
-        StateItem rootItem;
-        visit_node(expr, rootItem);
-        
-        flatInsertNode(rootItem);
-        
+        options.resolveIdentifier = [this](
+            const std::string &leftName,
+            const std::string &identifierName,
+            std::vector<StateData> &outValues
+        ) -> bool {
+            auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&leftName, &identifierName](const StateItem &_item) {
+                return _item.name == leftName || _item.name == identifierName;
+            });
+            if (it != _itemSet.end()) {
+                outValues.insert(outValues.end(), it->data_list.begin(), it->data_list.end());
+
+                StateItem tmp = *it;
+                tmp.name = identifierName;
+                _variableSet.emplace_back(std::move(tmp));
+                return true;
+            }
+
+            auto itVar = std::find_if(_variableSet.begin(), _variableSet.end(), [&leftName, &identifierName](const StateItem &_item) {
+                return _item.name == leftName || _item.name == identifierName;
+            });
+            if (itVar != _variableSet.end()) {
+                outValues.insert(outValues.end(), itVar->data_list.begin(), itVar->data_list.end());
+                return true;
+            }
+
+            return false;
+        };
+
+        auto whereItems = ::ultraverse::state::buildWhereItems(expr, options);
+        _whereSet.insert(_whereSet.end(), whereItems.begin(), whereItems.end());
         return true;
     }
 
@@ -575,107 +511,6 @@ namespace ultraverse::base {
         }
         if (hasMeaningfulExpr(right)) {
             processExprForColumns(primaryTable, right, qualifyUnqualified);
-        }
-    }
-    
-    void QueryEventBase::processRValue(StateItem &item, const ultparser::DMLQueryExpr &right) {
-        if (right.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
-            // _logger->trace("right side of where expression is not a value: {}", right.DebugString());
-            const std::string &identifierName = right.identifier();
-            
-            {
-                auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&item, &identifierName](const StateItem &_item) {
-                    return _item.name == item.name || _item.name == identifierName;
-                });
-                
-                if (it != _itemSet.end()) {
-                    item.data_list.insert(item.data_list.end(), it->data_list.begin(), it->data_list.end());
-                    
-                    StateItem tmp = *it; // copy
-                    tmp.name = identifierName;
-                    _variableSet.emplace_back(std::move(tmp));
-                    return;
-                }
-            }
-            
-            {
-                auto it = std::find_if(_variableSet.begin(), _variableSet.end(), [&item, &identifierName](const StateItem &_item) {
-                    return _item.name == item.name || _item.name == identifierName;
-                });
-                
-                if (it != _variableSet.end()) {
-                    item.data_list.insert(item.data_list.end(), it->data_list.begin(), it->data_list.end());
-                    return;
-                }
-            }
-            
-            _logger->warn("cannot map value for {}", item.name);
-            return;
-        }
-        
-        switch (right.value_type()) {
-            case ultparser::DMLQueryExpr::IDENTIFIER:
-                return;
-            case ultparser::DMLQueryExpr::INTEGER: {
-                StateData data;
-                data.Set(right.integer());
-                item.data_list.emplace_back(std::move(data));
-            }
-                break;
-            case ultparser::DMLQueryExpr::DOUBLE: {
-                StateData data;
-                data.Set(right.double_());
-                item.data_list.emplace_back(std::move(data));
-            }
-                break;
-            case ultparser::DMLQueryExpr::DECIMAL: {
-                StateData data;
-                data.SetDecimal(right.decimal());
-                item.data_list.emplace_back(std::move(data));
-            }
-                break;
-            case ultparser::DMLQueryExpr::STRING: {
-                StateData data;
-                data.Set(right.string().c_str(), right.string().size());
-                item.data_list.emplace_back(std::move(data));
-            }
-                break;
-            case ultparser::DMLQueryExpr::BOOL: {
-                StateData data;
-                data.Set(right.bool_() ? (int64_t) 1 : 0);
-                item.data_list.emplace_back(std::move(data));
-            }
-                break;
-            case ultparser::DMLQueryExpr::NULL_: {
-                _logger->error("putting NULL value in StateData is not supported yet");
-                throw std::runtime_error("putting NULL value in StateData is not supported yet");
-            }
-                break;
-            case ultparser::DMLQueryExpr::LIST: {
-                for (const auto &child: right.value_list()) {
-                    processRValue(item, child);
-                }
-            }
-                break;
-            case ultparser::DMLQueryExpr::FUNCTION: {
-                _logger->trace("processing function rvalue for {}", item.name);
-                const auto tablePair = utility::splitTableName(item.name);
-                processExprForColumns(tablePair.first, right);
-            }
-                break;
-            case ultparser::DMLQueryExpr::SUBQUERY: {
-                if (!right.has_subquery()) {
-                    _logger->warn("subquery rvalue has no payload for {}", item.name);
-                    return;
-                }
-                _logger->debug("processing subquery rvalue for {}", item.name);
-                const auto tablePair = utility::splitTableName(item.name);
-                processExprForColumns(tablePair.first, right);
-            }
-                break;
-            default:
-                // :_logger->error("unsupported right side of where expression: {}", right.DebugString());
-                throw std::runtime_error("unsupported right side of where expression");
         }
     }
     

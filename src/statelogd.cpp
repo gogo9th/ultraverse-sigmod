@@ -703,6 +703,21 @@ public:
         }
 
         event->mapToTable(*tableMapEvent);
+
+        _logger->debug("processRowEvent(): statement = {}", rowQueryEvent->statement());
+        for (const auto &item: event->itemSet()) {
+            auto copy = item;
+            copy.function_type = FUNCTION_EQ;
+
+            _logger->debug("  [DUMP] - itemSet: {}", copy.MakeRange2().MakeWhereQuery(copy.name));
+        }
+
+        for (const auto &item: event->updateSet()) {
+            auto copy = item;
+            copy.function_type = FUNCTION_EQ;
+
+            _logger->debug("  [DUMP] - updateSet: {}", copy.MakeRange2().MakeWhereQuery(copy.name));
+        }
     
         switch (event->type()) {
             case mariadb::RowEvent::INSERT:

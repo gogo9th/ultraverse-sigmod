@@ -6,7 +6,7 @@ add_compile_options(-O0 -g)
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 
 if (APPLE)
-    add_compile_options(-fexperimental-library "-I/opt/homebrew/opt/llvm/include")
+    add_compile_options(-fexperimental-library)
 endif()
 
 find_package(Boost REQUIRED)

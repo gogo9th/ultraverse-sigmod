@@ -144,15 +144,15 @@ public:
                     std::stringstream varMap;
                     
                     for (auto &item: query->readSet()) {
-                        readSet << item.MakeRange()->MakeWhereQuery(item.name) << ", ";
+                        readSet << item.MakeRange2().MakeWhereQuery(item.name) << ", ";
                     }
                     
                     for (auto &item: query->writeSet()) {
-                        writeSet << item.MakeRange()->MakeWhereQuery(item.name) << ", ";
+                        writeSet << item.MakeRange2().MakeWhereQuery(item.name) << ", ";
                     }
                     
                     for (auto &item: query->varMap()) {
-                        varMap << item.MakeRange()->MakeWhereQuery(item.name) << ", ";
+                        varMap << item.MakeRange2().MakeWhereQuery(item.name) << ", ";
                     }
                     
                     _logger->info("        - ReadSet: {}", readSet.str());

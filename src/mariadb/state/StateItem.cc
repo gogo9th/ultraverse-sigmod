@@ -1045,6 +1045,9 @@ std::string StateRange::MakeWhereQuery(std::string columnName) const
   }
 }
 
+void StateRange::SetValues(const StateData &_values) {
+}
+
 const std::vector<StateRange::ST_RANGE> *StateRange::GetRange() const
 {
   return range.get();

@@ -11,6 +11,8 @@
 
 #include "ProcMatcher.hpp"
 
+#include "mariadb/state/WhereClauseBuilder.hpp"
+
 #include "utils/StringUtil.hpp"
 
 
@@ -624,35 +626,39 @@ namespace ultraverse::state::v2 {
         const SymbolTable& symbols,
         std::vector<std::string>& unresolvedVars
     ) const {
-        std::vector<StateItem> items;
-        
-        auto op = whereExpr.operator_();
-        
-        // AND/OR 연산자: 재귀 처리
-        if (op == ultparser::DMLQueryExpr::AND || op == ultparser::DMLQueryExpr::OR) {
-            for (const auto& child : whereExpr.expressions()) {
-                auto childItems = buildWhereItemSet(primaryTable, child, symbols, unresolvedVars);
-                items.insert(items.end(), childItems.begin(), childItems.end());
+        ::ultraverse::state::WhereClauseOptions options;
+        options.primaryTable = primaryTable;
+        options.logger = _logger;
+        options.resolveIdentifier = [&symbols, &unresolvedVars](
+            const std::string&,
+            const std::string& identifier,
+            std::vector<StateData>& outValues
+        ) -> bool {
+            if (identifier.empty()) {
+                return false;
             }
-            return items;
-        }
-        
-        // 비교 연산자: 왼쪽은 컬럼명, 오른쪽은 값
-        if (whereExpr.has_left() && whereExpr.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
-            std::string colName = whereExpr.left().identifier();
-            // 테이블명이 없으면 primaryTable 추가
-            if (colName.find('.') == std::string::npos) {
-                colName = primaryTable + "." + colName;
+            if (identifier.find('.') != std::string::npos) {
+                return false;
             }
-            
-            if (whereExpr.has_right()) {
-                items.push_back(resolveExprToStateItem(colName, whereExpr.right(), symbols, unresolvedVars));
-            } else {
-                items.push_back(StateItem::Wildcard(colName));
+            const auto normalized = normalizeVariableName(identifier);
+            auto it = symbols.find(normalized);
+            if (it == symbols.end()) {
+                if (!identifier.empty() && identifier[0] == '@') {
+                    unresolvedVars.push_back(normalized);
+                }
+                return false;
             }
-        }
-        
-        return items;
+            if (it->second.state == VariableValue::KNOWN) {
+                outValues.push_back(it->second.data);
+                return true;
+            }
+            if (it->second.state == VariableValue::UNDEFINED && !identifier.empty() && identifier[0] == '@') {
+                unresolvedVars.push_back(normalized);
+            }
+            return false;
+        };
+
+        return ::ultraverse::state::buildWhereItems(whereExpr, options);
     }
     
     const std::vector<std::string> &ProcMatcher::parameters() const {

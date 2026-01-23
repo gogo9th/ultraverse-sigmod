@@ -179,8 +179,6 @@ namespace ultraverse::base {
         
         bool processWhere(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr);
         void processExprForColumns(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr, bool qualifyUnqualified = true);
-        
-        void processRValue(StateItem &item, const ultparser::DMLQueryExpr &right);
     private:
         StateItem *findStateItem(const std::string &name);
         

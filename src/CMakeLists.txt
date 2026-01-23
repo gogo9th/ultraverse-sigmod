@@ -39,10 +39,10 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/mysql_binlogevents.cmake)
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 # add_compile_options(-march=native -O2)
-add_compile_options(-O0 -g)
+add_compile_options()
 
 if (APPLE)
-    add_compile_options(-fexperimental-library "-I/opt/homebrew/opt/llvm/include")
+    add_compile_options(-fexperimental-library)
 endif()
 
 # add_link_options(-fsanitize=leak)
@@ -91,6 +91,8 @@ set(LIBULTRAVERSE_STATE_SRCS
     
     mariadb/state/StateItem.cc
     mariadb/state/StateItem.h
+    mariadb/state/WhereClauseBuilder.cpp
+    mariadb/state/WhereClauseBuilder.hpp
     
     mariadb/state/StateHash.cpp
     mariadb/state/StateHash.hpp
@@ -204,10 +206,10 @@ add_executable(statelogd ${STATELOGD_SRCS})
 add_executable(db_state_change ${DB_STATE_CHANGE_SRCS})
 
 if (APPLE)
-    target_link_options(ultraverse PRIVATE -fexperimental-library "-L/opt/homebrew/lib")
-    target_link_options(state_log_viewer PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
-    target_link_options(statelogd PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
-    target_link_options(db_state_change PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
+    target_link_options(ultraverse PRIVATE -fexperimental-library "-L/opt/homebrew/lib" -fstandalone-debug)
+    target_link_options(state_log_viewer PRIVATE "-L/opt/homebrew/lib" -fexperimental-library -fstandalone-debug)
+    target_link_options(statelogd PRIVATE "-L/opt/homebrew/lib" -fexperimental-library -fstandalone-debug)
+    target_link_options(db_state_change PRIVATE "-L/opt/homebrew/lib" -fexperimental-library -fstandalone-debug)
 endif()
 
 target_link_libraries(state_log_viewer ultraverse ${ULTRAVERSE_DEPENDENCIES})
