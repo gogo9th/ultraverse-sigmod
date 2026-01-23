@@ -150,7 +150,7 @@ The agent should implement the following state machine:
 - `Query`는 column-wise read/write 컬럼 집합을 별도로 보관하며(`.ultstatelog`에 직렬화됨), prepare 단계에서 column-wise 의존성(taint)으로 1차 필터링 후 row-wise로 축소한다. DDL 쿼리는 query 단위로 skip.
 - `QueryEventBase`는 subquery/aggregate/GROUP BY/HAVING/DECIMAL/함수 표현식을 read column에 반영하고, WHERE 없는 쿼리는 관련 테이블 wildcard를 조건부로 추가한다.
 - prepare 단계는 `analysis::TaintAnalyzer`로 column taint 전파 후 row-wise로 축소하며, 키 컬럼 미탐지 트랜잭션은 즉시 replay 대상으로 처리한다.
-- `StateCluster::generateReplaceQuery()`는 테이블별 key column **projection**을 사용한다. 동일 테이블 복합키는 AND, 멀티테이블 그룹은 OR로 WHERE를 생성하며, 테이블에 없는 컬럼은 조건에서 제외된다.
+- `StateCluster::generateReplaceQuery()`는 테이블별 key column **projection**을 사용하며, FK로 key column을 참조하는 컬럼을 projection에 추가해 참조 테이블도 replace 대상에 포함한다. 동일 테이블 복합키는 AND, 멀티테이블 그룹은 OR로 WHERE를 생성하며, 테이블에 없는 컬럼은 조건에서 제외된다.
 - `RowGraph`는 컬럼/복합그룹별 worker 큐와 hold 노드, wildcard holder로 병렬 replay 안정화 및 순서 제어를 강화했다.
 - `RelationshipResolver`/`RowCluster`는 alias coercion, FK/alias 체인 무한루프 가드, 소문자 정규화, `_id` 접미 컬럼의 implicit table 추정 지원을 포함한다.
 - `StateChanger.sqlload`는 `DBEvent::columnRWSet()`으로 column-wise read/write set을 저장하며, `Query`는 statement context(last_insert_id/insert_id/rand_seed/user vars)를 보관한다.

@@ -2,6 +2,7 @@
 // Created by cheesekun on 6/20/23.
 //
 
+#include <algorithm>
 #include <sstream>
 
 #include <execution>
@@ -10,6 +11,7 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
+#include "../StateChangeContext.hpp"
 #include "utils/StringUtil.hpp"
 #include "StateCluster.hpp"
 
@@ -732,14 +734,97 @@ namespace ultraverse::state::v2 {
         return matched > 0;
     }
     
-    std::vector<std::string> StateCluster::generateReplaceQuery(const std::string &targetDB,
-                                                                const std::string &intermediateDB,
-                                                                const RelationshipResolver &resolver) {
+std::vector<std::string> StateCluster::generateReplaceQuery(const std::string &targetDB,
+                                                            const std::string &intermediateDB,
+                                                            const RelationshipResolver &resolver,
+                                                            const std::vector<ForeignKey> &foreignKeys) {
         std::vector<std::string> queries;
         queries.emplace_back(fmt::format("USE {}", targetDB));
         queries.emplace_back("SET FOREIGN_KEY_CHECKS=0");
-        
-        for (const auto &pair : _keyColumnGroupsByTable) {
+
+        auto tableProjections = _keyColumnGroupsByTable;
+
+        std::unordered_map<std::string, size_t> keyColumnGroupIndex;
+        keyColumnGroupIndex.reserve(_keyColumns.size());
+        for (size_t groupIndex = 0; groupIndex < _keyColumnGroups.size(); groupIndex++) {
+            const auto &group = _keyColumnGroups[groupIndex];
+            for (const auto &column : group) {
+                const auto normalized = utility::toLower(column);
+                if (!normalized.empty()) {
+                    keyColumnGroupIndex.emplace(normalized, groupIndex);
+                }
+            }
+        }
+
+        std::unordered_map<std::string, size_t> resolvedKeyColumnGroupIndex = keyColumnGroupIndex;
+        for (const auto &pair : keyColumnGroupIndex) {
+            auto resolved = utility::toLower(resolver.resolveChain(pair.first));
+            if (!resolved.empty()) {
+                resolvedKeyColumnGroupIndex.emplace(std::move(resolved), pair.second);
+            }
+        }
+
+        auto addProjectionColumn = [&tableProjections](const std::string &tableName,
+                                                       size_t groupIndex,
+                                                       const std::string &columnName) {
+            if (tableName.empty() || columnName.empty()) {
+                return;
+            }
+
+            auto &projections = tableProjections[tableName];
+            auto it = std::find_if(
+                projections.begin(), projections.end(),
+                [groupIndex](const GroupProjection &projection) {
+                    return projection.groupIndex == groupIndex;
+                }
+            );
+
+            if (it == projections.end()) {
+                GroupProjection projection;
+                projection.groupIndex = groupIndex;
+                projection.columns.push_back(columnName);
+                projections.push_back(std::move(projection));
+                return;
+            }
+
+            if (std::find(it->columns.begin(), it->columns.end(), columnName) == it->columns.end()) {
+                it->columns.push_back(columnName);
+            }
+        };
+
+        if (!foreignKeys.empty()) {
+            for (const auto &foreignKey : foreignKeys) {
+                if (!foreignKey.fromTable || !foreignKey.toTable) {
+                    continue;
+                }
+
+                const auto fromTable = utility::toLower(foreignKey.fromTable->getCurrentName());
+                const auto toTable = utility::toLower(foreignKey.toTable->getCurrentName());
+                const auto fromColumn = utility::toLower(foreignKey.fromColumn);
+                const auto toColumn = utility::toLower(foreignKey.toColumn);
+
+                if (fromTable.empty() || toTable.empty() || fromColumn.empty() || toColumn.empty()) {
+                    continue;
+                }
+
+                const std::string fromExpr = fromTable + "." + fromColumn;
+                const std::string toExpr = toTable + "." + toColumn;
+
+                auto resolvedTo = utility::toLower(resolver.resolveChain(toExpr));
+                if (resolvedTo.empty()) {
+                    resolvedTo = toExpr;
+                }
+
+                auto it = resolvedKeyColumnGroupIndex.find(resolvedTo);
+                if (it == resolvedKeyColumnGroupIndex.end()) {
+                    continue;
+                }
+
+                addProjectionColumn(fromTable, it->second, fromExpr);
+            }
+        }
+
+        for (const auto &pair : tableProjections) {
             const auto &tableName = pair.first;
             const auto &projections = pair.second;
 

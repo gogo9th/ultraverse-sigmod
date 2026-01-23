@@ -5,6 +5,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "../src/mariadb/state/new/StateChangeContext.hpp"
+#include "../src/mariadb/state/new/StateChangePlan.hpp"
+#include "../src/mariadb/state/new/cluster/StateRelationshipResolver.hpp"
 #include "../src/mariadb/state/new/cluster/StateCluster.hpp"
 #include "state_test_helpers.hpp"
 
@@ -141,7 +144,7 @@ TEST_CASE("StateCluster generateReplaceQuery uses wildcard for composite keys") 
 
     cluster.addRollbackTarget(rollbackTxn, resolver, true);
 
-    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver));
+    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver, {}));
     REQUIRE(query.find("TRUNCATE orders;") != std::string::npos);
     REQUIRE(query.find("REPLACE INTO orders SELECT * FROM intermediate.orders;") != std::string::npos);
 }
@@ -273,7 +276,7 @@ TEST_CASE("StateCluster generateReplaceQuery projects multi-table groups per tab
 
     cluster.addRollbackTarget(rollbackTxn, resolver, true);
 
-    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver));
+    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver, {}));
 
     auto flightPos = query.find("DELETE FROM flight WHERE");
     REQUIRE(flightPos != std::string::npos);
@@ -292,6 +295,30 @@ TEST_CASE("StateCluster generateReplaceQuery projects multi-table groups per tab
     REQUIRE(customerWhere.find("flight.f_id") == std::string::npos);
 }
 
+TEST_CASE("StateCluster generateReplaceQuery includes foreign key tables") {
+    StateChangePlan plan;
+    StateChangeContext context;
+
+    auto orders = std::make_shared<NamingHistory>("orders");
+    auto refunds = std::make_shared<NamingHistory>("refunds");
+    context.tables = {orders, refunds};
+    context.foreignKeys.push_back(ForeignKey{refunds, "order_id", orders, "order_id"});
+
+    StateRelationshipResolver resolver(plan, context);
+
+    StateCluster cluster({"orders.order_id"});
+    auto rollbackTxn = makeTxn(1, "test", {}, {makeEq("orders.order_id", 100)});
+
+    cluster.insert(rollbackTxn, resolver);
+    cluster.merge();
+    cluster.addRollbackTarget(rollbackTxn, resolver, true);
+
+    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver, context.foreignKeys));
+    REQUIRE(query.find("DELETE FROM refunds WHERE") != std::string::npos);
+    REQUIRE(query.find("refunds.order_id") != std::string::npos);
+    REQUIRE(query.find("REPLACE INTO refunds SELECT * FROM intermediate.refunds WHERE") != std::string::npos);
+}
+
 TEST_CASE("StateCluster generateReplaceQuery uses WHERE for non-wildcard keys") {
     NoopRelationshipResolver resolver;
 
@@ -305,7 +332,7 @@ TEST_CASE("StateCluster generateReplaceQuery uses WHERE for non-wildcard keys") 
 
     cluster.addRollbackTarget(rollbackTxn, resolver, true);
 
-    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver));
+    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver, {}));
     REQUIRE(query.find("TRUNCATE users;") == std::string::npos);
     REQUIRE(query.find("DELETE FROM users WHERE") != std::string::npos);
     REQUIRE(query.find("REPLACE INTO users SELECT * FROM intermediate.users WHERE") != std::string::npos);
@@ -322,7 +349,7 @@ TEST_CASE("StateCluster generateReplaceQuery uses write ranges without reads") {
 
     cluster.addRollbackTarget(rollbackTxn, resolver, true);
 
-    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver));
+    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver, {}));
     REQUIRE(query.find("TRUNCATE users;") == std::string::npos);
     REQUIRE(query.find("DELETE FROM users WHERE") != std::string::npos);
     REQUIRE(query.find("REPLACE INTO users SELECT * FROM intermediate.users WHERE") != std::string::npos);

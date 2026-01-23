@@ -22,6 +22,7 @@
 
 
 namespace ultraverse::state::v2 {
+    struct ForeignKey;
 
     /**
      * @brief Row-level clustering을 위한 클래스
@@ -137,7 +138,8 @@ namespace ultraverse::state::v2 {
         
         std::vector<std::string> generateReplaceQuery(const std::string &targetDB,
                                                       const std::string &intermediateDB,
-                                                      const RelationshipResolver &resolver);
+                                                      const RelationshipResolver &resolver,
+                                                      const std::vector<ForeignKey> &foreignKeys);
         
         template <typename Archive>
         void serialize(Archive &archive);

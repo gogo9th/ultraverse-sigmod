@@ -566,7 +566,12 @@ namespace ultraverse::state::v2 {
             dropIntermediateDB();
         }
         
-        auto replaceQueries = rowCluster.generateReplaceQuery(_plan.dbName(), "__INTERMEDIATE_DB__", cachedResolver);
+        auto replaceQueries = rowCluster.generateReplaceQuery(
+            _plan.dbName(),
+            "__INTERMEDIATE_DB__",
+            cachedResolver,
+            _context->foreignKeys
+        );
         _plan.setReplaceQueries(replaceQueries);
         replayPlan.replaceQueries = replaceQueries;
         _logger->debug("prepare(): generated replace queries (use __INTERMEDIATE_DB__ placeholder)");
