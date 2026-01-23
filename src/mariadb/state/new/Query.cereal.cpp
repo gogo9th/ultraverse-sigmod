@@ -2,6 +2,7 @@
 // Created by cheesekun on 8/21/22.
 //
 
+#include <cereal/cereal.hpp>
 #include <cereal/types/vector.hpp>
 #include <cereal/types/unordered_set.hpp>
 #include <cereal/types/set.hpp>
@@ -15,17 +16,22 @@ namespace ultraverse::state::v2 {
         archive(
             _type,
             _timestamp,
-            
+
             _database,
             _statement,
-            
+
             _flags,
-            
+
             _readSet,
             _writeSet,
             _varMap,
-            
-            _affectedRows
+
+            _readColumns,
+            _writeColumns,
+
+            _affectedRows,
+
+            _statementContext
         );
     }
 }

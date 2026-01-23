@@ -53,6 +53,8 @@ message DMLQueryExpr {
     LIST = 7;
     MAP = 8;
     FUNCTION = 9;
+    DECIMAL = 10;
+    SUBQUERY = 11;
   }
 
   Operator operator = 1;
@@ -78,6 +80,16 @@ message DMLQueryExpr {
   map<string, DMLQueryExpr> map = 13;
 
   string function = 14;
+  string decimal = 15;
+
+  /* Subquery 지원 (ValueType == SUBQUERY 일 때) */
+  DMLQuery subquery = 16;
+  bool subquery_exists = 17;        // EXISTS 서브쿼리 여부
+  bool subquery_not = 18;           // NOT EXISTS / NOT IN
+
+  /* Aggregate 함수 지원 (ValueType == FUNCTION 일 때) */
+  bool is_aggregate = 19;
+  bool is_distinct = 20;
 }
 
 message AliasedIdentifier {
@@ -133,6 +145,16 @@ message DMLQuery {
 
   /* READSET | WRITESET: WHERE a = 42 */
   DMLQueryExpr where = 12;
+
+  /* SELECT col1, col2 INTO var1, var2 FROM ... 에서
+     var1, var2를 저장 (인덱스는 select 필드와 1:1 대응) */
+  repeated string into_variables = 13;
+
+  /* GROUP BY expr1, expr2, ... */
+  repeated DMLQueryExpr group_by = 14;
+
+  /* HAVING expr */
+  DMLQueryExpr having = 15;
 }
 
 message DDLQuery {
@@ -148,6 +170,17 @@ message DDLQuery {
   QueryType type = 1;
 
   string statement = 2;
+}
+
+message SetVariable {
+  string name = 1;           // 변수 이름 (@ 제외)
+  bool is_global = 2;        // @@GLOBAL.xxx
+  bool is_system = 3;        // @@xxx (시스템 변수)
+  DMLQueryExpr value = 4;    // 할당할 값
+}
+
+message SetQuery {
+  repeated SetVariable assignments = 1;
 }
 
 message ProcedureIfBlock {
@@ -177,6 +210,8 @@ message Query {
 
     IF      = 4;
     WHILE   = 5;
+
+    SET     = 6;
   };
 
   QueryType type = 1;
@@ -188,6 +223,8 @@ message Query {
 
   optional ProcedureIfBlock if_block = 5;
   optional ProcedureWhileBlock while_block = 6;
+
+  optional SetQuery set = 7;
 }
 
 message Procedure {
@@ -211,14 +248,6 @@ message ParseResult {
   repeated string warnings = 3;
 
   repeated Query statements = 4;
-}
-
-message SelectIntoAssignmentMap {
-  map<string, string> assignments = 1;
-}
-
-message SelectIntoExtractionResult {
-  repeated SelectIntoAssignmentMap results = 1;
 }
 
 option go_package = ".";

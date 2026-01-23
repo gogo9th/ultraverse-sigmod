@@ -152,43 +152,99 @@ $ sudo chmod 777 myserver-binlog*
 $ cp <BenchBase Directory> checkpoint-epinions.backup .
 ```
 
+### Configuration File
 
-<u>**Step 5.**</u> Read Ultraverse's binary log and write (or oppend) the state log into `benchbase.ultstatelog` (see `./statelogd -h` for more information).
+Ultraverse uses a JSON configuration file for all settings. Create a config file (e.g., `ultraverse.json`):
+
+```json
+{
+  "binlog": {
+    "path": ".",
+    "indexName": "myserver-binlog.index"
+  },
+  "stateLog": {
+    "path": ".",
+    "name": "benchbase"
+  },
+  "keyColumns": [
+    "item2.i_id",
+    "useracct.u_id",
+    "review.i_id",
+    "review.u_id",
+    "trust.source_u_id",
+    "trust.target_u_id"
+  ],
+  "columnAliases": {},
+  "database": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "name": "benchbase",
+    "username": "admin",
+    "password": "password"
+  },
+  "statelogd": {
+    "threadCount": 0,
+    "oneshotMode": true,
+    "developmentFlags": ["print-gids", "print-queries"]
+  },
+  "stateChange": {
+    "threadCount": 0,
+    "backupFile": "checkpoint-epinions.backup",
+    "keepIntermediateDatabase": false,
+    "rangeComparisonMethod": "eqonly"
+  }
+}
+```
+
+**Key Columns**: Ultraverse uses key columns for row-wise clustering and replay scheduling.
+* Use **comma `,`** in the array to separate key groups (OR across groups).
+* Use **plus `+`** inside a string to require all columns together (AND within a group).
+
+Example:
+```json
+"keyColumns": ["orders.user_id+orders.item_id", "review.u_id"]
+```
+
+**Environment Variable Fallback**: If not specified in JSON, these environment variables are used:
+* `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS` - Database connection
+* `BINLOG_PATH` - Binary log base path
+
+
+<u>**Step 5.**</u> Read Ultraverse's binary log and write (or append) the state log into `benchbase.ultstatelog` (see `./statelogd -h` for more information).
 
 ```console
-$ ../src/statelogd -G -Q -b myserver-binlog.index -o benchbase -n -k "item2.i_id,useracct.u_id,review.i_id,review.u_id,trust.source_u_id,trust.target_u_id"
- # Manually terminate the daemon after there is no more new logs to parse
+$ ../src/statelogd -c ultraverse.json
 ```
 
 The output files are as follows: `benchbase.ultstatelog` and `benchbase.ultchpoint`.
 
-(Alternatively, use -M flag if you're running MySQL)
+<u>**Step 6.**</u> Make a cluster map & table map before performing a state change.
 
 ```console
-$ ../src/statelogd -M -b myserver-binlog.index -o benchbase
+$ ../src/db_state_change ultraverse.json make_cluster
 ```
+The output files are as follows: `benchbase.ulttables`, `benchbase.ultindex`, `benchbase.ultcolumns`, and `benchbase.ultcluster`.
 
-<u>**Step 6.**</u> Make a cluster map & table map before performing a state change. 
+<u>**Step 7.**</u> Prepare the change state (rollback/prepend). This writes `benchbase.ultreplayplan` in the state log path. (see `./db_state_change -h` for more information)
 
 ```console
-$ DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=admin DB_PASS=password \
-    ../src/db_state_change -i benchbase -d benchbase -k "item2.i_id,useracct.u_id" make_cluster
+$ echo "UPDATE useracct SET name = 'HELOWRLD' WHERE u_id = 512;" > prepend1.sql
+$ echo "UPDATE item2 SET title = 'HELOWRLD' WHERE i_id = 224;" > prepend2.sql
+$ ../src/db_state_change ultraverse.json rollback=2:rollback=32
 ```
-The output files are as follows: `benchbase.ulttables`, `benchbase.ultindex`, `benchbase.ultcolumns`, and `benchbase.ultcluster`. 
 
-<u>**Step 7.**</u> Perform the change state. (see `./db_state_change -h` for more information)
+You can also specify GID range or skip specific GIDs:
+```console
+$ ../src/db_state_change --gid-range 1...100 --skip-gids 5,10,15 ultraverse.json rollback=2
+```
+
+<u>**Step 8.**</u> Replay using the generated `.ultreplayplan` (no stdin required).
 
 ```console
-$ echo "UPDATE useracct SET name = 'HELOWRLD' WHERE u_id = 512;" > prepend1.sql 
-$ echo "UPDATE item2 SET title = 'HELOWRLD' WHERE i_id = 224;" > prepend2.sql 
-$ DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=admin DB_PASS=password \
-    ../src/db_state_change \
-       -i benchbase \
-       -b checkpoint-epinions.backup \
-       -d benchbase \
-       -k "item2.i_id,useracct.u_id" \
-       rollback=2:rollback=32
+$ ../src/db_state_change ultraverse.json replay
 ```
+
+To keep the intermediate database after replay, set `keepIntermediateDatabase: true` in the config file.
 
 
 

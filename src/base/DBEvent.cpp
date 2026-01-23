@@ -3,16 +3,14 @@
 //
 
 #include <algorithm>
-#include <thread>
+#include <cstdint>
 
 #include <libultparser/libultparser.h>
 #include <ultparser_query.pb.h>
 
 #include "DBEvent.hpp"
 
-#include "SQLParser.h"
-#include "bison_parser.h"
-#include "util/sqlhelper.h"
+#include "mariadb/state/WhereClauseBuilder.hpp"
 
 #include "utils/StringUtil.hpp"
 
@@ -26,19 +24,20 @@ namespace ultraverse::base {
     
     }
     
-    bool QueryEventBase::tokenize() {
-        return hsql::SQLParser::tokenize(statement(), &_tokens, &_tokenPos);
-    }
-    
     bool QueryEventBase::parse() {
-        int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
+        static thread_local uintptr_t s_parser = 0;
+        if (s_parser == 0) {
+            s_parser = ult_sql_parser_create();
+        }
         
         ultparser::ParseResult parseResult;
         
         char *parseResultCStr = nullptr;
-        int64_t parseResultCStrSize = ult_sql_parse(
-            (char *) statement().c_str(),
-            threadId,
+        const auto &sqlStatement = statement();
+        int64_t parseResultCStrSize = ult_sql_parse_new(
+            s_parser,
+            (char *) sqlStatement.c_str(),
+            static_cast<int64_t>(sqlStatement.size()),
             &parseResultCStr
         );
         
@@ -82,14 +81,6 @@ namespace ultraverse::base {
     }
     
     void QueryEventBase::buildRWSet(const std::vector<std::string> &keyColumns) {
-        for (const auto &table: _relatedTables) {
-            if (!table.empty()) {
-                _readItems.emplace_back(StateItem::Wildcard(
-                    fmt::format("_S.{}", table)
-                ));
-            }
-        }
-        
         if (_queryType == SELECT) {
             _readItems.insert(
                 _readItems.end(),
@@ -137,11 +128,84 @@ namespace ultraverse::base {
                 _whereSet.begin(), _whereSet.end()
             );
         }
+
+        const bool needsFullScanWildcard =
+            _whereSet.empty() && (
+                (_queryType == SELECT && _readItems.empty()) ||
+                (_queryType == UPDATE && _writeItems.empty()) ||
+                (_queryType == DELETE && _writeItems.empty())
+            );
+
+        if (needsFullScanWildcard) {
+            auto addWildcardItem = [this](const std::string &name, bool isWrite) {
+                if (name.empty()) {
+                    return;
+                }
+                StateItem wildcard = StateItem::Wildcard(name);
+                if (isWrite) {
+                    _writeItems.emplace_back(std::move(wildcard));
+                } else {
+                    _readItems.emplace_back(std::move(wildcard));
+                }
+            };
+
+            const bool isWrite = _queryType == UPDATE || _queryType == DELETE;
+
+            if (!keyColumns.empty()) {
+                std::unordered_set<std::string> relatedTablesLower;
+                relatedTablesLower.reserve(_relatedTables.size());
+                for (const auto &table : _relatedTables) {
+                    if (!table.empty()) {
+                        relatedTablesLower.insert(utility::toLower(table));
+                    }
+                }
+
+                for (const auto &keyColumn : keyColumns) {
+                    if (keyColumn.empty()) {
+                        continue;
+                    }
+                    const auto normalizedKey = utility::toLower(keyColumn);
+                    const auto tablePair = utility::splitTableName(normalizedKey);
+                    if (!tablePair.first.empty() &&
+                        relatedTablesLower.find(tablePair.first) != relatedTablesLower.end()) {
+                        addWildcardItem(normalizedKey, isWrite);
+                    }
+                }
+            } else {
+                for (const auto &table : _relatedTables) {
+                    if (!table.empty()) {
+                        addWildcardItem(utility::toLower(table) + ".*", isWrite);
+                    }
+                }
+            }
+        }
     }
     
     bool QueryEventBase::processDDL(const ultparser::DDLQuery &ddlQuery) {
-        _logger->warn("FIXME: DDL is not supported yet.");
-        return false;
+        switch (ddlQuery.type()) {
+            case ultparser::DDLQuery::CREATE:
+                _queryType = CREATE_TABLE;
+                break;
+            case ultparser::DDLQuery::ALTER:
+                _queryType = ALTER_TABLE;
+                break;
+            case ultparser::DDLQuery::DROP:
+                _queryType = DROP_TABLE;
+                break;
+            case ultparser::DDLQuery::TRUNCATE:
+                _queryType = TRUNCATE_TABLE;
+                break;
+            case ultparser::DDLQuery::RENAME:
+                _queryType = RENAME_TABLE;
+                break;
+            case ultparser::DDLQuery::UNKNOWN:
+            default:
+                _queryType = DDL_UNKNOWN;
+                break;
+        }
+
+        _logger->warn("DDL is not supported yet.");
+        return true;
     }
     
     bool QueryEventBase::processDML(const ultparser::DMLQuery &dmlQuery) {
@@ -169,10 +233,23 @@ namespace ultraverse::base {
         const std::string primaryTable = dmlQuery.table().real().identifier();
         // TODO: support join
         
-        _relatedTables.insert(primaryTable);
+        if (!primaryTable.empty()) {
+            _relatedTables.insert(primaryTable);
+        }
         
         for (const auto &join: dmlQuery.join()) {
-            _relatedTables.insert(join.real().identifier());
+            const std::string joinTable = join.real().identifier();
+            if (!joinTable.empty()) {
+                _relatedTables.insert(joinTable);
+            }
+        }
+
+        for (const auto &subquery: dmlQuery.subqueries()) {
+            _logger->debug("processing derived table subquery in select");
+            ultparser::DMLQueryExpr subqueryExpr;
+            subqueryExpr.set_value_type(ultparser::DMLQueryExpr::SUBQUERY);
+            *subqueryExpr.mutable_subquery() = subquery;
+            processExprForColumns(primaryTable, subqueryExpr);
         }
         
         for (const auto &select: dmlQuery.select()) {
@@ -185,8 +262,17 @@ namespace ultraverse::base {
                     _readColumns.insert(colName);
                 }
             } else {
+                processExprForColumns(primaryTable, expr);
                 // _logger->trace("not selecting column: {}", expr.DebugString());
             }
+        }
+
+        for (const auto &groupExpr : dmlQuery.group_by()) {
+            processExprForColumns(primaryTable, groupExpr);
+        }
+
+        if (dmlQuery.has_having()) {
+            processExprForColumns(primaryTable, dmlQuery.having());
         }
         
         if (dmlQuery.has_where()) {
@@ -198,7 +284,9 @@ namespace ultraverse::base {
     
     bool QueryEventBase::processInsert(const ultparser::DMLQuery &dmlQuery) {
         const std::string primaryTable = dmlQuery.table().real().identifier();
-        _relatedTables.insert(primaryTable);
+        if (!primaryTable.empty()) {
+            _relatedTables.insert(primaryTable);
+        }
         
         for (const auto &insertion: dmlQuery.update_or_write()) {
             if (insertion.left().value_type() != ultparser::DMLQueryExpr::IDENTIFIER) {
@@ -212,6 +300,7 @@ namespace ultraverse::base {
             }
             
             _writeColumns.insert(colName);
+            processExprForColumns(primaryTable, insertion.right());
         }
         
         
@@ -220,7 +309,9 @@ namespace ultraverse::base {
     
     bool QueryEventBase::processUpdate(const ultparser::DMLQuery &dmlQuery) {
         const std::string primaryTable = dmlQuery.table().real().identifier();
-        _relatedTables.insert(primaryTable);
+        if (!primaryTable.empty()) {
+            _relatedTables.insert(primaryTable);
+        }
         
         for (const auto &update: dmlQuery.update_or_write()) {
             std::string colName = update.left().identifier();
@@ -229,6 +320,7 @@ namespace ultraverse::base {
             }
             
             _writeColumns.insert(colName);
+            processExprForColumns(primaryTable, update.right());
         }
         
         if (dmlQuery.has_where()) {
@@ -252,406 +344,174 @@ namespace ultraverse::base {
     }
     
     bool QueryEventBase::processWhere(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr) {
-        std::function<void(const ultparser::DMLQueryExpr&, StateItem &)> visit_node = [this, &primaryTable, &visit_node](const ultparser::DMLQueryExpr &expr, StateItem &parent) {
-            if (expr.operator_() == ultparser::DMLQueryExpr::AND || expr.operator_() == ultparser::DMLQueryExpr::OR) {
-                assert(parent.function_type == FUNCTION_NONE);
-                parent.condition_type = expr.operator_() == ultparser::DMLQueryExpr::AND ? EN_CONDITION_AND : EN_CONDITION_OR;
-                
-                for (const auto &child: expr.expressions()) {
-                    StateItem item;
-                    visit_node(child, item);
-                    
-                    parent.arg_list.emplace_back(std::move(item));
-                }
-            } else {
-                assert(parent.condition_type == EN_CONDITION_NONE);
-                // std::cout << expr.left().DebugString() << " " << expr.operator_() << " " << expr.right().DebugString() << std::endl;
-                
-                if (expr.left().value_type() != ultparser::DMLQueryExpr::IDENTIFIER) {
-                    // FIXME: CONCAT(users.id, users.name) = 'foo' is not supported yet.
-                    _logger->warn("left side of where expression is not an identifier");
-                    return;
-                }
-                
-                std::string left = utility::toLower(expr.left().identifier());
-                const auto &right = expr.right();
-                
-                if (left.find('.') == std::string::npos) {
-                    left = primaryTable + "." + left;
-                }
-                
-                parent.name = left;
-                
-                switch (expr.operator_()) {
-                    case ultparser::DMLQueryExpr_Operator_EQ:
-                        parent.function_type = FUNCTION_EQ;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_NEQ:
-                        parent.function_type = FUNCTION_NE;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_LT:
-                        parent.function_type = FUNCTION_LT;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_LTE:
-                        parent.function_type = FUNCTION_LE;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_GT:
-                        parent.function_type = FUNCTION_GT;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_GTE:
-                        parent.function_type = FUNCTION_GE;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_LIKE:
-                        _logger->warn("LIKE operator is not supported yet");
-                        parent.function_type = FUNCTION_EQ;
-                        break;
-                    case ultparser::DMLQueryExpr_Operator_NOT_LIKE:
-                        _logger->warn("NOT LIKE operator is not supported yet");
-                        parent.function_type = FUNCTION_NE;
-                        break;
-                    
-                    case ultparser::DMLQueryExpr_Operator_IN:
-                        // treat as (a = 1 or a = 2 or a = 3)
-                        parent.function_type = FUNCTION_EQ;
-                        break;
-                        
-                    case ultparser::DMLQueryExpr_Operator_NOT_IN:
-                        // treat as (a != 1 and a != 2 and a != 3)
-                        parent.function_type = FUNCTION_NE;
-                        break;
-                    
-                    case ultparser::DMLQueryExpr_Operator_BETWEEN:
-                        // treat as (a >= 1 and a <= 3)
-                        parent.function_type = FUNCTION_EQ;
-                        break;
-                        
-                    case ultparser::DMLQueryExpr_Operator_NOT_BETWEEN:
-                        // treat as (a < 1 or a > 3)
-                        parent.function_type = FUNCTION_NE;
-                        break;
-                    default:
-                        _logger->warn("unsupported operator: {}", (int) expr.operator_());
-                        return;
-                }
-                
-                processRValue(parent, right);
-                this->_readColumns.insert(left);
-            }
+        ::ultraverse::state::WhereClauseOptions options;
+        options.primaryTable = primaryTable;
+        options.logger = _logger;
+        options.onReadColumn = [this](const std::string &columnName) {
+            _readColumns.insert(columnName);
         };
-        
-        std::function<void(StateItem &)> flatInsertNode = [this, &flatInsertNode](StateItem &item) {
-            if (item.condition_type == EN_CONDITION_AND || item.condition_type == EN_CONDITION_OR) {
-                std::for_each(item.arg_list.begin(), item.arg_list.end(), flatInsertNode);
-            } else {
-                _whereSet.emplace_back(item);
-            }
+        options.onValueExpr = [this](const std::string &tableName, const ultparser::DMLQueryExpr &valueExpr) {
+            processExprForColumns(tableName, valueExpr);
         };
-        
-        StateItem rootItem;
-        visit_node(expr, rootItem);
-        
-        flatInsertNode(rootItem);
-        
-        return true;
-    }
-    
-    void QueryEventBase::processRValue(StateItem &item, const ultparser::DMLQueryExpr &right) {
-        if (right.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
-            // _logger->trace("right side of where expression is not a value: {}", right.DebugString());
-            const std::string &identifierName = right.identifier();
-            
-            {
-                auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&item, &identifierName](const StateItem &_item) {
-                    return _item.name == item.name || _item.name == identifierName;
-                });
-                
-                if (it != _itemSet.end()) {
-                    item.data_list.insert(item.data_list.end(), it->data_list.begin(), it->data_list.end());
-                    
-                    StateItem tmp = *it; // copy
-                    tmp.name = identifierName;
-                    _variableSet.emplace_back(std::move(tmp));
-                    return;
-                }
-            }
-            
-            {
-                auto it = std::find_if(_variableSet.begin(), _variableSet.end(), [&item, &identifierName](const StateItem &_item) {
-                    return _item.name == item.name || _item.name == identifierName;
-                });
-                
-                if (it != _variableSet.end()) {
-                    item.data_list.insert(item.data_list.end(), it->data_list.begin(), it->data_list.end());
-                    return;
-                }
-            }
-            
-            _logger->warn("cannot map value for {}", item.name);
-            return;
-        }
-        
-        switch (right.value_type()) {
-            case ultparser::DMLQueryExpr::IDENTIFIER:
-                return;
-            case ultparser::DMLQueryExpr::INTEGER: {
-                StateData data;
-                data.Set(right.integer());
-                item.data_list.emplace_back(std::move(data));
-            }
-                break;
-            case ultparser::DMLQueryExpr::DOUBLE: {
-                StateData data;
-                data.Set(right.double_());
-                item.data_list.emplace_back(std::move(data));
-            }
-                break;
-            case ultparser::DMLQueryExpr::STRING: {
-                StateData data;
-                data.Set(right.string().c_str(), right.string().size());
-                item.data_list.emplace_back(std::move(data));
-            }
-                break;
-            case ultparser::DMLQueryExpr::BOOL: {
-                StateData data;
-                data.Set(right.bool_() ? (int64_t) 1 : 0);
-                item.data_list.emplace_back(std::move(data));
-            }
-                break;
-            case ultparser::DMLQueryExpr::NULL_: {
-                _logger->error("putting NULL value in StateData is not supported yet");
-                throw std::runtime_error("putting NULL value in StateData is not supported yet");
-            }
-                break;
-            case ultparser::DMLQueryExpr::LIST: {
-                for (const auto &child: right.value_list()) {
-                    processRValue(item, child);
-                }
-            }
-                break;
-            default:
-                // :_logger->error("unsupported right side of where expression: {}", right.DebugString());
-                throw std::runtime_error("unsupported right side of where expression");
-        }
-    }
-    
-    bool QueryEventBase::parseSelect() {
-        static const auto tolower = [](unsigned char c) { return std::tolower(c); };
+        options.resolveIdentifier = [this](
+            const std::string &leftName,
+            const std::string &identifierName,
+            std::vector<StateData> &outValues
+        ) -> bool {
+            auto it = std::find_if(_itemSet.begin(), _itemSet.end(), [&leftName, &identifierName](const StateItem &_item) {
+                return _item.name == leftName || _item.name == identifierName;
+            });
+            if (it != _itemSet.end()) {
+                outValues.insert(outValues.end(), it->data_list.begin(), it->data_list.end());
 
-        constexpr int PHASE_COLUMNS = 1;
-        constexpr int PHASE_TABLE_NAME = 2;
-        constexpr int PHASE_WHERE_COL = 3;
-        constexpr int PHASE_WHERE_VAL = 4;
-
-        int phase = PHASE_COLUMNS;
-        int depth = 0;
-
-        bool isNameConst = false;
-        bool isNameConstVal = false;
-        bool skip = false;
-
-        std::vector<int16_t> tokens;
-        std::vector<size_t> tokenPos;
-        hsql::SQLParser::tokenize(statement(), &tokens, &tokenPos);
-
-        std::string tableName;
-        std::string whereCol;
-        std::set<std::string> readSet;
-        std::unordered_map<std::string, int64_t> whereSet;
-
-        int i = 0;
-        for (auto &token: tokens) {
-            if (token == SQL_SELECT) {
-                phase = PHASE_COLUMNS;
-                skip = false;
-                goto NEXT_TOKEN;
-            } else if (token == SQL_FROM) {
-                phase = PHASE_TABLE_NAME;
-                skip = false;
-                goto NEXT_TOKEN;
-            } else if (token == SQL_WHERE) {
-                phase = PHASE_WHERE_COL;
-                skip = false;
-                goto NEXT_TOKEN;
-            }
-
-            if (token == SQL_NAME_CONST) {
-                isNameConst = true;
-                goto NEXT_TOKEN;
-            }
-
-            if (token == '(') {
-                depth++;
-                goto NEXT_TOKEN;
-            }
-
-            if (token == ')') {
-                depth--;
-                goto NEXT_TOKEN;
-            }
-
-            if (token == ',' || token == SQL_AND || token == SQL_OR) {
-                if (depth == 0) {
-                    skip = false;
-                    isNameConst = false;
-                    isNameConstVal = false;
-                }
-                goto NEXT_TOKEN;
-            } else if (skip) {
-                goto NEXT_TOKEN;
-            }
-
-            {
-                std::string value;
-                if (i + 1 == tokens.size()) {
-                    value = statement().substr(tokenPos[i]);
-                } else {
-                    tokenPos[i + 1] - tokenPos[i];
-                    value = statement().substr(tokenPos[i], tokenPos[i + 1] - tokenPos[i]);
-                }
-
-
-                if (phase == PHASE_COLUMNS) {
-                    std::transform(value.begin(), value.end(), value.begin(), tolower);
-                    readSet.insert(utility::normalizeColumnName(value));
-                    skip = true;
-                } else if (phase == PHASE_WHERE_COL) {
-                    std::transform(value.begin(), value.end(), value.begin(), tolower);
-                    readSet.insert(utility::normalizeColumnName(value));
-                    whereCol = utility::normalizeColumnName(value);
-
-                    phase = PHASE_WHERE_VAL;
-                } else if (phase == PHASE_WHERE_VAL) {
-                    if (token == '=' ||
-                        token == SQL_LESS ||
-                        token == SQL_LESSEQ ||
-                        token == SQL_EQUAL ||
-                        token == SQL_EQUALS ||
-                        token == SQL_GREATER ||
-                        token == SQL_GREATEREQ
-                    ) {
-                        goto NEXT_TOKEN;
-                    }
-
-                    if (isNameConst && !isNameConstVal) {
-                        isNameConstVal = true;
-                        goto NEXT_TOKEN;
-                    }
-
-                    try {
-                        whereSet.emplace(whereCol, (int64_t) std::stoll(value));
-                    } catch (std::invalid_argument &e) {
-
-                    }
-
-                    skip = true;
-                    phase = PHASE_WHERE_COL;
-                } else if (phase == PHASE_TABLE_NAME) {
-                    if (tableName.empty()) {
-                        tableName = utility::normalizeColumnName(value);
-                        std::transform(tableName.begin(), tableName.end(), tableName.begin(), tolower);
-                    }
-                    skip = true;
-                }
-            }
-
-            NEXT_TOKEN:
-            i++;
-        }
-
-        for (const auto &token: readSet) {
-            if (token.find('.') == std::string::npos) {
-                _readColumns.insert(tableName + "." + token);
-            } else {
-                _readColumns.insert(token);
-            }
-        }
-
-        for (const auto &pair: whereSet) {
-            StateItem stateItem;
-            StateData data;
-
-            data.Set(pair.second);
-
-            if (pair.first.find('.') == std::string::npos) {
-                stateItem.name = tableName + "." + pair.first;
-            } else {
-                stateItem.name = pair.first;
-            }
-
-            stateItem.condition_type = EN_CONDITION_NONE;
-            stateItem.function_type = FUNCTION_EQ;
-
-
-            stateItem.data_list.emplace_back(std::move(data));
-            _whereSet.emplace_back(std::move(stateItem));
-        }
-
-        return true;
-    }
-
-    bool QueryEventBase::parseDDL(int limit) {
-        std::vector<int16_t> tokens;
-        std::vector<size_t> tokenPos;
-        hsql::SQLParser::tokenize(statement(), &tokens, &tokenPos);
-
-        int i = 0;
-        int j = 0;
-        for (auto &token: tokens) {
-            if (token == SQL_IDENTIFIER) {
-                std::string value;
-                if (i + 1 == tokens.size()) {
-                    value = statement().substr(tokenPos[i]);
-                } else {
-                    tokenPos[i + 1] - tokenPos[i];
-                    value = statement().substr(tokenPos[i], tokenPos[i + 1] - tokenPos[i]);
-                }
-
-                _writeColumns.insert(utility::normalizeColumnName(value) + ".*");
-                j++;
-            }
-            i++;
-            
-            if (limit > 0 && j >= limit) {
+                StateItem tmp = *it;
+                tmp.name = identifierName;
+                _variableSet.emplace_back(std::move(tmp));
                 return true;
             }
-        }
-        
+
+            auto itVar = std::find_if(_variableSet.begin(), _variableSet.end(), [&leftName, &identifierName](const StateItem &_item) {
+                return _item.name == leftName || _item.name == identifierName;
+            });
+            if (itVar != _variableSet.end()) {
+                outValues.insert(outValues.end(), itVar->data_list.begin(), itVar->data_list.end());
+                return true;
+            }
+
+            return false;
+        };
+
+        auto whereItems = ::ultraverse::state::buildWhereItems(expr, options);
+        _whereSet.insert(_whereSet.end(), whereItems.begin(), whereItems.end());
         return true;
     }
-    
-    void QueryEventBase::extractReadWriteSet(const hsql::InsertStatement *insert) {
-        std::string tableName = utility::normalizeColumnName(insert->tableName);
-        
-        _writeColumns.insert(tableName + ".*");
-        
-        if (insert->type == hsql::InsertType::kInsertSelect) {
-            extractReadWriteSet(insert->select);
+
+    void QueryEventBase::processExprForColumns(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr, bool qualifyUnqualified) {
+        auto addIdentifier = [this, &primaryTable, qualifyUnqualified](const std::string &identifier) {
+            if (identifier.empty()) {
+                return;
+            }
+            if (identifier.find('.') != std::string::npos) {
+                _readColumns.insert(identifier);
+                return;
+            }
+            if (!qualifyUnqualified) {
+                _logger->trace("skip unqualified identifier without scope: {}", identifier);
+                return;
+            }
+            if (primaryTable.empty()) {
+                _logger->trace("unqualified identifier without primary table: {}", identifier);
+                _readColumns.insert(identifier);
+            } else {
+                _readColumns.insert(primaryTable + "." + identifier);
+            }
+        };
+
+        if (expr.operator_() == ultparser::DMLQueryExpr::AND || expr.operator_() == ultparser::DMLQueryExpr::OR) {
+            for (const auto &child: expr.expressions()) {
+                processExprForColumns(primaryTable, child, qualifyUnqualified);
+            }
+            return;
         }
-    }
-    
-    void QueryEventBase::extractReadWriteSet(const hsql::DeleteStatement *del) {
-        std::string tableName = utility::normalizeColumnName(del->tableName);
-    
-        _writeColumns.insert(tableName + ".*");
-        
-        std::vector<std::string> readSet;
-        StateItem whereExpr;
-        walkExpr(del->expr, whereExpr, readSet, tableName, true);
-        
-        _readColumns.insert(readSet.begin(), readSet.end());
-        _whereSet.push_back(whereExpr);
-    }
-    
-    void QueryEventBase::extractReadWriteSet(const hsql::UpdateStatement *update) {
-        throw std::runtime_error("deprecated");
-    }
-    
-    void QueryEventBase::extractReadWriteSet(const hsql::SelectStatement *select) {
-        throw std::runtime_error("deprecated");
-    }
-    
-    void QueryEventBase::walkExpr(const hsql::Expr *expr, StateItem &parent, std::vector<std::string> &readSet, const std::string &rootTable, bool isRoot) {
-        throw std::runtime_error("deprecated");
+
+        switch (expr.value_type()) {
+            case ultparser::DMLQueryExpr::IDENTIFIER:
+                addIdentifier(expr.identifier());
+                return;
+            case ultparser::DMLQueryExpr::FUNCTION:
+                _logger->trace("processing function expression for columns: {}", expr.function());
+                for (const auto &arg: expr.value_list()) {
+                    processExprForColumns(primaryTable, arg, qualifyUnqualified);
+                }
+                return;
+            case ultparser::DMLQueryExpr::SUBQUERY: {
+                if (!expr.has_subquery()) {
+                    _logger->warn("subquery expression has no payload");
+                    return;
+                }
+
+                _logger->debug("processing subquery expression for columns");
+                const auto &subquery = expr.subquery();
+                const std::string subqueryPrimary = subquery.table().real().identifier();
+                const std::string outerPrimary = primaryTable;
+                if (!subqueryPrimary.empty()) {
+                    _relatedTables.insert(subqueryPrimary);
+                }
+
+                for (const auto &join: subquery.join()) {
+                    const std::string joinTable = join.real().identifier();
+                    if (!joinTable.empty()) {
+                        _relatedTables.insert(joinTable);
+                    }
+                }
+
+                for (const auto &select: subquery.select()) {
+                    processExprForColumns(subqueryPrimary, select.real(), true);
+                    if (!outerPrimary.empty() && outerPrimary != subqueryPrimary) {
+                        processExprForColumns(outerPrimary, select.real(), false);
+                    }
+                }
+
+                for (const auto &groupExpr: subquery.group_by()) {
+                    processExprForColumns(subqueryPrimary, groupExpr, true);
+                    if (!outerPrimary.empty() && outerPrimary != subqueryPrimary) {
+                        processExprForColumns(outerPrimary, groupExpr, false);
+                    }
+                }
+
+                if (subquery.has_having()) {
+                    processExprForColumns(subqueryPrimary, subquery.having(), true);
+                    if (!outerPrimary.empty() && outerPrimary != subqueryPrimary) {
+                        processExprForColumns(outerPrimary, subquery.having(), false);
+                    }
+                }
+
+                if (subquery.has_where()) {
+                    processExprForColumns(subqueryPrimary, subquery.where(), true);
+                    if (!outerPrimary.empty() && outerPrimary != subqueryPrimary) {
+                        _logger->trace("processing subquery where with outer scope: {}", outerPrimary);
+                        processExprForColumns(outerPrimary, subquery.where(), false);
+                    }
+                }
+
+                for (const auto &derived: subquery.subqueries()) {
+                    ultparser::DMLQueryExpr derivedExpr;
+                    derivedExpr.set_value_type(ultparser::DMLQueryExpr::SUBQUERY);
+                    *derivedExpr.mutable_subquery() = derived;
+                    processExprForColumns(subqueryPrimary, derivedExpr, true);
+                    if (!outerPrimary.empty() && outerPrimary != subqueryPrimary) {
+                        processExprForColumns(outerPrimary, derivedExpr, false);
+                    }
+                }
+
+                return;
+            }
+            default:
+                break;
+        }
+
+        const auto &left = expr.left();
+        const auto &right = expr.right();
+
+        auto hasMeaningfulExpr = [](const ultparser::DMLQueryExpr &node) {
+            if (node.value_type() != ultparser::DMLQueryExpr::UNKNOWN_VALUE) {
+                return true;
+            }
+            if (node.operator_() != ultparser::DMLQueryExpr::UNKNOWN) {
+                return true;
+            }
+            if (!node.expressions().empty() || !node.value_list().empty()) {
+                return true;
+            }
+            return node.has_subquery();
+        };
+
+        if (hasMeaningfulExpr(left)) {
+            processExprForColumns(primaryTable, left, qualifyUnqualified);
+        }
+        if (hasMeaningfulExpr(right)) {
+            processExprForColumns(primaryTable, right, qualifyUnqualified);
+        }
     }
     
     StateItem *QueryEventBase::findStateItem(const std::string &name) {
@@ -681,42 +541,46 @@ namespace ultraverse::base {
     std::vector<StateItem> &QueryEventBase::variableSet() {
         return _variableSet;
     }
-    
-    std::vector<int16_t> QueryEventBase::tokens() const {
-        return _tokens;
+
+    QueryEventBase::QueryType QueryEventBase::queryType() const {
+        return _queryType;
     }
-    
-    std::vector<size_t> QueryEventBase::tokenPos() const {
-        return _tokenPos;
+
+    void QueryEventBase::columnRWSet(std::set<std::string> &readColumns, std::set<std::string> &writeColumns) const {
+        for (const auto &column : _readColumns) {
+            readColumns.insert(utility::toLower(column));
+        }
+
+        for (const auto &column : _writeColumns) {
+            writeColumns.insert(utility::toLower(column));
+        }
+
+        if (_queryType == INSERT || _queryType == DELETE) {
+            for (const auto &table : _relatedTables) {
+                if (!table.empty()) {
+                    writeColumns.insert(utility::toLower(table) + ".*");
+                }
+            }
+        }
     }
     
     bool QueryEventBase::isDDL() const {
-        if (_tokens.empty()) {
-            return false;
-        }
         return (
-            _tokens[0] == SQL_CREATE  ||
-            _tokens[0] == SQL_ALTER   ||
-            _tokens[0] == SQL_DROP    ||
-            _tokens[0] == SQL_RENAME  ||
-            _tokens[0] == SQL_COMMENT ||
-            _tokens[0] == SQL_TRUNCATE
+            _queryType == DDL_UNKNOWN   ||
+            _queryType == CREATE_TABLE ||
+            _queryType == ALTER_TABLE  ||
+            _queryType == DROP_TABLE   ||
+            _queryType == RENAME_TABLE ||
+            _queryType == TRUNCATE_TABLE
         );
     }
     
     bool QueryEventBase::isDML() const {
-        if (_tokens.empty()) {
-            return false;
-        }
         return (
-            _tokens[0] == SQL_SELECT  ||
-            _tokens[0] == SQL_INSERT  ||
-            _tokens[0] == SQL_UPDATE  ||
-            _tokens[0] == SQL_DELETE  ||
-            _tokens[0] == SQL_MERGE   ||
-            _tokens[0] == SQL_CALL    ||
-            _tokens[0] == SQL_EXPLAIN ||
-            _tokens[0] == SQL_LOCK
+            _queryType == SELECT ||
+            _queryType == INSERT ||
+            _queryType == UPDATE ||
+            _queryType == DELETE
         );
     }
     

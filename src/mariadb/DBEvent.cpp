@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <sstream>
+#include <utility>
 
 #include <cereal/types/vector.hpp>
 #include <cereal/types/unordered_map.hpp>
@@ -43,6 +44,23 @@ namespace ultraverse::mariadb {
     {
     
     }
+
+    QueryEvent::QueryEvent(
+        const std::string &schema,
+        const ultparser::Query &pbStatement,
+        uint64_t timestamp
+    ):
+        _database(schema),
+        _statement(pbStatement.dml().statement()),
+
+        _timestamp(timestamp),
+        _error(0)
+    {
+        assert(pbStatement.has_dml());
+
+        // TODO: warn unless processDML()
+        processDML(pbStatement.dml());
+    }
     
     
     uint64_t QueryEvent::timestamp() {
@@ -59,6 +77,89 @@ namespace ultraverse::mariadb {
     
     const std::string &QueryEvent::database() {
         return _database;
+    }
+
+    IntVarEvent::IntVarEvent(Type type, uint64_t value, uint64_t timestamp):
+        _type(type),
+        _value(value),
+        _timestamp(timestamp)
+    {
+    }
+
+    uint64_t IntVarEvent::timestamp() {
+        return _timestamp;
+    }
+
+    IntVarEvent::Type IntVarEvent::type() const {
+        return _type;
+    }
+
+    uint64_t IntVarEvent::value() const {
+        return _value;
+    }
+
+    RandEvent::RandEvent(uint64_t seed1, uint64_t seed2, uint64_t timestamp):
+        _seed1(seed1),
+        _seed2(seed2),
+        _timestamp(timestamp)
+    {
+    }
+
+    uint64_t RandEvent::timestamp() {
+        return _timestamp;
+    }
+
+    uint64_t RandEvent::seed1() const {
+        return _seed1;
+    }
+
+    uint64_t RandEvent::seed2() const {
+        return _seed2;
+    }
+
+    UserVarEvent::UserVarEvent(std::string name,
+                               ValueType type,
+                               bool isNull,
+                               bool isUnsigned,
+                               uint32_t charset,
+                               std::string value,
+                               uint64_t timestamp):
+        _name(std::move(name)),
+        _type(type),
+        _isNull(isNull),
+        _isUnsigned(isUnsigned),
+        _charset(charset),
+        _value(std::move(value)),
+        _timestamp(timestamp)
+    {
+    }
+
+    uint64_t UserVarEvent::timestamp() {
+        return _timestamp;
+    }
+
+    const std::string &UserVarEvent::name() const {
+        return _name;
+    }
+
+    UserVarEvent::ValueType UserVarEvent::type() const {
+        return _type;
+    }
+
+    bool UserVarEvent::isNull() const {
+        return _isNull;
+    }
+
+    bool UserVarEvent::isUnsigned() const {
+        return _isUnsigned;
+    }
+
+    uint32_t UserVarEvent::charset() const {
+        return _charset;
+    }
+
+    const std::string &UserVarEvent::value() const {
+        return _value;
     }
     
     TableMapEvent::TableMapEvent(uint64_t tableId, std::string database, std::string table, std::vector<std::pair<column_type::Value, int>> columns, std::vector<std::string> columnNames, uint64_t timestamp):
@@ -86,6 +187,10 @@ namespace ultraverse::mariadb {
     
     std::string TableMapEvent::table() const {
         return _table;
+    }
+
+    int TableMapEvent::columnCount() const {
+        return static_cast<int>(_columns.size());
     }
     
     column_type::Value TableMapEvent::typeOf(int columnIndex) const {
@@ -125,9 +230,57 @@ namespace ultraverse::mariadb {
         _columns(columns),
         _rowData(std::move(rowData)),
         _dataSize(dataSize),
-        _flags(flags)
+        _flags(flags),
+        _columnsBeforeImage(),
+        _columnsAfterImage(),
+        _columnsBeforeCount(columns),
+        _columnsAfterCount(columns)
     {
-        
+        _columnsBeforeImage.assign((columns + 7) / 8, 0xff);
+        if (columns % 8 != 0 && !_columnsBeforeImage.empty()) {
+            _columnsBeforeImage.back() = static_cast<uint8_t>((1u << (columns % 8)) - 1);
+        }
+        _columnsAfterImage = _columnsBeforeImage;
+    }
+
+    RowEvent::RowEvent(Type type, uint64_t tableId, int columns,
+                       std::vector<uint8_t> columnsBeforeImage,
+                       std::vector<uint8_t> columnsAfterImage,
+                       std::shared_ptr<uint8_t> rowData, int dataSize,
+                       uint64_t timestamp, uint16_t flags):
+        _timestamp(timestamp),
+        _type(type),
+        _tableId(tableId),
+        _columns(columns),
+        _rowData(std::move(rowData)),
+        _dataSize(dataSize),
+        _flags(flags),
+        _columnsBeforeImage(std::move(columnsBeforeImage)),
+        _columnsAfterImage(std::move(columnsAfterImage)),
+        _columnsBeforeCount(0),
+        _columnsAfterCount(0)
+    {
+        auto countBits = [](const std::vector<uint8_t> &bitmap, int maxBits) {
+            int count = 0;
+            for (int i = 0; i < maxBits; i++) {
+                if (bitmap[i / 8] & (1u << (i % 8))) {
+                    count++;
+                }
+            }
+            return count;
+        };
+        if (_columns > 0 && !_columnsBeforeImage.empty()) {
+            _columnsBeforeCount = countBits(_columnsBeforeImage, _columns);
+        }
+        if (_columns > 0 && !_columnsAfterImage.empty()) {
+            _columnsAfterCount = countBits(_columnsAfterImage, _columns);
+        }
+        if (_columnsBeforeCount == 0 && _columns > 0) {
+            _columnsBeforeCount = _columns;
+        }
+        if (_columnsAfterCount == 0 && _columns > 0) {
+            _columnsAfterCount = _columns;
+        }
     }
     
     uint64_t RowEvent::timestamp() {
@@ -147,13 +300,24 @@ namespace ultraverse::mariadb {
     }
     
     void RowEvent::mapToTable(TableMapEvent &tableMapEvent) {
+        if (_columns != tableMapEvent.columnCount()) {
+            _affectedRows = 0;
+            return;
+        }
+
         int pos = 0;
         
         while (pos < _dataSize) {
             {
                 // type이 UPDATE면 변경 전 row를 updateSet에 넣는다.
                 // (항상 변경된 row를 itemSet에 넣도록 한다)
-                auto retval = readRow(tableMapEvent, pos, (_type == UPDATE) ? true : false);
+                auto retval = readRow(
+                    tableMapEvent,
+                    pos,
+                    _columnsBeforeImage.empty() ? _columnsAfterImage : _columnsBeforeImage,
+                    _columnsBeforeCount,
+                    (_type == UPDATE)
+                );
                 auto &rowData = retval.first;
                 auto rowSize = retval.second;
                 _rowSet.push_back(rowData);
@@ -161,7 +325,13 @@ namespace ultraverse::mariadb {
             }
             
             if (_type == UPDATE) {
-                auto retval = readRow(tableMapEvent, pos, false);
+                auto retval = readRow(
+                    tableMapEvent,
+                    pos,
+                    _columnsAfterImage.empty() ? _columnsBeforeImage : _columnsAfterImage,
+                    _columnsAfterCount,
+                    false
+                );
                 auto &rowData = retval.first;
                 auto rowSize = retval.second;
                 _changeSet.push_back(rowData);
@@ -172,45 +342,74 @@ namespace ultraverse::mariadb {
         _affectedRows = _rowSet.size();
     }
     
-    std::pair<std::string, int> RowEvent::readRow(TableMapEvent &tableMapEvent, int basePos, bool isUpdate) {
-        uint64_t nullFields = 0;
-        int nullFieldsSize = (_columns + 7) / 8;
+    std::pair<std::string, int> RowEvent::readRow(TableMapEvent &tableMapEvent, int basePos,
+                                                  const std::vector<uint8_t> &columnsBitmap,
+                                                  int columnsBitmapCount, bool isUpdate) {
+        int usedColumns = columnsBitmapCount > 0 ? columnsBitmapCount : _columns;
+        int nullFieldsSize = (usedColumns + 7) / 8;
 
-        memcpy(&nullFields, _rowData.get() + basePos, (_columns + 7) / 8);
+        std::vector<uint8_t> nullFields(static_cast<size_t>(nullFieldsSize), 0);
+        if (nullFieldsSize > 0) {
+            memcpy(nullFields.data(), _rowData.get() + basePos, nullFieldsSize);
+        }
 
-        // FIXME: 이거 제거
         std::stringstream sstream;
-        
+
         int rowSize = 0;
-    
+        int usedIndex = 0;
+        bool first = true;
+
+        auto isColumnUsed = [&](int columnIndex) -> bool {
+            if (columnsBitmap.empty()) {
+                return true;
+            }
+            return (columnsBitmap[columnIndex / 8] & (1u << (columnIndex % 8))) != 0;
+        };
+
+        auto isNull = [&](int usedColumnIndex) -> bool {
+            if (nullFields.empty()) {
+                return false;
+            }
+            return (nullFields[usedColumnIndex / 8] & (1u << (usedColumnIndex % 8))) != 0;
+        };
+
         for (int i = 0; i < _columns; i++) {
+            if (!isColumnUsed(i)) {
+                continue;
+            }
+
             auto columnType = tableMapEvent.typeOf(i);
             int columnSize = tableMapEvent.sizeOf(i);
             auto columnName = tableMapEvent.nameOf(i);
-            
+
             auto offset = basePos + nullFieldsSize + rowSize;
-            
-            
-            if ((nullFields & (((int64_t) 1) << i)) != 0) {
-                // NULL
+
+            if (!first) {
+                sstream << ":";
+            }
+            first = false;
+
+            if (isNull(usedIndex)) {
                 sstream << columnName << "=";
-                
-                if (columnType == column_type::INTEGER) {
-                    if (columnSize == 2 || columnSize == 1) {
-                        // HACK
-                        rowSize += columnSize;
-                    }
-                }
-            } else if (columnType == column_type::STRING) {
-                // length + [string content]
+                usedIndex++;
+                continue;
+            }
+            usedIndex++;
+
+            if (columnType == column_type::STRING) {
                 uint64_t strLength = 0;
                 size_t strLengthSize = 1;
-                
+
                 if (columnSize == -1) {
                     strLength = (_rowData.get()[offset]);
                 } else if (columnSize == -2) {
                     strLength = (uint16_t) *reinterpret_cast<uint16_t *>(_rowData.get() + offset);
                     strLengthSize = 2;
+                } else if (columnSize == -3) {
+                    strLength = static_cast<uint64_t>(_rowData.get()[offset]) |
+                                (static_cast<uint64_t>(_rowData.get()[offset + 1]) << 8) |
+                                (static_cast<uint64_t>(_rowData.get()[offset + 2]) << 16);
+                    strLengthSize = 3;
                 } else if (columnSize == -4) {
                     strLength = (uint32_t) *reinterpret_cast<uint32_t *>(_rowData.get() + offset);
                     strLengthSize = 4;
@@ -227,115 +426,112 @@ namespace ultraverse::mariadb {
 
                 std::string strValue((char *) rawValue.get(), strLength);
                 sstream << columnName << "=" << strValue;
-    
+
                 {
                     StateItem candidateItem;
                     StateData data;
-                    
+
                     data.Set(strValue.c_str(), strLength);
                     candidateItem.data_list.emplace_back(std::move(data));
                     candidateItem.function_type = FUNCTION_EQ;
                     candidateItem.name = tableMapEvent.table() + "." + columnName;
-                    
+
                     if (isUpdate) {
                         _updateSet.emplace_back(std::move(candidateItem));
                     } else {
                         _itemSet.emplace_back(std::move(candidateItem));
                     }
                 }
-                
+
                 rowSize += strLength + strLengthSize;
             } else if (columnType == column_type::DATETIME) {
                 std::unique_ptr<uint8_t> rawValue(new uint8_t[columnSize]);
                 memcpy(rawValue.get(), _rowData.get() + offset, columnSize);
-    
+
                 std::string strValue((char *) rawValue.get(), columnSize);
                 sstream << columnName << "=" << strValue;
-    
+
                 {
                     StateItem candidateItem;
                     StateData data;
-        
+
                     data.Set(strValue.c_str(), columnSize);
                     candidateItem.data_list.emplace_back(std::move(data));
                     candidateItem.function_type = FUNCTION_EQ;
                     candidateItem.name = tableMapEvent.table() + "." + columnName;
-                    
+
                     if (isUpdate) {
                         _updateSet.emplace_back(std::move(candidateItem));
                     } else {
                         _itemSet.emplace_back(std::move(candidateItem));
                     }
                 }
-    
+
                 rowSize += columnSize;
             } else if (columnType == column_type::DECIMAL) {
                 StateItem candidateItem;
                 StateData data;
-                
+
                 uint8_t precision = columnSize & 0xff;
                 uint8_t scale     = columnSize >> 8;
-                
+
                 uint8_t size = (precision + 1) / 2;
-                
+
                 std::unique_ptr<uint8_t> rawValue(new uint8_t[size]);
                 memcpy(rawValue.get(), _rowData.get() + offset, size);
-                
-                
+
                 bool sign = false;
                 uint64_t high = 0;
                 uint64_t low = 0;
-                
+
                 int i = 0;
                 while (i < size) {
                     uint8_t value = rawValue.get()[i];
-                    
+
                     if (i == 0) {
                         sign = value & 0x80;
                         value = value ^ 0x80;
                     }
-                    
+
                     if (i < ((precision - scale) + 1) / 2) {
                         high = (high << 8) + value;
                     } else {
                         low = (low << 8) + value;
                     }
-                    
+
                     i++;
                 }
-                
-                
-                // FIXME: maybe inaccurate
+
                 std::stringstream replStream;
-                
+
                 if (!sign) {
                     replStream << '-';
                 }
-                
+
                 replStream << high << "."
                            << std::setfill('0') << std::setw(scale) << low;
-                
+
                 std::string replVal = replStream.str();
-                
-                data.Set(replVal.c_str(), replVal.size());
-    
+
+                data.SetDecimal(replVal.c_str(), replVal.size());
+
                 candidateItem.data_list.emplace_back(std::move(data));
                 candidateItem.function_type = FUNCTION_EQ;
                 candidateItem.name = tableMapEvent.table() + "." + columnName;
-    
+
                 if (isUpdate) {
                     _updateSet.emplace_back(std::move(candidateItem));
                 } else {
                     _itemSet.emplace_back(std::move(candidateItem));
                 }
-    
+
                 sstream << columnName << "=" << replVal;
-                
+
                 rowSize += size;
             } else {
                 StateItem candidateItem;
                 StateData data;
-                
+
                 if (columnType == column_type::INTEGER) {
                     int64_t value;
                     switch (columnSize) {
@@ -348,7 +544,14 @@ namespace ultraverse::mariadb {
                             sstream << columnName << "=" << "I32!" << value;
                             break;
                         case 3:
-                            throw std::runtime_error("unsupported format");
+                            value =
+                                static_cast<int32_t>(_rowData.get()[offset]) |
+                                (static_cast<int32_t>(_rowData.get()[offset + 1]) << 8) |
+                                (static_cast<int32_t>(_rowData.get()[offset + 2]) << 16);
+                            if (value & 0x800000) {
+                                value |= 0xff000000;
+                            }
+                            sstream << columnName << "=" << "I24!" << value;
                             break;
                         case 2:
                             value = readValue<int16_t>(offset);
@@ -359,7 +562,7 @@ namespace ultraverse::mariadb {
                             sstream << columnName << "=" << "I8!" << value;
                             break;
                     }
-    
+
                     data.Set(value);
                 } else if (columnType == column_type::FLOAT) {
                     double value;
@@ -373,28 +576,24 @@ namespace ultraverse::mariadb {
                             sstream << columnName << "=" << "F32!" << value;
                             break;
                     }
-    
+
                     data.Set(value);
                 }
-                
+
                 candidateItem.data_list.emplace_back(std::move(data));
                 candidateItem.function_type = FUNCTION_EQ;
                 candidateItem.name = tableMapEvent.table() + "." + columnName;
-                
+
                 if (isUpdate) {
                     _updateSet.emplace_back(std::move(candidateItem));
                 } else {
                     _itemSet.emplace_back(std::move(candidateItem));
                 }
-                
+
                 rowSize += columnSize;
             }
-    
-            if (i + 1 < _columns) {
-                sstream << ":";
-            }
         }
-        
+
         return std::make_pair(sstream.str(), nullFieldsSize + rowSize);
     }
     

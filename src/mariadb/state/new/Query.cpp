@@ -14,7 +14,9 @@ namespace ultraverse::state::v2 {
         _type(UNKNOWN),
         _flags(0),
         _timestamp(0),
-        _affectedRows(0)
+        _affectedRows(0),
+
+        _statementContext({ 0 })
     {
     
     }
@@ -102,9 +104,45 @@ namespace ultraverse::state::v2 {
     std::vector<StateItem> &Query::writeSet() {
         return _writeSet;
     }
+
+    ColumnSet &Query::readColumns() {
+        return _readColumns;
+    }
+
+    const ColumnSet &Query::readColumns() const {
+        return _readColumns;
+    }
+
+    ColumnSet &Query::writeColumns() {
+        return _writeColumns;
+    }
+
+    const ColumnSet &Query::writeColumns() const {
+        return _writeColumns;
+    }
     
     std::vector<StateItem> &Query::varMap() {
         return _varMap;
+    }
+
+    Query::StatementContext &Query::statementContext() {
+        return _statementContext;
+    }
+
+    const Query::StatementContext &Query::statementContext() const {
+        return _statementContext;
+    }
+
+    void Query::setStatementContext(const StatementContext &context) {
+        _statementContext = context;
+    }
+
+    void Query::clearStatementContext() {
+        _statementContext.clear();
+    }
+
+    bool Query::hasStatementContext() const {
+        return !_statementContext.empty();
     }
 
     

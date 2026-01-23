@@ -5,77 +5,56 @@
 #ifndef ULTRAVERSE_PROCMATCHER_HPP
 #define ULTRAVERSE_PROCMATCHER_HPP
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <optional>
+#include <map>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <ultparser_query.pb.h>
-
-#include "Query.hpp"
 
 #include "../StateItem.h"
 #include "utils/log.hpp"
 
-class ProcCall;
-
 namespace ultraverse::state::v2 {
     
+    // 변수 값 상태
+    struct VariableValue {
+        enum State { KNOWN, UNKNOWN, UNDEFINED };
+        State state = UNDEFINED;
+        StateData data;
+
+        static VariableValue known(const StateData& d) {
+            return VariableValue{KNOWN, d};
+        }
+        static VariableValue unknown() {
+            return VariableValue{UNKNOWN, StateData()};
+        }
+    };
+
+    // trace 결과
+    struct TraceResult {
+        std::vector<StateItem> readSet;
+        std::vector<StateItem> writeSet;
+        std::vector<std::string> unresolvedVars;  // 디버깅용
+    };
+
+    using SymbolTable = std::unordered_map<std::string, VariableValue>;
+
     class ProcMatcher {
     public:
+        enum class ParamDirection : uint8_t {
+            IN = 0,
+            OUT = 1,
+            INOUT = 2,
+            UNKNOWN = 3,
+        };
+
         static void load(const std::string &procedureDefinition, ProcMatcher &instance);
         static std::unordered_set<std::string> extractTableColumns(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr);
         
-        
-        /**
-         * @brief wrapper function of ult_sanitize_select_into
-         * @note 이 function은 tidb/parser의 파서가 SELECT col INTO var 를 해석하지 못하는 문제를 우회하기 위한 것이기 때문에 오래 사용되어선 안됩니다.
-         *       때문에, 이 benchbase가 아닌 다른 케이스에서 문제를 일으킬 수 있습니다
-         *       TODO: tidb upstream에 SELECT col INTO var를 해석하지 못하는 문제에 대해 버그 리포트를 제출하십시오.
-         */
-        static std::string sanitizeSelectInto(const std::string &procedureDefinition);
-        /**
-         * @brief wrapper function fo ult_normalize_procedure_code
-         * @note 이 function은 tidb/parser의 파서가 SELECT col INTO var 를 해석하지 못하는 문제를 우회하기 위한 것이기 때문에 오래 사용되어선 안됩니다.
-         *       때문에, 이 benchbase가 아닌 다른 케이스에서 문제를 일으킬 수 있습니다
-         *       TODO: tidb upstream에 SELECT col INTO var를 해석하지 못하는 문제에 대해 버그 리포트를 제출하십시오.
-         */
-        static std::string normalizeProcedureCode(const std::string &procedureDefinition);
-        
-        /**
-         * @brief wrapper function of ult_extract_
-         * this function extracts all variable assignments (SELECT colA INTO varA FROM ...) of each statement.
-         *
-         * eg) 아래와 같은 프로시저가 있다고 가정하자.
-         *
-         *     CREATE PROCEDURE TestProcA( ... )
-         *     BEGIN
-         *         DECLARE varA INT; -- (1)
-         *         DECLARE varB INT; -- (2)
-         *         DECLARE varC INT; -- (3)
-         *
-         *         SELECT colA INTO varA FROM table1; -- (4)
-         *         INSERT table2 VALUES (varA); -- (5)
-         *
-         *         SELECT colA, colB, colC INTO varA, varB, varC FROM table1; -- (6)
-         *
-         *         SELECT colA, colB, colC INTO varA FROM table1; -- (7)
-         *
-         *     END
-         *
-         * 이 경우, 이 함수는 다음과 같은 결과를 반환한다.
-         *     std::vector<...> result = {
-         *         { }, // (1)
-         *         { }, // (2)
-         *         { }, // (3)
-         *         { { "colA", "varA" } }, // (4)
-         *         { }, // (5)
-         *         { { "colA", "varA" }, { "colB", "varB" }, { "colC", "varC" } }, // (6)
-         *         { { "colA", "varA" }, { "colB", "varA" }, { "colC", "varA" } }, // (7)
-         *     }
-         *
-         * NOTE: this will count DECLARE as statement
-         */
-        static std::vector<std::unordered_map<std::string, std::string>> extractVariableAssignments(const std::string &procedureDefinition);
         
         explicit ProcMatcher(const std::string &procedureDefinition);
         
@@ -85,23 +64,49 @@ namespace ultraverse::state::v2 {
          */
         ProcMatcher(const std::vector<std::string> &procedureCodes);
         
-        /**
-         * 주어진 쿼리가 프로시저의 몇번째 줄인지 매칭을 시도합니다.
-         * @return 성공적으로 매칭된 경우 프로시저 소스 코드의 라인 넘버,
-         *         매칭에 실패한 경우에는 음수를 반환합니다.
-         */
-        int matchForward(const std::string &statement, int fromIndex);
+        TraceResult trace(
+            const std::map<std::string, StateData>& initialVariables,
+            const std::vector<std::string>& keyColumns = {}
+        ) const;
         
-        
-        std::vector<StateItem> variableSet(const ProcCall &procCall) const;
-        std::vector<std::shared_ptr<Query>> asQuery(int index, const ProcCall &procCall, const std::vector<std::string> &keyColumns) const;
         
         const std::vector<std::string> &parameters() const;
+        const std::vector<ParamDirection> &parameterDirections() const;
+        ParamDirection parameterDirection(size_t index) const;
+        ParamDirection parameterDirection(const std::string &name) const;
         const std::vector<std::shared_ptr<ultparser::Query>> codes() const;
         
         const std::unordered_set<std::string> &readSet() const;
         const std::unordered_set<std::string> &writeSet() const;
     private:
+        void traceStatement(
+            const ultparser::Query& stmt,
+            SymbolTable& symbols,
+            TraceResult& result,
+            const std::vector<std::string>& keyColumns
+        ) const;
+        
+        VariableValue evaluateExpr(
+            const ultparser::DMLQueryExpr& expr,
+            const SymbolTable& symbols
+        ) const;
+        
+        static bool isComplexExpression(const ultparser::DMLQueryExpr& expr);
+        
+        StateItem resolveExprToStateItem(
+            const std::string& columnName,
+            const ultparser::DMLQueryExpr& expr,
+            const SymbolTable& symbols,
+            std::vector<std::string>& unresolvedVars
+        ) const;
+        
+        std::vector<StateItem> buildWhereItemSet(
+            const std::string& primaryTable,
+            const ultparser::DMLQueryExpr& whereExpr,
+            const SymbolTable& symbols,
+            std::vector<std::string>& unresolvedVars
+        ) const;
+        
         void extractRWSets();
         void extractRWSets(const ultparser::Query &query);
         
@@ -110,17 +115,19 @@ namespace ultraverse::state::v2 {
         
         std::vector<std::shared_ptr<ultparser::Query>> _codes;
         
-        std::vector<std::unordered_map<std::string, std::string>> _variableAssignments;
-        
         std::vector<std::string> _parameters;
+        std::vector<ParamDirection> _parameterDirections;
+        std::unordered_map<std::string, ParamDirection> _parameterDirectionMap;
         
         std::unordered_set<std::string> _readSet;
         std::unordered_set<std::string> _writeSet;
         
-        /**
-         * Map<VariableName, DefaultValue>
-         */
-        std::unordered_map<std::string, std::optional<StateData>> _variables;
+        struct LocalVariableDef {
+            std::string name;
+            std::optional<ultparser::DMLQueryExpr> defaultExpr;
+        };
+
+        std::vector<LocalVariableDef> _localVariables;
     };
 }
 

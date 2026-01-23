@@ -70,6 +70,10 @@ namespace ultraverse::state::v2 {
     std::vector<std::shared_ptr<Query>> &Transaction::queries() {
         return _queries;
     }
+
+    const std::vector<std::shared_ptr<Query>> &Transaction::queries() const {
+        return _queries;
+    }
     
     CombinedIterator<StateItem> Transaction::readSet_begin() {
         std::vector<std::reference_wrapper<std::vector<StateItem>>> containers;

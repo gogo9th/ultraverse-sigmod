@@ -4,14 +4,21 @@
 
 #include "StateRelationshipResolver.hpp"
 
+#include <unordered_set>
+
 #include "utils/StringUtil.hpp"
 
 namespace ultraverse::state::v2 {
     
     std::string RelationshipResolver::resolveChain(const std::string &columnExpr) const {
         std::string _columnExpr = columnExpr;
+        std::unordered_set<std::string> visited;
         
         while (true) {
+            if (!visited.insert(_columnExpr).second) {
+                return std::string();
+            }
+            
             auto alias = std::move(resolveColumnAlias(_columnExpr));
             auto foreignKey = std::move(resolveForeignKey(!alias.empty() ? alias : _columnExpr));
             
@@ -32,8 +39,13 @@ namespace ultraverse::state::v2 {
     
     std::shared_ptr<StateItem> RelationshipResolver::resolveRowChain(const StateItem &item) const {
         std::shared_ptr<StateItem> _item = std::make_shared<StateItem>(item);
+        std::unordered_set<std::string> visited;
         
         while (true) {
+            if (!visited.insert(_item->name).second) {
+                return nullptr;
+            }
+            
             auto alias = std::move(resolveRowAlias(*_item));
             auto foreignKey = std::move(resolveForeignKey(alias != nullptr ? alias->name : _item->name));
             
@@ -67,8 +79,13 @@ namespace ultraverse::state::v2 {
     std::string StateRelationshipResolver::resolveColumnAlias(const std::string &exprName) const {
         bool found = false;
         std::string _exprName = utility::toLower(exprName);
+        std::unordered_set<std::string> visited;
         
         while (true) {
+            if (!visited.insert(_exprName).second) {
+                return std::string();
+            }
+            
             auto it = std::find_if(
                 _plan.columnAliases().begin(), _plan.columnAliases().end(),
                 [&_exprName](const auto &pair) { return std::move(utility::toLower(pair.first)) == _exprName; }
@@ -86,8 +103,13 @@ namespace ultraverse::state::v2 {
     std::string StateRelationshipResolver::resolveForeignKey(const std::string &exprName) const {
         bool found = false;
         std::string _exprName = utility::toLower(exprName);
+        std::unordered_set<std::string> visited;
         
         while (true) {
+            if (!visited.insert(_exprName).second) {
+                return std::string();
+            }
+            
             auto vec = std::move(utility::splitTableName(_exprName));
             auto tableName  = std::move(vec.first);
             auto columnName = std::move(vec.second);
@@ -95,7 +117,8 @@ namespace ultraverse::state::v2 {
             auto it = std::find_if(
                 _context.foreignKeys.cbegin(), _context.foreignKeys.cend(),
                 [&tableName, &columnName](auto &foreignKey) {
-                    return foreignKey.fromTable->getCurrentName() == tableName && columnName == foreignKey.fromColumn;
+                    return utility::toLower(foreignKey.fromTable->getCurrentName()) == tableName
+                        && utility::toLower(foreignKey.fromColumn) == columnName;
                 }
             );
             
@@ -135,7 +158,8 @@ namespace ultraverse::state::v2 {
         _rowAliasTable[name].insert(std::make_pair(range, RowAlias { alias, real }));
     }
     
-    void StateRelationshipResolver::addTransaction(Transaction &transaction) {
+    bool StateRelationshipResolver::addTransaction(Transaction &transaction) {
+        bool changed = false;
         for (const auto &pair: _plan.columnAliases()) {
             const auto &alias = pair.first;
             const auto &real = pair.second;
@@ -149,8 +173,10 @@ namespace ultraverse::state::v2 {
             if (aliasIt != itEnd && itemIt != itEnd) {
                 // std::cerr << "adding alias: " << (*aliasIt).MakeRange2().MakeWhereQuery((*aliasIt).name) << " => " << (*itemIt).MakeRange2().MakeWhereQuery((*itemIt).name) << std::endl;
                 addRowAlias(*aliasIt, *itemIt);
+                changed = true;
             }
         }
+        return changed;
     }
     
     CachedRelationshipResolver::CachedRelationshipResolver(const RelationshipResolver &resolver, int maxRowElements):
@@ -203,7 +229,7 @@ namespace ultraverse::state::v2 {
     
     std::shared_ptr<StateItem> CachedRelationshipResolver::resolveRowAlias(const StateItem &item) const {
         size_t hash = item.MakeRange2().hash();
-        auto &cacheMap = _rowAliasCache[item.name];
+        auto &cacheMap = _rowChainCache[item.name];
         
         {
             std::shared_lock<std::shared_mutex> _lock(_cacheLock);
@@ -270,6 +296,7 @@ namespace ultraverse::state::v2 {
         _aliasCache.clear();
         _chainCache.clear();
         _rowAliasCache.clear();
+        _rowChainCache.clear();
     }
     
     bool CachedRelationshipResolver::isGCRequired(const CachedRelationshipResolver::RowCacheMap &rowCacheMap) const {

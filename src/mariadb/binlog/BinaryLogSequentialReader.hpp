@@ -5,6 +5,8 @@
 #ifndef ULTRAVERSE_BINARYLOGSEQUENTIALREADER_HPP
 #define ULTRAVERSE_BINARYLOGSEQUENTIALREADER_HPP
 
+#include <atomic>
+
 #include "BinaryLogReader.hpp"
 
 namespace ultraverse::mariadb {
@@ -23,13 +25,11 @@ namespace ultraverse::mariadb {
         void setPollDisabled(bool isPollDisabled);
         
         void terminate();
-        
-    protected:
-        virtual std::unique_ptr<BinaryLogReaderBase> openBinaryLog(const std::string &logFile) = 0;
-    
+
+    private:
+        std::unique_ptr<BinaryLogReaderBase> openBinaryLog(const std::string &logFile);
         void updateIndex();
         void openLog(const std::string &logFile);
-    
         bool pollNext();
     
         LoggerPtr _logger;
@@ -40,27 +40,10 @@ namespace ultraverse::mariadb {
         // TOOD: currentFile or currentIndex;
         int _currentIndex;
     
-        bool terminateSignal = false;
+        std::atomic<bool> terminateSignal{false};
         bool _isPollDisabled;
     
-    private:
         std::unique_ptr<BinaryLogReaderBase> _binaryLogReader;
-    };
-    
-    class MariaDBBinaryLogSequentialReader: public BinaryLogSequentialReader {
-    public:
-        MariaDBBinaryLogSequentialReader(const std::string &basePath, const std::string &indexFile);
-
-    protected:
-        std::unique_ptr<BinaryLogReaderBase> openBinaryLog(const std::string &logFile) override;
-    };
-    
-    class MySQLBinaryLogSequentialReader: public BinaryLogSequentialReader {
-    public:
-        MySQLBinaryLogSequentialReader(const std::string &basePath, const std::string &indexFile);
-
-    protected:
-        std::unique_ptr<BinaryLogReaderBase> openBinaryLog(const std::string &logFile) override;
     };
 }
 

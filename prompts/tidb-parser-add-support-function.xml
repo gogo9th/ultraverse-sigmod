@@ -1,0 +1,257 @@
+<agent-task mode="planning">
+    <objective>
+        # Support `CREATE / DROP FUNCTION` syntax
+
+        - 현재 tidb/parser는 `CREATE FUNCTION` / `DROP FUNCTION` 신택스를 지원하지 않습니다.
+        - 위 신택스를 지원하기 위한 계획을 세워 주십시오.
+        - TiDB는 원래 User Defined Function(UDF)을 저장 프로시저 형태(CREATE FUNCTION)로 지원하지 않아서 문법 자체가 없을 겁니다.
+        - `CREATE / DROP PROCEDURE` 문법 정의를 복사하되, 중간에 `RETURNS type` 을 파싱하는 규칙만 끼워 넣으면 될 것 같아 보입니다.
+    </objective>
+    <stderr>
+        === tidb/parser DROP/CREATE FUNCTION Support Test ===
+
+        ❌ DROP FUNCTION IF EXISTS
+           Error: line 1 column 13 near "FUNCTION IF EXISTS test_func;"
+
+        ✅ DROP PROCEDURE IF EXISTS
+
+        ❌ CREATE FUNCTION basic
+           Error: line 1 column 15 near "FUNCTION test_func(x INT) RETURNS INT
+        BEGIN
+            RETURN x * 2;
+        END;"
+
+        ❌ CREATE FUNCTION with DETERMINISTIC
+           Error: line 1 column 15 near "FUNCTION test_func(x INT) RETURNS INT DETERMINISTIC
+        BEGIN
+            RETURN x * 2;
+        END;"
+
+        ❌ CREATE FUNCTION with NO SQL
+           Error: line 1 column 15 near "FUNCTION test_func(x INT) RETURNS INT NO SQL
+        BEGIN
+            RETURN x * 2;
+        END;"
+
+        ❌ CREATE FUNCTION with READS SQL DATA
+           Error: line 1 column 15 near "FUNCTION get_name(p_id INT) RETURNS VARCHAR(100) READS SQL DATA
+        BEGIN
+            DECLARE v_name VARCHAR(100);
+            SELECT name INTO v_name FROM users WHERE id = p_id;
+            RETURN v_name;
+        END;"
+
+        ❌ CREATE FUNCTION RETURNS FLOAT
+           Error: line 1 column 15 near "FUNCTION RandomNumber(minval INT, maxval INT) RETURNS FLOAT
+        BEGIN
+            RETURN FLOOR(RAND()*(maxval - minval + 1)) + minval;
+        END;"
+
+        ❌ CREATE FUNCTION RETURNS DECIMAL
+           Error: line 1 column 15 near "FUNCTION calc_tax(amount DECIMAL(10,2)) RETURNS DECIMAL(10,2)
+        BEGIN
+            RETURN amount * 0.1;
+        END;"
+
+        === Summary ===
+        Supported: 1 / 8
+        Unsupported: 7 / 8
+    </stderr>
+    <code lang="sql; variant=mysql">
+        //go:build ignore
+
+        package main
+
+        import (
+            "fmt"
+
+            "github.com/pingcap/tidb/pkg/parser"
+            _ "github.com/pingcap/tidb/pkg/types/parser_driver"
+        )
+
+        type TestCase struct {
+            Name string
+            SQL  string
+        }
+
+        func main() {
+            cases := []TestCase{
+                {
+                    Name: "DROP FUNCTION IF EXISTS",
+                    SQL:  `DROP FUNCTION IF EXISTS test_func;`,
+                },
+                {
+                    Name: "DROP PROCEDURE IF EXISTS",
+                    SQL:  `DROP PROCEDURE IF EXISTS test_proc;`,
+                },
+                {
+                    Name: "CREATE FUNCTION basic",
+                    SQL: `CREATE FUNCTION test_func(x INT) RETURNS INT
+        BEGIN
+            RETURN x * 2;
+        END;`,
+                },
+                {
+                    Name: "CREATE FUNCTION with DETERMINISTIC",
+                    SQL: `CREATE FUNCTION test_func(x INT) RETURNS INT DETERMINISTIC
+        BEGIN
+            RETURN x * 2;
+        END;`,
+                },
+                {
+                    Name: "CREATE FUNCTION with NO SQL",
+                    SQL: `CREATE FUNCTION test_func(x INT) RETURNS INT NO SQL
+        BEGIN
+            RETURN x * 2;
+        END;`,
+                },
+                {
+                    Name: "CREATE FUNCTION with READS SQL DATA",
+                    SQL: `CREATE FUNCTION get_name(p_id INT) RETURNS VARCHAR(100) READS SQL DATA
+        BEGIN
+            DECLARE v_name VARCHAR(100);
+            SELECT name INTO v_name FROM users WHERE id = p_id;
+            RETURN v_name;
+        END;`,
+                },
+                {
+                    Name: "CREATE FUNCTION RETURNS FLOAT",
+                    SQL: `CREATE FUNCTION RandomNumber(minval INT, maxval INT) RETURNS FLOAT
+        BEGIN
+            RETURN FLOOR(RAND()*(maxval - minval + 1)) + minval;
+        END;`,
+                },
+                {
+                    Name: "CREATE FUNCTION RETURNS DECIMAL",
+                    SQL: `CREATE FUNCTION calc_tax(amount DECIMAL(10,2)) RETURNS DECIMAL(10,2)
+        BEGIN
+            RETURN amount * 0.1;
+        END;`,
+                },
+            }
+
+            p := parser.New()
+
+            fmt.Println("=== tidb/parser DROP/CREATE FUNCTION Support Test ===")
+            fmt.Println()
+
+            supported := 0
+            unsupported := 0
+
+            for _, tc := range cases {
+                _, _, err := p.Parse(tc.SQL, "", "")
+                if err != nil {
+                    fmt.Printf("❌ %s\n", tc.Name)
+                    fmt.Printf("   Error: %v\n\n", err)
+                    unsupported++
+                } else {
+                    fmt.Printf("✅ %s\n\n", tc.Name)
+                    supported++
+                }
+            }
+
+            fmt.Println("=== Summary ===")
+            fmt.Printf("Supported: %d / %d\n", supported, len(cases))
+            fmt.Printf("Unsupported: %d / %d\n", unsupported, len(cases))
+        }
+    </code>
+    <hint source="claude-code (claude-opus-4-5-20251101)">
+        (아래는 SELECT INTO 지원 시의 대화 내역입니다. 참고용으로만 사용하십시오)
+        ⏺ 형아, SELECT INTO 구문이 실패하고 있어:
+
+        testing SELECT score INTO game_score FROM game_records WHERE user_id = 1; ... FAIL
+        parser error: line 1 column 28 near "game_score FROM game_records WHERE user_id = 1;"
+
+        TiDB 파서가 MySQL 프로시저 스타일의 SELECT ... INTO variable 구문을 지원하지 않는 것 같아. TiDB는 SELECT ... INTO OUTFILE/DUMPFILE은 지원하지만, 변수 할당 구문은 지원하지 않는 것 같아.
+
+        계획서에서 "TiDB 파서가 SELECT INTO 지원"이라고 했는데, 어떻게 진행할까?
+
+        1. TiDB 파서 포크에 SELECT INTO 지원 추가 - 파서 문법 수정 필요
+        2. 기존 방식 유지 - ult_sanitize_select_into로 INTO 부분을 제거하고, extract_select_into로 변수 정보 추출해서 into_variables 필드에 채우기
+        3. 다른 방안이 있으면 알려줘
+
+        ❯ 1. 일단 포크해서 INTO를 지원할 수 있도록 하는 버전을 만들어올게. 그런데, 포크한 버전은 go에서 어떻게 설치하지? 그냥 github username/repo 형식이면 그것만 바꾸면 되는건가?
+        ❯ 혹시 tidb/parser에서 어느 파일 만져야 하는지만 알려줄 수 있어?
+
+        ⏺ 응! TiDB 파서에서 SELECT INTO 변수 할당을 추가하려면 이 파일들을 봐야 해:
+
+        ⏺ Bash(ls -la /Users/cheesekun/go/pkg/mod/github.com/pingcap/tidb/pkg/parser@v0.0.0-20260121072752-93c65e2234ad/)
+        ⎿  total 17936
+        dr-xr-xr-x@ 48 cheesekun  staff     1536  1월 21 17:00 .
+        drwxr-xr-x@  3 cheesekun  staff       96  1월 21 17:00 ..
+        … +46 lines (ctrl+o to expand)
+
+        ⏺ 주요 파일들:
+
+        1. parser.y - yacc 문법 파일 (가장 중요!)
+        2. ast/dml.go - SelectStmt 구조체 정의
+        3. parser.go - parser.y에서 자동 생성됨 (직접 수정 X)
+
+        parser.y에서 SELECT 문법 부분을 찾아볼게:
+
+        ⏺ Bash(grep -n "SelectStmt\|SelectInto\|INTO" /Users/cheesekun/go/pkg/mod/github.com/pingcap/tidb/pkg/parser@v0.0.0-20260121072752-93c65e2234ad/parser.y | head -50)
+        ⎿  178:       into              "INTO"
+        1043:      InsertIntoStmt             "INSERT INTO statement"
+        1045:      ImportIntoStmt             "IMPORT INTO statement"
+        … +47 lines (ctrl+o to expand)
+
+        ⏺ Bash(grep -n -A 20 "SelectStmtIntoOption:" /Users/cheesekun/go/pkg/mod/github.com/pingcap/tidb/pkg/parser@v0.0.0-20260121072752-93c65e2234ad/parser.y)
+        ⎿  10567:SelectStmtIntoOption:
+        10568-     {
+        10569-             $$ = nil
+        … +18 lines (ctrl+o to expand)
+
+        ⏺ 찾았어! 수정해야 할 파일들:
+
+        1. parser.y (문법 파일)
+
+        10567번 줄 근처의 SelectStmtIntoOption: 규칙에 변수 할당 케이스 추가:
+
+        SelectStmtIntoOption:
+        {
+        $$ = nil
+        }
+        |     "INTO" "OUTFILE" stringLit Fields Lines
+        {
+        // ... 기존 OUTFILE 코드 ...
+        }
+        |     "INTO" VariableList      // <-- 이거 추가!
+        {
+        // 변수 목록을 저장하는 로직
+        }
+
+        2. ast/dml.go (AST 정의)
+
+        SelectStmt 구조체에 변수 목록 필드 추가하거나, SelectIntoOption 확장:
+
+        // SelectStmt에 추가
+        type SelectStmt struct {
+        // ... 기존 필드들 ...
+        IntoVariables []*VariableExpr  // <-- 추가
+        }
+
+        또는 SelectIntoOption에:
+        type SelectIntoOption struct {
+        Tp         SelectIntoType
+        FileName   string
+        FieldsInfo *FieldsClause
+        LinesInfo  *LinesClause
+        Variables  []*VariableExpr  // <-- 추가
+        }
+
+        3. 빌드
+
+        수정 후 make 하면 parser.y → parser.go 자동 생성돼.
+
+        ---
+        참고로 MySQL의 SELECT INTO 변수 문법은:
+        SELECT col1, col2 INTO @var1, @var2 FROM table;
+        SELECT col1, col2 INTO var1, var2 FROM table;  -- 프로시저 내부
+
+        포크 작업 시 VariableList 문법 규칙도 확인해봐! (parser.y에서 Variable: 검색)
+    </hint>
+    <agent-rule>
+        - **Harmony (和) is important; be harmonious**: AI-generated code is generally not welcomed. Please respect the existing code conventions as much as possible to ensure your code harmonizes with the work of other TiDB contributors.
+        - 테스트는 'sh test.sh'를 통해 돌리십시오.
+    </agent-rule>
+</agent-task>

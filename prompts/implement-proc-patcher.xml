@@ -1,0 +1,118 @@
+<agent-task mode="planning">
+    <objective partial="true">
+        # `procpatcher` 툴을 Go로 구현한다
+
+        ## 배경
+        - MySQL 바이너리 로그 (ROW 포맷)에서는 프로시저 콜에 대한 정보가 포함되지 않습니다.
+        - `procpatcher` 툴은, MySQL 스토어드 프로시저의 소스 코드를 패치하여 바이너리 로그에 프로시저 콜 정보를 강제로 추가시킵니다.
+
+        ## BUT HOW?
+        - `procpatcher` 툴은 다음과 같이 동작합니다. 예시를 위한 샘플 프로시저 코드를 봅시다:
+    </objective>
+    <code reference="before" name="lucky_chance.orig.sql" lang="sql; variant=mysql">
+        DELIMITER $$
+
+        CREATE PROCEDURE lucky_chance(IN p_user_id INT)
+        BEGIN
+            DECLARE v_random_val INT;
+
+            -- 1부터 10 사이의 랜덤 정수 생성
+            -- RAND()는 0 <= v < 1.0, * 10 하면 0~9.xxx, FLOOR 후 +1 하면 1~10
+            SET v_random_val = FLOOR(1 + RAND() * 10);
+
+            -- 랜덤 값이 7인 경우에만 잔액 10,000원 추가
+            IF v_random_val = 7 THEN
+                UPDATE accounts
+                SET balance = balance + 10000
+                WHERE user_id = p_user_id;
+
+                SELECT CONCAT('Lucky! You rolled a 7. Balance updated for User ', p_user_id) AS result;
+            ELSE
+                SELECT CONCAT('Sorry, you rolled a ', v_random_val, '. No luck this time.') AS result;
+            END IF;
+        END $$
+
+        DELIMITER ;
+    </code>
+    <code reference="helper" name="__ultraverse__helper.sql" lang="sql; variant=mysql">
+        DROP TABLE IF EXISTS __ULTRAVERSE_PROCEDURE_HINT;
+
+        -- 여기서 마법이 일어납니다!
+        -- BLACKHOLE 엔진을 사용하여 실제로는 데이터가 저장되지 않지만, call info는 바이너리 로그에 기록됩니다!
+        CREATE TABLE __ULTRAVERSE_PROCEDURE_HINT(
+            callid   BIGINT UNSIGNED PRIMARY KEY,
+            procname VARCHAR(255)  NOT NULL,
+            args     VARCHAR(4096) DEFAULT NULL,
+            vars     VARCHAR(4096) DEFAULT NULL
+        ) ENGINE = BLACKHOLE;
+    </code>
+    <code reference="patched" lang="sql; variant=mysql">
+        DELIMITER $$
+
+        CREATE PROCEDURE lucky_chance(IN p_user_id INT)
+        BEGIN
+            DECLARE v_random_val INT;
+
+            -- 1부터 10 사이의 랜덤 정수 생성
+            -- RAND()는 0 <= v < 1.0, * 10 하면 0~9.xxx, FLOOR 후 +1 하면 1~10
+            SET v_random_val = FLOOR(1 + RAND() * 10);
+
+            -- 랜덤 값이 7인 경우에만 잔액 10,000원 추가
+            IF v_random_val = 7 THEN
+                UPDATE accounts
+                SET balance = balance + 10000
+                WHERE user_id = p_user_id;
+
+                SELECT CONCAT('Lucky! You rolled a 7. Balance updated for User ', p_user_id) AS result;
+            ELSE
+                SELECT CONCAT('Sorry, you rolled a ', v_random_val, '. No luck this time.') AS result;
+            END IF;
+
+            INSERT INTO
+                __ULTRAVERSE_PROCEDURE_HINT (callid, procname, args, vars)
+            VALUES (
+                UUID_SHORT(),   -- 식별용 넘버
+                'lucky_chance', -- 프로시저 네임
+                JSON_OBJECT(    -- 파라미터 정보 (nullable)
+                    'p_user_id', p_user_id
+                ),
+                JSON_OBJECT(    -- 로컬 변수 정보 (nullable)
+                    'v_random_val', v_random_val
+                )
+            );
+        END $$
+
+        DELIMITER ;
+    </code>
+    <objective partial="true">
+        - 이런 식으로, 프로시저의 끝 부분이나 종료 직전에 `__ULTRAVERSE_PROCEDURE_HINT` 테이블에 프로시저 호출 정보를 삽입합니다.
+        - `procpatcher` 툴은 주어진 SQL 파일을 파싱하여, 각 프로시저에 대해 위와 같은 삽입 작업을 수행합니다.
+
+        ## SPECS
+        - Go 언어로 구현합니다. (중요)
+            - 왜냐하면, MySQL 호환 파서인 tidb/parser를 사용해야 하기 때문입니다.
+        - tidb/parser 라이브러리를 사용하여 SQL 파일을 파싱하고 AST를 조작합니다.
+        - 각 프로시저의 AST를 찾아, 프로시저의 끝이나 각 조기 종료 (LEAVE, SIGNAL, RESIGNAL) 직전에 `INSERT INTO __ULTRAVERSE_PROCEDURE_HINT ...` 구문을 삽입합니다.
+            - 이 구문에서는 해당 컨텍스트에서 액세스 가능한 모든 파라미터, 알려진 변수들을 JSON에 덤프해 내어야만 합니다.
+                - 가능하다면 중첩된 BEGIN...END 블록을 고려하고, **삽입 지점에서 유효한 (액세스 가능한) 변수만** JSON_OBJECT에 포함하십시오.
+        - 수정된 AST를 다시 SQL 코드로 변환하여 출력합니다.
+
+        - CLI 인터페이스를 제공합니다. 입력 SQL 파일 경로와 출력 SQL 파일 경로를 인자로 받습니다. (단, 출력은 optional)
+            - 출력 경로가 제공되지 않으면, 수정된 SQL 코드를 표준 출력으로 출력합니다.
+        - 또한, 블랙홀 테이블을 만들기 위한 `__ultraverse__helper.sql` 파일도 함께 생성합니다.
+            - 출력 파일이 지정된 경우, 출력 파일과 같은 디렉토리에 생성합니다.
+            - 출력 파일이 지정되지 않은 경우 (stdout), 현재 작업 디렉토리에 생성합니다.
+
+        ## 재패치 방지 (Idempotency)
+        - 이미 패치된 프로시저를 다시 패치하면 INSERT 문이 중복으로 삽입될 수 있습니다.
+        - 프로시저 본문에 `__ULTRAVERSE_PROCEDURE_HINT`에 대한 INSERT 문이 이미 존재하는 경우:
+            - 해당 프로시저는 스킵하고, 표준 에러에 경고 메시지를 출력합니다.
+            - 다른 프로시저는 정상적으로 패치합니다.
+
+        ## IMPORTANT NOTE
+        - tidb/parser는 MySQL 호환 파서입니다. 그치만, 'MySQL CLI' 호환 파서는 아닙니다.
+        - 즉, `DELIMITER [charseq]` 구문을 인식하지 못합니다.
+
+        - 프로시저 패치 시, 임시로 DELIMITER 구문을 제거하고 패치 작업을 수행한 뒤, 다시 DELIMITER 구문을 복원하는 방식을 사용해야 합니다.
+    </objective>
+</agent-task>

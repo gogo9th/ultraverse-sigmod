@@ -1,0 +1,174 @@
+<agent-task>
+    <context name="audit-result">
+        # statelogd 코드 검토 결과
+
+        - **High** 체크포인트 복구 경로가 실질적으로 깨져 있습니다: `pos`가 미초기화 상태로 `seek`에 사용되고, `_gid`/상태 역직렬화가 주석 처리되어 `-r` 동작이 로그 연속성을 깨뜨릴 수 있습니다. `src/statelogd.cpp:214` `src/statelogd.cpp:239` `src/statelogd.cpp:798`
+        - **Medium** ultraverse.md 관점의 성능/기능 공백이 있습니다: Hash‑Jumper 테이블 해시가 갱신·기록되지 않고, 클러스터 키 선택(Choice Rule) 대신 `-k` 입력에 의존하며, `-c` threadnum도 실제로 쓰이지 않아 처리량이 제한됩니다. `src/statelogd.cpp:22` `src/statelogd.cpp:112` `src/statelogd.cpp:69` `src/statelogd.cpp:136` `src/statelogd.cpp:975`
+    </context>
+    <code name="statelogd.cpp" partial="true" range=":85~:105" lang="cpp">
+        if (isArgSet('h')) {
+            std::cout <<
+            "statelogd - state-logging daemon\n"
+            "\n"
+            "Options: \n"
+            "    -b file        specify binlog.index file\n"
+            "    -o file        specify log output name\n"
+            "    -p file        use procedure log to append additional queries (SELECT ...)\n"
+            "    -k columns     key columns (eg. user.id,article.id or orders.user_id+orders.item_id)\n"
+            "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
+            "    -r file        restore state and resume from given .ultchkpoint file\n"
+            "    -d             force discard previous log and start over\n"
+            "    -G             print processed transactions with GIDs\n"
+            "    -Q             print query statements for processed transactions\n"
+            "    -n             do not read binlog.index continuously (quit after reaching EOF)\n"
+            "    -v             set logger level to DEBUG\n"
+            "    -V             set logger level to TRACE\n"
+            "    -h             print this help and exit application\n";
+
+            return 0;
+        }
+    </code>
+    <objective>
+        # statelogd와 db_state_change의 '옵션 지옥'을 리팩터링한다
+
+        - statelogd와 db_state_change의 명령줄 인자는 말 그대로 "지옥"입니다. 너무 많은 옵션이 난잡하게 얽혀 있어 사용도 어렵고, 유지 보수마저도 어렵습니다.
+
+        ## 그럼 무엇으로?
+        - 'JSON 설정 파일'을 도입합니다. statelogd / db_state_change가 시작될 때, JSON 파일의 경로를 인자로 받아 해당 파일을 읽어 설정을 로드하도록 합니다. (아래 스키마 정의 참조)
+        - statelogd의 옵션은 3개만 제공합니다:
+            - `-c [ultraverse.json]`: 설정 파일 경로
+            - `-h`: 도움말 출력
+            - `-v / -V`: debug / trace 출력 활성화
+
+        - db_state_change의 usage는 아래와 같이 변경합니다:
+            `db_state_change [--gid-range startgid...endgid] [--skip-gids skip_gid1,skip_gid2,...] [--dry-run] ULTRAVERSE_CONFIG_JSON ACTION`
+
+            - `--gid-range [startgid...endgid]`: 처리할 GID 범위 (optional)
+                - -1인 경우 미지정으로 처리 (1...-1, -1...99 등)
+            - `--skip-gids [gids]`: 건너뛸 GID 목록
+            - `--dry-run`: dry-run
+            - `ULTRAVERSE_CONFIG_JSON`: 설정 파일 경로
+            - `ACTION`: 수행할 작업 (기존과 동일)
+            - `-h`: 도움말 출력
+            - `-v / -V`: debug / trace 출력 활성화
+
+            - 환경 변수:
+                - `ULTRAVERSE_REPORT_NAME`: 보고서 이름 지정 (미지정 시 statechange_{action}_YYYYMMDD_HHMMSS 형식 사용)
+        ## 예상 작업
+        - statelogd / db_state_change에서 사용할 공통 설정 구조체 / 파서 코드 정의
+        - JSON 설정 파일 로드 및 파싱 코드 추가
+        - 기존 명령줄 인자 파싱 코드 중 미사용 부분 제거
+        - 기종 명령줄 인자 파싱 코드의 보완
+
+    </objective>
+    <code name="json-schema" lang="text/pseudocode; variant=typescript">
+        const DEVELOPMENT_FLAGS = [
+            // print processed transactions with GIDs (-G)
+            "com.ultraverse.statelogd.dev-flags.print-processed-txn-gids",
+            // print query statements for processed transactions (-Q)
+            "com.ultraverse.statelogd.dev-flags.print-query-statements",
+        ] as const;
+
+        type UltraverseConfig = {
+            /**
+             * MySQL binary log의 기반 경로를 지정합니다. (-b: path)
+             *
+             * - 모든 바이너리 로그는 이 위치로부터 참조됩니다.
+             *
+             * @example "/var/lib/mysql/"
+             */
+            binlogPath: string;
+
+            /**
+             * MySQL binary log 인덱스 파일의 이름을 지정합니다. (-b: filename)
+             *
+             * @example "mysql-bin.index"
+             */
+            binlogIndexName: string;
+
+            /**
+             * Ultraverse의 state log의 저장 경로를 지정합니다. (-o: path)
+             *
+             * - Ultraverse의 모든 상태 전환 관련 부수 데이터는 이 경로에 저장됩니다.
+             *
+             * @example "/var/lib/ultraverse/statelog/"
+             */
+            stateLogPath: string;
+
+            /**
+             * Ultraverse의 state log의 이름을 지정합니다. (-o: filename)
+             *
+             * @example "tpcc"
+             */
+            stateLogName: string;
+
+            /**
+             * 키 컬럼을 설정합니다.
+             *
+             * @example ["table_a.column1", "table_b.column2", "table_c.column3"]
+             * @example ["users.id", "orders.user_id+orders.item_id"]
+             */
+            keyColumns: string[];
+
+            /**
+             * column aliases (e.g. user.name => user.id ...)
+             */
+            columnAliases: Record<string, string[]>;
+
+            /**
+             * statelogd 전용 설정
+             */
+            statelogd: {
+                /**
+                 * 병렬 처리에 사용할 스레드 수를 지정합니다. (-C: thread_count)
+                 *
+                 * - 미지정 시 std::thread::hardware_concurrency() 값을 사용합니다.
+                 */
+                threadCount?: number;
+
+                /**
+                 * binlog를 poll하지 않습니다.
+                 * index에 명시된 마지막 binlog까지만 처리하고 프로그램을 종료합니다. (-n)
+                 */
+                oneshotMode?: boolean;
+
+                /**
+                 * 개발자용 플래그 목록입니다.
+                 */
+                developmentFlags?: typeof DEVELOPMENT_FLAGS;
+            },
+
+            db_state_change: {
+                /**
+                 * 병렬 처리에 사용할 스레드 수를 지정합니다. (-C: thread_count)
+                 *
+                 * - 미지정 시 std::thread::hardware_concurrency() 값을 사용합니다.
+                 */
+                threadCount?: number;
+
+                backup_sqlfile?: string;
+
+                database: {
+                    host: string;
+                    port: number;
+                    name: string;
+                    username: string;
+                    password: string;
+                }
+
+                /**
+                 * @default false
+                 */
+                keepIntermediateDatabase?: boolean;
+
+                // range comparison method (default = intersect)
+                range_comp_method: 'intersect' | 'eqonly';
+            },
+        }
+    </code>
+    <rules>
+        - 실제 구현 단계에서는 @codex-delegate 에게 구현을 위임한다.
+        - 모든 태스크를 한번에 위임하지 않고, 하나씩 하나씩 위임한다.
+        - Codex CLI 실행 시 반드시 cwd는 repo root여야 한다.
+    </rules>
+</agent-task>

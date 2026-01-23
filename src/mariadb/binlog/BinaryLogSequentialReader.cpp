@@ -4,8 +4,7 @@
 
 #include "BinaryLogSequentialReader.hpp"
 
-#include "MariaDBBinaryLogReader.hpp"
-#include "MySQLBinaryLogReader.hpp"
+#include "MySQLBinaryLogReaderV2.hpp"
 
 namespace ultraverse::mariadb {
     BinaryLogSequentialReader::BinaryLogSequentialReader(const std::string &basePath, const std::string &indexFile):
@@ -17,6 +16,10 @@ namespace ultraverse::mariadb {
         _currentIndex(0),
         _isPollDisabled(false)
     {
+        updateIndex();
+        if (!_logFileList.empty()) {
+            seek(_currentIndex, 4);
+        }
     }
     
     bool BinaryLogSequentialReader::seek(int index, int64_t position) {
@@ -29,7 +32,7 @@ namespace ultraverse::mariadb {
     }
     
     bool BinaryLogSequentialReader::next() {
-        while (!terminateSignal) {
+        while (!terminateSignal.load(std::memory_order_acquire)) {
             if (_binaryLogReader == nullptr) {
                 return false;
             }
@@ -118,35 +121,15 @@ namespace ultraverse::mariadb {
     }
     
     void BinaryLogSequentialReader::terminate() {
-        terminateSignal = true;
+        terminateSignal.store(true, std::memory_order_release);
     }
 
     int BinaryLogSequentialReader::logFileListSize() {
         return _logFileList.size();
     }
     
-    MariaDBBinaryLogSequentialReader::MariaDBBinaryLogSequentialReader(const std::string &basePath,
-                                                                       const std::string &indexFile)
-        : BinaryLogSequentialReader(basePath, indexFile)
-    {
-        updateIndex();
-        seek(_currentIndex, 4);
-    }
-    
-    std::unique_ptr<BinaryLogReaderBase> MariaDBBinaryLogSequentialReader::openBinaryLog(const std::string &logFile) {
-        return std::move(std::make_unique<MariaDBBinaryLogReader>(_basePath + "/" + logFile));
-    }
-    
-    MySQLBinaryLogSequentialReader::MySQLBinaryLogSequentialReader(const std::string &basePath,
-                                                                   const std::string &indexFile)
-        : BinaryLogSequentialReader(basePath, indexFile)
-    {
-        updateIndex();
-        seek(_currentIndex, 4);
-    }
-    
-    std::unique_ptr<BinaryLogReaderBase> MySQLBinaryLogSequentialReader::openBinaryLog(const std::string &logFile) {
-        return std::move(std::make_unique<MySQLBinaryLogReader>(_basePath + "/" + logFile));
+    std::unique_ptr<BinaryLogReaderBase> BinaryLogSequentialReader::openBinaryLog(const std::string &logFile) {
+        return std::make_unique<MySQLBinaryLogReaderV2>(_basePath + "/" + logFile);
     }
     
     

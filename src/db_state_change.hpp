@@ -99,7 +99,7 @@ namespace ultraverse {
         std::vector<std::shared_ptr<Action>> parseActions(std::string expression);
         void describeActions(const std::vector<std::shared_ptr<Action>> &actions);
         
-        std::vector<std::string> buildKeyColumnList(std::string expression);
+        std::vector<std::vector<std::string>> buildKeyColumnGroups(std::string expression);
         std::set<std::pair<std::string, std::string>> buildColumnAliasesList(std::string expression);
         std::vector<uint64_t> buildSkipGidList(std::string gidsStr);
         

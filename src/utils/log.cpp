@@ -5,26 +5,28 @@
 #include "log.hpp"
 
 #include <map>
+#include <mutex>
 
 using LoggerPtr = std::shared_ptr<spdlog::logger>;
 
 inline auto initLoggerSink() {
-    auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_st>();
+    auto sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
     sink->set_level(spdlog::level::trace);
     
     return sink;
 }
 
-std::shared_ptr<spdlog::sinks::stderr_color_sink_st> loggerSink = initLoggerSink();
+std::shared_ptr<spdlog::sinks::stderr_color_sink_mt> loggerSink = initLoggerSink();
 std::map<std::string, LoggerPtr> loggerMap;
+std::mutex loggerMutex;
 
 LoggerPtr createLogger(const std::string &name) {
+    std::scoped_lock lock(loggerMutex);
+
     if (loggerMap.find(name) == loggerMap.end()) {
         auto logger = std::make_shared<spdlog::logger>(name, loggerSink);
         
-        if (name != "MySQLBinaryLogReader") {
-            logger->set_level(loggerSink->level());
-        }
+        logger->set_level(loggerSink->level());
         loggerMap.emplace(name, std::move(logger));
     }
     
@@ -32,6 +34,7 @@ LoggerPtr createLogger(const std::string &name) {
 }
 
 void setLogLevel(spdlog::level::level_enum level) {
+    std::scoped_lock lock(loggerMutex);
     loggerSink->set_level(level);
     
     for (auto &pair: loggerMap) {

@@ -7,7 +7,9 @@
 ProcCall::ProcCall():
   _callId(0),
   _procName(),
-  _callInfo()
+  _callInfo(),
+  _args(),
+  _vars()
 {
 
 }
@@ -29,6 +31,22 @@ void ProcCall::setCallInfo(const std::string &callInfo) {
   _callInfo = callInfo;
 }
 
+const std::map<std::string, StateData> &ProcCall::args() const {
+  return _args;
+}
+
+const std::map<std::string, StateData> &ProcCall::vars() const {
+  return _vars;
+}
+
+void ProcCall::setArgs(const std::map<std::string, StateData> &args) {
+  _args = args;
+}
+
+void ProcCall::setVars(const std::map<std::string, StateData> &vars) {
+  _vars = vars;
+}
+
 void ProcCall::setProcName(const std::string &procName) {
   _procName = procName;
 }
@@ -36,27 +54,44 @@ std::vector<std::string> &ProcCall::statements() {
   return _statements;
 }
 
-std::vector<StateData> &ProcCall::parameters() {
-    return _parameters;
-}
-
-void ProcCall::setParameters(const std::vector<StateData> &parameters) {
-    _parameters = parameters;
-}
-
 std::vector<StateItem> ProcCall::buildItemSet(const ultraverse::state::v2::ProcMatcher &procMatcher) const {
     std::vector<StateItem> itemSet;
-    
-    if (procMatcher.parameters().size() != _parameters.size()) {
-        return itemSet;
-    }
-    
-    for (int i = 0; i < _parameters.size(); i++) {
-        const auto &name = procMatcher.parameters()[i];
-        const auto &value = _parameters[i];
-        
-        itemSet.emplace_back(StateItem::EQ(name, value));
+
+    for (const auto &name : procMatcher.parameters()) {
+        const auto direction = procMatcher.parameterDirection(name);
+        if (direction == ultraverse::state::v2::ProcMatcher::ParamDirection::OUT) {
+            continue;
+        }
+        auto it = _args.find(name);
+        if (it == _args.end()) {
+            continue;
+        }
+        itemSet.emplace_back(StateItem::EQ(name, it->second));
     }
    
     return itemSet;
+}
+
+std::map<std::string, StateData> ProcCall::buildInitialVariables(
+    const ultraverse::state::v2::ProcMatcher &procMatcher
+) const {
+    std::map<std::string, StateData> variables;
+
+    for (const auto &name : procMatcher.parameters()) {
+        const auto direction = procMatcher.parameterDirection(name);
+        if (direction == ultraverse::state::v2::ProcMatcher::ParamDirection::OUT) {
+            continue;
+        }
+        auto it = _args.find(name);
+        if (it == _args.end()) {
+            continue;
+        }
+        variables.emplace(name, it->second);
+    }
+
+    for (const auto &entry : _vars) {
+        variables.emplace(entry.first, entry.second);
+    }
+    
+    return variables;
 }

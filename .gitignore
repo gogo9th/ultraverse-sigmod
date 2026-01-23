@@ -66,3 +66,5 @@ build/
 *.un~
 
 .idea/
+
+/mysql-server

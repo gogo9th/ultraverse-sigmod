@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import signal
@@ -49,6 +50,84 @@ class BenchmarkSession:
 
         signal.signal(signal.SIGINT, sigint_handler)
 
+    @staticmethod
+    def report_name_from_stdout(stdout_name: str) -> str:
+        if stdout_name.endswith(".stdout"):
+            return f"{stdout_name[:-7]}.report.json"
+        return f"{stdout_name}.report.json"
+
+    def _config_path(self) -> str:
+        return f"{self.session_path}/ultraverse.json"
+
+    def _generate_config(
+        self,
+        key_columns: list[str],
+        backup_file: str = "dbdump.sql",
+        column_aliases: dict[str, list[str]] | None = None,
+        development_flags: list[str] | None = None,
+    ) -> dict:
+        if column_aliases is None:
+            column_aliases = {}
+        if development_flags is None:
+            development_flags = []
+
+        return {
+            "binlog": {"path": ".", "indexName": "server-binlog.index"},
+            "stateLog": {"path": ".", "name": "benchbase"},
+            "keyColumns": key_columns,
+            "columnAliases": column_aliases,
+            "database": {
+                "host": os.environ.get("DB_HOST", "127.0.0.1"),
+                "port": int(os.environ.get("DB_PORT", "3306")),
+                "name": "benchbase",
+                "username": os.environ.get("DB_USER", "admin"),
+                "password": os.environ.get("DB_PASS", "password"),
+            },
+            "statelogd": {
+                "threadCount": 0,
+                "oneshotMode": True,
+                "procedureLogPath": "",
+                "developmentFlags": development_flags,
+            },
+            "stateChange": {
+                "threadCount": 0,
+                "backupFile": backup_file,
+                "keepIntermediateDatabase": False,
+                "rangeComparisonMethod": "eqonly",
+            },
+        }
+
+    def _write_config(self, config: dict) -> None:
+        with open(self._config_path(), "w") as f:
+            json.dump(config, f, indent=2)
+
+    def _read_config(self) -> dict:
+        with open(self._config_path(), "r") as f:
+            return json.load(f)
+
+    def update_config(
+        self,
+        key_columns: list[str] | None = None,
+        backup_file: str | None = None,
+        column_aliases: dict[str, list[str]] | None = None,
+        development_flags: list[str] | None = None,
+        keep_intermediate_database: bool | None = None,
+    ) -> None:
+        config = self._read_config()
+
+        if key_columns is not None:
+            config["keyColumns"] = key_columns
+        if column_aliases is not None:
+            config["columnAliases"] = column_aliases
+        if backup_file is not None:
+            config.setdefault("stateChange", {})["backupFile"] = backup_file
+        if keep_intermediate_database is not None:
+            config.setdefault("stateChange", {})["keepIntermediateDatabase"] = keep_intermediate_database
+        if development_flags is not None:
+            config.setdefault("statelogd", {})["developmentFlags"] = development_flags
+
+        self._write_config(config)
+
     def run_benchbase(self, args: list[str]):
         """
         runs benchbase with the given arguments.
@@ -88,7 +167,7 @@ class BenchmarkSession:
         if retval != 0:
             raise Exception("failed to run benchbase")
 
-    def run_statelogd(self, args: list[str] = []):
+    def run_statelogd(self, key_columns: list[str], development_flags: list[str] = []):
         """
         runs statelogd.
         """
@@ -99,14 +178,16 @@ class BenchmarkSession:
         cwd = os.getcwd()
         os.chdir(self.session_path)
 
+        config = self._generate_config(
+            key_columns=key_columns,
+            development_flags=development_flags,
+        )
+        self._write_config(config)
+
         handle = subprocess.Popen([
             f"{ultraverse_home}/statelogd",
-
-            '-b', 'server-binlog.index',
-            '-o', 'benchbase',
-
-            '-n'
-        ] + args, stderr=subprocess.PIPE)
+            '-c', self._config_path(),
+        ], stderr=subprocess.PIPE)
 
         with open(f"{self.session_path}/statelogd.log", 'w') as f:
             while True:
@@ -114,9 +195,10 @@ class BenchmarkSession:
                 if not line:
                     break
                 print("\33[2K\r", end='')
-                print(line.decode('utf-8').strip(), end='')
+                text = line.decode('utf-8', errors='replace')
+                print(text.strip(), end='')
                 sys.stdout.flush()
-                f.write(line.decode('utf-8'))
+                f.write(text)
 
         print()
 
@@ -128,7 +210,16 @@ class BenchmarkSession:
             raise Exception("failed to run statelogd: process exited with non-zero code " + str(retval))
 
 
-    def run_db_state_change(self, args: list[str], stdout_name: str="db_state_change.stdout", stderr_name: str="db_state_change.stderr", pipe_stdin_file=None):
+    def run_db_state_change(
+        self,
+        action: str,
+        gid_range: tuple[int, int] | None = None,
+        skip_gids: list[int] | None = None,
+        replay_from: int | None = None,
+        dry_run: bool = False,
+        stdout_name: str = "db_state_change.stdout",
+        stderr_name: str = "db_state_change.stderr",
+    ):
         """
         runs db_state_change.
         """
@@ -140,29 +231,45 @@ class BenchmarkSession:
 
         ultraverse_home = os.environ['ULTRAVERSE_HOME']
 
-        self.logger.info("running db_state_change with args: " + " ".join(args))
+        self.logger.info(f"running db_state_change with action: {action}")
 
         cwd = os.getcwd()
         os.chdir(self.session_path)
 
+        config = self._read_config()
+        config.setdefault("stateChange", {})
+        if not config["stateChange"].get("backupFile"):
+            config["stateChange"]["backupFile"] = "dbdump.sql"
+
+        config["stateChange"]["keepIntermediateDatabase"] = "replay" in action
+        self._write_config(config)
+
+        args = []
+        if gid_range is not None:
+            args += ["--gid-range", f"{gid_range[0]}...{gid_range[1]}"]
+        if skip_gids:
+            args += ["--skip-gids", ",".join(map(str, skip_gids))]
+        if replay_from is not None:
+            args += ["--replay-from", str(replay_from)]
+        if dry_run:
+            args.append("--dry-run")
+
+        args += [self._config_path(), action]
+
+        report_name = BenchmarkSession.report_name_from_stdout(stdout_name)
+        env = os.environ.copy()
+        env["ULTRAVERSE_REPORT_NAME"] = f"{self.session_path}/{report_name}"
+
         handle = subprocess.Popen(
             [f"{ultraverse_home}/db_state_change"] + args,
-            stdin=subprocess.PIPE if pipe_stdin_file is not None else subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=env,
         )
 
         set_nonblock_io(handle.stdout)
         set_nonblock_io(handle.stderr)
-
-        if pipe_stdin_file is not None:
-            with open(pipe_stdin_file, 'r') as stdin_f:
-                while True:
-                    line = stdin_f.readline()
-                    if not line:
-                        break
-                    handle.stdin.write(line.encode('utf-8'))
-            handle.stdin.close()
 
         ends_with_newline = False
 

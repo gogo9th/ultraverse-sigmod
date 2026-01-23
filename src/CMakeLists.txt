@@ -1,18 +1,29 @@
 set(CMAKE_CXX_STANDARD 20)
 
-if (APPLE)
-    set(BISON_EXECUTABLE "/opt/homebrew/opt/bison/bin/bison" CACHE PATH "Bison executable")
-endif()
+set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "Use external fmt library" FORCE)
+
+Include(FetchContent)
+
+FetchContent_Declare(
+        fmt
+        GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+        GIT_TAG        12.1.0
+)
+
+FetchContent_Declare(
+        spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG        v1.16.0
+)
+
+FetchContent_MakeAvailable(fmt)
+FetchContent_MakeAvailable(spdlog)
 
 find_package(PkgConfig REQUIRED)
-find_package(BISON 3.0.0 REQUIRED)
-find_package(FLEX REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
 
 # pkg_check_modules(JEMALLOC REQUIRED jemalloc)
-pkg_check_modules(FMT REQUIRED fmt)
-pkg_check_modules(SPDLOG REQUIRED spdlog)
 pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
 
@@ -23,12 +34,15 @@ if (NOT MARIADB_FOUND)
     pkg_check_modules(MARIADB REQUIRED mariadb)
 endif()
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/mysql_binlogevents.cmake)
+
 
 add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-add_compile_options(-march=native -O2)
+# add_compile_options(-march=native -O2)
+add_compile_options()
 
 if (APPLE)
-    add_compile_options(-fexperimental-library "-I/opt/homebrew/opt/llvm/include")
+    add_compile_options(-fexperimental-library)
 endif()
 
 # add_link_options(-fsanitize=leak)
@@ -36,17 +50,16 @@ endif()
 set(ULTRAVERSE_DEPENDENCIES
     ${BOOST_LIBRARIES}
     ${MARIADB_LIBRARIES}
-    ${FMT_LIBRARIES}
-    ${SPDLOG_LIBRARIES}
+    fmt::fmt spdlog::spdlog
     ${Boost_LIBRARIES}
     ${GRAPHVIZ_LIBRARIES}
     
     ${PROTOBUF_LIBRARIES}
     
-    sqlparser
     OpenSSL::SSL
     
     tbb
+    mysql_binlog_event_standalone
 
     ${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp/libultparser/libultparser.so
 )
@@ -64,6 +77,9 @@ set(LIBULTRAVERSE_BASE_SRCS
     utils/log.hpp
     utils/StringUtil.cpp
     utils/StringUtil.hpp
+    
+    config/UltraverseConfig.cpp
+    config/UltraverseConfig.hpp
 
     mariadb/state/new/CombinedIterator.cpp 
     mariadb/state/new/CombinedIterator.hpp
@@ -75,6 +91,8 @@ set(LIBULTRAVERSE_STATE_SRCS
     
     mariadb/state/StateItem.cc
     mariadb/state/StateItem.h
+    mariadb/state/WhereClauseBuilder.cpp
+    mariadb/state/WhereClauseBuilder.hpp
     
     mariadb/state/StateHash.cpp
     mariadb/state/StateHash.hpp
@@ -83,12 +101,17 @@ set(LIBULTRAVERSE_STATE_SRCS
     mariadb/state/new/Query.hpp
     mariadb/state/new/Transaction.cpp
     mariadb/state/new/Transaction.hpp
+    mariadb/state/new/analysis/TaintAnalyzer.cpp
+    mariadb/state/new/analysis/TaintAnalyzer.hpp
     
     mariadb/state/new/StateLogWriter.cpp
     mariadb/state/new/StateLogWriter.hpp
     
     mariadb/state/new/StateLogReader.cpp
     mariadb/state/new/StateLogReader.hpp
+
+    mariadb/state/new/StateIO.cpp
+    mariadb/state/new/StateIO.hpp
     
     mariadb/state/new/cluster/CandidateColumn.hpp
     
@@ -123,10 +146,8 @@ set(LIBULTRAVERSE_MARIADB_SRCS
     mariadb/DBHandle.cpp
     mariadb/DBEvent.cpp
     
-    mariadb/binlog/MariaDBBinaryLogReader.cpp
-    mariadb/binlog/MariaDBBinaryLogReader.hpp
-    mariadb/binlog/MySQLBinaryLogReader.cpp
-    mariadb/binlog/MySQLBinaryLogReader.hpp
+    mariadb/binlog/MySQLBinaryLogReaderV2.cpp
+    mariadb/binlog/MySQLBinaryLogReaderV2.hpp
     mariadb/binlog/BinaryLogEvents.hpp
     mariadb/binlog/BinaryLogReader.hpp
     mariadb/binlog/BinaryLogReader.cpp
@@ -147,11 +168,8 @@ set(ULTRAVERSE_APP_BASE_SRCS
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp)
-include_directories(../dependencies/sql-parser/src)
-include_directories(../dependencies/sql-parser/src/parser)
 include_directories(../dependencies/nlohmann-json/include)
 include_directories(../dependencies/cereal/include)
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/../dependencies/sql-parser)
 include_directories(${Boost_INCLUDE_DIRS})
 include_directories(${PYTHON3_INCLUDE_DIRS})
 
@@ -188,13 +206,12 @@ add_executable(statelogd ${STATELOGD_SRCS})
 add_executable(db_state_change ${DB_STATE_CHANGE_SRCS})
 
 if (APPLE)
-    target_link_options(ultraverse PRIVATE -fexperimental-library "-L/opt/homebrew/lib")
-    target_link_options(state_log_viewer PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
-    target_link_options(statelogd PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
-    target_link_options(db_state_change PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
+    target_link_options(ultraverse PRIVATE -fexperimental-library "-L/opt/homebrew/lib" -fstandalone-debug)
+    target_link_options(state_log_viewer PRIVATE "-L/opt/homebrew/lib" -fexperimental-library -fstandalone-debug)
+    target_link_options(statelogd PRIVATE "-L/opt/homebrew/lib" -fexperimental-library -fstandalone-debug)
+    target_link_options(db_state_change PRIVATE "-L/opt/homebrew/lib" -fexperimental-library -fstandalone-debug)
 endif()
 
 target_link_libraries(state_log_viewer ultraverse ${ULTRAVERSE_DEPENDENCIES})
 target_link_libraries(statelogd ultraverse ${ULTRAVERSE_DEPENDENCIES})
 target_link_libraries(db_state_change ultraverse ${ULTRAVERSE_DEPENDENCIES})
-

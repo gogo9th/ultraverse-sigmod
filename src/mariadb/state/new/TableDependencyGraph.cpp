@@ -58,8 +58,14 @@ namespace ultraverse::state::v2 {
             writeTableSet.insert(table);
         }
         
-        if (readTableSet.empty() || writeTableSet.empty()) {
+        if (writeTableSet.empty()) {
             return false;
+        }
+
+        if (readTableSet.empty()) {
+            // Write-only queries still affect their target tables (e.g., INSERT values, DROP/TRUNCATE).
+            // Model this as dependencies among written tables so they are tracked in the graph.
+            readTableSet = writeTableSet;
         }
         
         for (const auto &fromTable: readTableSet) {
@@ -95,7 +101,7 @@ namespace ultraverse::state::v2 {
     
     bool TableDependencyGraph::hasPeerDependencies(const std::string &tableName) {
         if (_nodeMap.find(tableName) == _nodeMap.end()) {
-            return true;
+            return false;
         }
         
         boost::graph_traits<Graph>::in_edge_iterator ii, iiEnd;
@@ -119,10 +125,16 @@ namespace ultraverse::state::v2 {
     }
     
     bool TableDependencyGraph::isRelated(const std::string &fromTable, const std::string &toTable) {
+        auto fromIt = _nodeMap.find(fromTable);
+        auto toIt = _nodeMap.find(toTable);
+        if (fromIt == _nodeMap.end() || toIt == _nodeMap.end()) {
+            return false;
+        }
+
         boost::graph_traits<Graph>::in_edge_iterator ii, iiEnd, next;
-        boost::tie(ii, iiEnd) = boost::in_edges(_nodeMap.at(toTable), _graph);
+        boost::tie(ii, iiEnd) = boost::in_edges(toIt->second, _graph);
         
-        auto fromTableIndex = _nodeMap.at(fromTable);
+        auto fromTableIndex = fromIt->second;
         
         for (next = ii; ii != iiEnd; ii = next) {
             next++;

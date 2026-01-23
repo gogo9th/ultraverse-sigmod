@@ -5,7 +5,9 @@
 #ifndef ULTRAVERSE_STATECHANGEPLAN_HPP
 #define ULTRAVERSE_STATECHANGEPLAN_HPP
 
+#include <map>
 #include <string>
+#include <vector>
 
 #include "Transaction.hpp"
 #include "RangeComparisonMethod.hpp"
@@ -33,6 +35,10 @@ namespace ultraverse::state::v2 {
         
         gid_t endGid() const;
         void setEndGid(gid_t endGid);
+
+        gid_t replayFromGid() const;
+        void setReplayFromGid(gid_t replayFromGid);
+        bool hasReplayFromGid() const;
     
         std::vector<gid_t> &rollbackGids();
         std::map<gid_t, std::string> &userQueries();
@@ -64,6 +70,9 @@ namespace ultraverse::state::v2 {
         const std::string &reportPath() const;
         void setReportPath(const std::string &reportPath);
 
+        const std::vector<std::string> &replaceQueries() const;
+        void setReplaceQueries(std::vector<std::string> replaceQueries);
+
         bool isFullReplay() const;
         void setFullReplay(bool isFullReplay);
         
@@ -75,6 +84,9 @@ namespace ultraverse::state::v2 {
         
         bool dropIntermediateDB() const;
         void setDropIntermediateDB(bool dropIntermediateDB);
+
+        bool executeReplaceQuery() const;
+        void setExecuteReplaceQuery(bool executeReplaceQuery);
         
         double autoRollbackRatio() const;
         void setAutoRollbackRatio(double autoRollbackRatio);
@@ -86,6 +98,9 @@ namespace ultraverse::state::v2 {
         void setRangeComparisonMethod(RangeComparisonMethod rangeComparisonMethod);
         
         std::set<std::string> &keyColumns();
+        std::vector<std::vector<std::string>> &keyColumnGroups();
+        const std::vector<std::vector<std::string>> &keyColumnGroups() const;
+        void setKeyColumnGroups(std::vector<std::vector<std::string>> keyColumnGroups);
         std::vector<std::pair<std::string, std::string>> &columnAliases();
         const std::vector<std::pair<std::string, std::string>> &columnAliases() const;
         
@@ -101,6 +116,8 @@ namespace ultraverse::state::v2 {
         
         gid_t _startGid;
         gid_t _endGid;
+        gid_t _replayFromGid;
+        bool _hasReplayFromGid;
         
         std::vector<gid_t> _rollbackGids;
         std::map<gid_t, std::string> _userQueries;
@@ -113,8 +130,10 @@ namespace ultraverse::state::v2 {
 
         bool _writeStateLog;
         std::string _reportPath;
+        std::vector<std::string> _replaceQueries;
         
         std::set<std::string> _keyColumns;
+        std::vector<std::vector<std::string>> _keyColumnGroups;
         std::vector<std::pair<std::string, std::string>> _columnAliases;
     
         std::vector<uint64_t> _skipGids;
@@ -124,6 +143,7 @@ namespace ultraverse::state::v2 {
         bool _isFullReplay;
         bool _isDryRun;
         bool _dropIntermediateDB;
+        bool _executeReplaceQuery;
 
         bool _performBenchInsert;
         

@@ -2,10 +2,9 @@
 // Created by cheesekun on 12/7/22.
 //
 
-#include <unistd.h>
-#include <sys/wait.h>
+#include <stdexcept>
 
-#include <fmt/format.h>
+#include <libultparser/libultparser.h>
 
 #include "mariadb/DBEvent.hpp"
 #include "StateChanger.hpp"
@@ -14,43 +13,85 @@
 namespace ultraverse::state::v2 {
     
     std::shared_ptr<Transaction> StateChanger::loadUserQuery(const std::string &path) {
-        std::vector<std::string> queries;
-        
-        std::ifstream stream(path);
-        std::string query;
-        
-        while (std::getline(stream, query, '\n')) {
-            query.erase(
-                std::remove(query.begin(), query.end(), '\r'),
-                query.end()
-            );
-            
-            if (!query.empty()) {
-                queries.push_back(query);
-            }
+        // read entire file
+        std::ifstream ifs(path);
+        if (!ifs.is_open()) {
+            _logger->error("failed to open user query file: {}", path);
+            return nullptr;
         }
-        
-        return std::move(parseUserQuery(queries));
+
+        std::stringstream buffer;
+        buffer << ifs.rdbuf();
+
+        return std::move(parseUserQuery(buffer.str()));
     }
     
-    std::shared_ptr<Transaction> StateChanger::parseUserQuery(const std::vector<std::string> &queries) {
+    std::shared_ptr<Transaction> StateChanger::parseUserQuery(const std::string &sql) {
+        static thread_local uintptr_t s_parser = 0;
+        if (s_parser == 0) {
+            s_parser = ult_sql_parser_create();
+        }
+
+        ultparser::ParseResult parseResult;
+
+        char *parseResultCStr = nullptr;
+        int64_t parseResultCStrSize = ult_sql_parse_new(
+            s_parser,
+            (char *) sql.c_str(),
+            static_cast<int64_t>(sql.size()),
+            &parseResultCStr
+        );
+
+        if (parseResultCStrSize <= 0) {
+            _logger->error("could not parse SQL statement: {}", sql);
+            return nullptr;
+        }
+
+        if (!parseResult.ParseFromArray(parseResultCStr, parseResultCStrSize)) {
+            free(parseResultCStr);
+
+            _logger->error("could not parse SQL statement: {}", sql);
+            return nullptr;
+        }
+        free(parseResultCStr);
+
+        if (parseResult.result() != ultparser::ParseResult::SUCCESS) {
+            _logger->error("parser error: {}", parseResult.error());
+            return nullptr;
+        }
+
+        if (!parseResult.warnings().empty()) {
+            for (const auto &warning: parseResult.warnings()) {
+                _logger->warn("parser warning: {}", warning);
+            }
+        }
+
+        auto &statements = parseResult.statements();
         std::vector<mariadb::QueryEvent> queryEvents;
         auto transaction = std::make_shared<Transaction>();
-        
+
         transaction->setXid(0);
         transaction->setGid(0);
         transaction->setTimestamp(0);
-        
+
         transaction->setFlags(Transaction::FLAG_FORCE_EXECUTE);
-        
-        std::transform(
-            queries.begin(), queries.end(),
-            std::back_inserter(queryEvents),
-            [this] (const std::string &queryString) {
-                return mariadb::QueryEvent(_plan.dbName(), queryString, 0);
+
+        queryEvents.reserve(statements.size());
+        for (const auto &pbStatement : statements) {
+            if (pbStatement.has_dml()) {
+                queryEvents.emplace_back(_plan.dbName(), pbStatement, 0);
+                continue;
             }
-        );
-        
+
+            if (pbStatement.has_ddl()) {
+                _logger->error("DDL statement is not supported yet: {}", pbStatement.ddl().statement());
+                continue;
+            }
+
+            _logger->warn("unsupported statement type in user query: {}", (int) pbStatement.type());
+        }
+
+
         std::vector<std::string> keyColsVec(
             _plan.keyColumns().begin(),
             _plan.keyColumns().end()
@@ -63,16 +104,9 @@ namespace ultraverse::state::v2 {
             query->setDatabase(event.database());
             query->setStatement(event.statement());
             
-            event.tokenize();
-            
             if (!event.isDML()) {
                 _logger->error("DDL statement is not supported yet: {}", event.statement());
                 continue;
-            }
-            
-            if (!event.parse()) {
-                _logger->warn("cannot parse SQL statement: {}", event.statement());
-                event.parseDDL(1);
             }
             
             event.buildRWSet(keyColsVec);
@@ -85,6 +119,14 @@ namespace ultraverse::state::v2 {
                 query->writeSet().end(),
                 event.writeSet().begin(), event.writeSet().end()
             );
+
+            {
+                ColumnSet readColumns;
+                ColumnSet writeColumns;
+                event.columnRWSet(readColumns, writeColumns);
+                query->readColumns().insert(readColumns.begin(), readColumns.end());
+                query->writeColumns().insert(writeColumns.begin(), writeColumns.end());
+            }
             
             *transaction << query;
         }
@@ -94,46 +136,11 @@ namespace ultraverse::state::v2 {
     
     void StateChanger::loadBackup(const std::string &dbName, const std::string &fileName) {
         _logger->info("loading database backup from {}...", fileName);
-        
-        int fd = open(fileName.c_str(), O_RDONLY);
-        if (fd < 0) {
-            throw std::runtime_error("failed to load backup file");
+
+        if (_backupLoader == nullptr) {
+            throw std::runtime_error("backup loader is not configured");
         }
-        
-        auto pid = fork();
-        if (pid == -1) {
-            throw std::runtime_error("failed to fork process");
-        }
-       
-        if (pid == 0) {
-            dup2(fd, STDIN_FILENO);
-            std::string password = "-p" + _plan.dbPassword();
-            int retval = execl(
-                "/usr/bin/mysql",
-                "mysql",
-                "-h", _plan.dbHost().c_str(),
-                "-u", _plan.dbUsername().c_str(),
-                password.c_str(),
-                dbName.c_str(),
-                nullptr
-            );
-            
-            close(fd);
-    
-            if (retval == -1) {
-                throw std::runtime_error(fmt::format("failed to execute mysql: {}", strerror(errno)));
-            }
-        } else {
-            close(fd);
-            
-            int wstatus = 0;
-            waitpid(pid, &wstatus, 0);
-            
-            if (!WIFEXITED(wstatus) || WEXITSTATUS(wstatus) != 0) {
-                throw std::runtime_error(
-                    fmt::format("failed to restore backup: WEXITSTATUS {}", WEXITSTATUS(wstatus))
-                );
-            }
-        }
+
+        _backupLoader->loadBackup(dbName, fileName);
     }
 }

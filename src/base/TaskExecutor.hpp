@@ -22,9 +22,7 @@ public:
     }
     
     ~TaskExecutor() {
-        if (_isRunning) {
-            shutdown();
-        }
+        shutdown();
     }
     
     template <typename T>
@@ -44,7 +42,13 @@ public:
     }
     
     void shutdown() {
-        _isRunning = false;
+        {
+            std::lock_guard lockGuard(_mutex);
+            if (!_isRunning) {
+                return;
+            }
+            _isRunning = false;
+        }
         _condvar.notify_all();
         
         for (auto &worker: _workers) {
@@ -56,18 +60,19 @@ public:
     
 private:
     void workerLoop() {
-        while (_isRunning) {
-            std::unique_lock lock(_mutex);
-            _condvar.wait(lock, [this] { return !_tasks.empty() || !_isRunning; });
-    
-            if (!_isRunning) {
-                return;
+        while (true) {
+            std::function<void()> task;
+            {
+                std::unique_lock lock(_mutex);
+                _condvar.wait(lock, [this] { return !_tasks.empty() || !_isRunning; });
+        
+                if (!_isRunning && _tasks.empty()) {
+                    return;
+                }
+        
+                task = std::move(_tasks.front());
+                _tasks.pop();
             }
-    
-            auto task = std::move(_tasks.front());
-            _tasks.pop();
-            lock.unlock();
-            
             task();
         }
     }

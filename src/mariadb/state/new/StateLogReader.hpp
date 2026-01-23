@@ -8,6 +8,7 @@
 #include <fstream>
 #include <memory>
 
+#include "StateIO.hpp"
 #include "Transaction.hpp"
 
 #include "ColumnDependencyGraph.hpp"
@@ -15,28 +16,32 @@
 #include "cluster/RowCluster.hpp"
 
 namespace ultraverse::state::v2 {
-    class StateLogReader {
+    class GIDIndexReader;
+
+    class StateLogReader: public IStateLogReader {
     public:
         StateLogReader(const std::string &logPath, const std::string &logName);
         ~StateLogReader();
         
-        void open();
-        void close();
+        void open() override;
+        void close() override;
         
-        void reset();
+        void reset() override;
         
-        uint64_t pos();
-        void seek(uint64_t pos);
+        uint64_t pos() override;
+        void seek(uint64_t pos) override;
         
-        bool nextHeader();
-        bool nextTransaction();
+        bool nextHeader() override;
+        bool nextTransaction() override;
         
-        void skipTransaction();
+        void skipTransaction() override;
         
         bool next();
         
-        std::shared_ptr<TransactionHeader> txnHeader();
-        std::shared_ptr<Transaction> txnBody();
+        std::shared_ptr<TransactionHeader> txnHeader() override;
+        std::shared_ptr<Transaction> txnBody() override;
+
+        bool seekGid(gid_t gid) override;
     
         void operator>>(RowCluster &rowCluster);
         void operator>>(ColumnDependencyGraph &graph);
@@ -53,6 +58,8 @@ namespace ultraverse::state::v2 {
         
         std::shared_ptr<TransactionHeader> _currentHeader;
         std::shared_ptr<Transaction> _currentBody;
+
+        std::unique_ptr<GIDIndexReader> _gidIndexReader;
     };
 }
 

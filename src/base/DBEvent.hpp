@@ -10,10 +10,11 @@
 
 #include <string>
 #include <unordered_set>
+#include <set>
+#include <vector>
 
 #include <ultparser_query.pb.h>
 
-#include "SQLParser.h"
 #include "mariadb/state/state_log_hdr.h"
 #include "mariadb/state/StateItem.h"
 
@@ -33,6 +34,10 @@ namespace ultraverse::event_type {
         ROW_EVENT = 20,
         ROW_QUERY = 21,
         TABLE_MAP = 22,
+
+        INTVAR = 30,
+        RAND = 31,
+        USER_VAR = 32,
     };
 }
 
@@ -94,6 +99,7 @@ namespace ultraverse::base {
             DELETE = 4,
             
             // DDL
+            DDL_UNKNOWN = 10,
             CREATE_TABLE = 11,
             ALTER_TABLE = 12,
             DROP_TABLE = 13,
@@ -122,11 +128,6 @@ namespace ultraverse::base {
         virtual const std::string &database() = 0;
         
         /**
-         * @brief tokenize를 시도한다.
-         * @return 실패 시 false를 반환한다.
-         */
-        bool tokenize();
-        /**
          * @brief SQL statement를 파싱 시도한다.
          * @note 이 메소드는 _itemSet, _variableSet, _whereSet, _varMap 을 채운다.
          */
@@ -138,31 +139,11 @@ namespace ultraverse::base {
         void buildRWSet(const std::vector<std::string> &keyColumns);
         
         /**
-         * @deprecated 더 이상 사용되지 않는다.
-         */
-        bool parseSelect();
-        /**
-         * @brief DDL (CREATE TABLE ... 등)을 파싱한다.
-         * @deprecated 더 이상 사용해선 안된다. QueryEventBase::parse()로 통합되어야 한다.
-         */
-        bool parseDDL(int limit = -1);
-        
-        /**
-         * @brief QueryEventBase::tokenize() 의 결과물에 액세스한다.
-         * @return
-         */
-        std::vector<int16_t> tokens() const;
-        /**
-         * @brief QueryEventBase::tokenize() 의 결과물에 액세스한다.
-         */
-        std::vector<size_t> tokenPos() const;
-        
-        /**
-         * @brief DDL 쿼리인지 여부를 반환한다.
+         * @brief DDL 쿼리인지 여부를 반환한다. (parse() 결과 기준)
          */
         bool isDDL() const;
         /**
-         * @brief DML 쿼리인지 여부를 반환한다.
+         * @brief DML 쿼리인지 여부를 반환한다. (parse() 결과 기준)
          */
         bool isDML() const;
         
@@ -180,6 +161,10 @@ namespace ultraverse::base {
          * @brief SQL 변수의 row image를 반환한다.
          */
         std::vector<StateItem> &variableSet();
+
+        QueryType queryType() const;
+
+        void columnRWSet(std::set<std::string> &readColumns, std::set<std::string> &writeColumns) const;
         
     protected:
         LoggerPtr _logger;
@@ -193,22 +178,11 @@ namespace ultraverse::base {
         bool processDelete(const ultparser::DMLQuery &dmlQuery);
         
         bool processWhere(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr);
-        
-        void processRValue(StateItem &item, const ultparser::DMLQueryExpr &right);
+        void processExprForColumns(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr, bool qualifyUnqualified = true);
     private:
-        void extractReadWriteSet(const hsql::InsertStatement *insert);
-        void extractReadWriteSet(const hsql::DeleteStatement *del);
-        void extractReadWriteSet(const hsql::UpdateStatement *update);
-        void extractReadWriteSet(const hsql::SelectStatement *select);
-        
-        void walkExpr(const hsql::Expr *expr, StateItem &parent, std::vector<std::string> &readSet, const std::string &rootTable, bool isRoot);
-        
         StateItem *findStateItem(const std::string &name);
         
         QueryType _queryType;
-        
-        std::vector<int16_t> _tokens;
-        std::vector<size_t> _tokenPos;
         
         std::unordered_set<std::string> _relatedTables;
     
@@ -220,8 +194,6 @@ namespace ultraverse::base {
         std::vector<StateItem> _itemSet;
         std::vector<StateItem> _variableSet;
         std::vector<StateItem> _whereSet;
-        
-        hsql::SQLParserResult _parseResult;
     };
 }
 

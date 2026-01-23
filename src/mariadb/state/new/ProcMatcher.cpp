@@ -2,55 +2,310 @@
 // Created by cheesekun on 3/16/23.
 //
 
-#include <thread>
+#include <cstdint>
+#include <cmath>
+#include <optional>
+#include <cctype>
 
 #include <libultparser/libultparser.h>
 #include <ultparser_query.pb.h>
 
 #include "ProcMatcher.hpp"
-#include "Query.hpp"
-#include "ProcCall.hpp"
 
-#include "mariadb/DBEvent.hpp"
+#include "mariadb/state/WhereClauseBuilder.hpp"
 
 #include "utils/StringUtil.hpp"
 
 
 namespace ultraverse::state::v2 {
-    
-    std::string ProcMatcher::sanitizeSelectInto(const std::string &procedureDefinition) {
-        auto *result = ult_sanitize_select_into((char *) procedureDefinition.c_str());
-        std::string resultStr(result);
-        free(result);
-        
-        return resultStr;
-    }
-    
-    std::string ProcMatcher::normalizeProcedureCode(const std::string &procedureDefinition) {
-        auto *result = ult_normalize_procedure_code((char *) procedureDefinition.c_str());
-        std::string resultStr(result);
-        free(result);
-        
-        return resultStr;
-    }
+
+    namespace {
+        struct ParsedParam {
+            std::string name;
+            ProcMatcher::ParamDirection direction = ProcMatcher::ParamDirection::UNKNOWN;
+        };
+
+        bool isWhitespace(char ch) {
+            return std::isspace(static_cast<unsigned char>(ch)) != 0;
+        }
+
+        std::string trimCopy(const std::string &value) {
+            size_t start = 0;
+            while (start < value.size() && isWhitespace(value[start])) {
+                start++;
+            }
+            if (start == value.size()) {
+                return "";
+            }
+            size_t end = value.size() - 1;
+            while (end > start && isWhitespace(value[end])) {
+                end--;
+            }
+            return value.substr(start, end - start + 1);
+        }
+
+        std::string extractParamName(const std::string &segment, size_t start) {
+            if (start >= segment.size()) {
+                return "";
+            }
+            if (segment[start] == '`') {
+                size_t end = segment.find('`', start + 1);
+                if (end == std::string::npos || end <= start + 1) {
+                    return "";
+                }
+                return segment.substr(start + 1, end - start - 1);
+            }
+            size_t end = start;
+            while (end < segment.size() && !isWhitespace(segment[end])) {
+                end++;
+            }
+            if (end == start) {
+                return "";
+            }
+            return segment.substr(start, end - start);
+        }
+
+        std::vector<ParsedParam> parseProcedureParams(const std::string &definition) {
+            std::vector<ParsedParam> params;
+            if (definition.empty()) {
+                return params;
+            }
+
+            std::string lower = utility::toLower(definition);
+            size_t procPos = lower.find("procedure");
+            if (procPos == std::string::npos) {
+                return params;
+            }
+
+            size_t openPos = lower.find('(', procPos);
+            if (openPos == std::string::npos) {
+                return params;
+            }
+
+            size_t depth = 1;
+            size_t closePos = std::string::npos;
+            for (size_t i = openPos + 1; i < definition.size(); i++) {
+                char ch = definition[i];
+                if (ch == '(') {
+                    depth++;
+                } else if (ch == ')') {
+                    depth--;
+                    if (depth == 0) {
+                        closePos = i;
+                        break;
+                    }
+                }
+            }
+
+            if (closePos == std::string::npos || closePos <= openPos + 1) {
+                return params;
+            }
+
+            std::string paramList = definition.substr(openPos + 1, closePos - openPos - 1);
+            size_t segmentStart = 0;
+            depth = 0;
+            for (size_t i = 0; i <= paramList.size(); i++) {
+                if (i == paramList.size() || (paramList[i] == ',' && depth == 0)) {
+                    std::string segment = trimCopy(paramList.substr(segmentStart, i - segmentStart));
+                    segmentStart = i + 1;
+
+                    if (segment.empty()) {
+                        continue;
+                    }
+
+                    std::string lowerSeg = utility::toLower(segment);
+                    size_t pos = 0;
+                    while (pos < segment.size() && isWhitespace(segment[pos])) {
+                        pos++;
+                    }
+
+                    ProcMatcher::ParamDirection direction = ProcMatcher::ParamDirection::IN;
+                    const auto consumeToken = [&](const std::string &token) -> bool {
+                        if (lowerSeg.compare(pos, token.size(), token) != 0) {
+                            return false;
+                        }
+                        size_t end = pos + token.size();
+                        if (end < lowerSeg.size() && !isWhitespace(lowerSeg[end])) {
+                            return false;
+                        }
+                        pos = end;
+                        return true;
+                    };
+
+                    if (consumeToken("inout")) {
+                        direction = ProcMatcher::ParamDirection::INOUT;
+                    } else if (consumeToken("out")) {
+                        direction = ProcMatcher::ParamDirection::OUT;
+                    } else if (consumeToken("in")) {
+                        direction = ProcMatcher::ParamDirection::IN;
+                    }
+
+                    while (pos < segment.size() && isWhitespace(segment[pos])) {
+                        pos++;
+                    }
+
+                    std::string name = extractParamName(segment, pos);
+                    if (name.empty()) {
+                        continue;
+                    }
+
+                    ParsedParam param;
+                    param.name = std::move(name);
+                    param.direction = direction;
+                    params.push_back(std::move(param));
+                    continue;
+                }
+
+                if (paramList[i] == '(') {
+                    depth++;
+                } else if (paramList[i] == ')') {
+                    if (depth > 0) {
+                        depth--;
+                    }
+                }
+            }
+
+            return params;
+        }
+
+        std::string normalizeVariableName(const std::string& name) {
+            if (name.empty()) {
+                return name;
+            }
+            if (name[0] == '@') {
+                return utility::toLower(name.substr(1));
+            }
+            return utility::toLower(name);
+        }
+
+        // 두 KNOWN StateData에 대해 산술 연산 수행
+        // 지원 타입: INTEGER(int64_t), DOUBLE
+        // 반환: 계산 성공 시 StateData, 실패 시 std::nullopt
+        std::optional<StateData> computeArithmetic(
+            ultparser::DMLQueryExpr::Operator op,
+            const StateData& left,
+            const StateData& right
+        ) {
+            const auto leftType = left.Type();
+            const auto rightType = right.Type();
+
+            const bool leftIsInt = leftType == en_column_data_int || leftType == en_column_data_uint;
+            const bool rightIsInt = rightType == en_column_data_int || rightType == en_column_data_uint;
+            const bool leftIsDouble = leftType == en_column_data_double;
+            const bool rightIsDouble = rightType == en_column_data_double;
+
+            if ((!leftIsInt && !leftIsDouble) || (!rightIsInt && !rightIsDouble)) {
+                return std::nullopt;
+            }
+
+            const bool useDouble = leftIsDouble || rightIsDouble;
+
+            if (useDouble) {
+                double lhs = 0.0;
+                double rhs = 0.0;
+                if (leftIsDouble) {
+                    if (!left.Get(lhs)) {
+                        return std::nullopt;
+                    }
+                } else {
+                    int64_t tmp = 0;
+                    if (!left.Get(tmp)) {
+                        return std::nullopt;
+                    }
+                    lhs = static_cast<double>(tmp);
+                }
+                if (rightIsDouble) {
+                    if (!right.Get(rhs)) {
+                        return std::nullopt;
+                    }
+                } else {
+                    int64_t tmp = 0;
+                    if (!right.Get(tmp)) {
+                        return std::nullopt;
+                    }
+                    rhs = static_cast<double>(tmp);
+                }
+
+                if ((op == ultparser::DMLQueryExpr::DIV || op == ultparser::DMLQueryExpr::MOD) && rhs == 0.0) {
+                    return std::nullopt;
+                }
+
+                double result = 0.0;
+                switch (op) {
+                    case ultparser::DMLQueryExpr::PLUS:
+                        result = lhs + rhs;
+                        break;
+                    case ultparser::DMLQueryExpr::MINUS:
+                        result = lhs - rhs;
+                        break;
+                    case ultparser::DMLQueryExpr::MUL:
+                        result = lhs * rhs;
+                        break;
+                    case ultparser::DMLQueryExpr::DIV:
+                        result = lhs / rhs;
+                        break;
+                    case ultparser::DMLQueryExpr::MOD:
+                        result = std::fmod(lhs, rhs);
+                        break;
+                    default:
+                        return std::nullopt;
+                }
+
+                return StateData(result);
+            }
+
+            int64_t lhs = 0;
+            int64_t rhs = 0;
+            if (!left.Get(lhs) || !right.Get(rhs)) {
+                return std::nullopt;
+            }
+
+            if ((op == ultparser::DMLQueryExpr::DIV || op == ultparser::DMLQueryExpr::MOD) && rhs == 0) {
+                return std::nullopt;
+            }
+
+            int64_t result = 0;
+            switch (op) {
+                case ultparser::DMLQueryExpr::PLUS:
+                    result = lhs + rhs;
+                    break;
+                case ultparser::DMLQueryExpr::MINUS:
+                    result = lhs - rhs;
+                    break;
+                case ultparser::DMLQueryExpr::MUL:
+                    result = lhs * rhs;
+                    break;
+                case ultparser::DMLQueryExpr::DIV:
+                    result = lhs / rhs;
+                    break;
+                case ultparser::DMLQueryExpr::MOD:
+                    result = lhs % rhs;
+                    break;
+                default:
+                    return std::nullopt;
+            }
+
+            return StateData(result);
+        }
+    } // namespace
     
     void ProcMatcher::load(const std::string &procedureDefinition, ProcMatcher &instance) {
         static const auto logger = createLogger("ProcMatcher");
-        int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
+        static thread_local uintptr_t s_parser = 0;
+
+        if (s_parser == 0) {
+            s_parser = ult_sql_parser_create();
+        }
         
-        // normalize 후 sanitize 해야 함
-        // 왜냐하면 SELECT colX
-        //        INTO varX 가
-        // SELECT colX INTO varX 로 바뀌기 때문
-        std::string normalizedDefinition = sanitizeSelectInto(normalizeProcedureCode(procedureDefinition));
-        logger->debug(normalizedDefinition);
+        logger->debug(procedureDefinition);
         ultparser::ParseResult parseResult;
         
         char *parseResultCStr = nullptr;
         
-        int64_t parseResultCStrSize = ult_sql_parse(
-            (char *) normalizedDefinition.c_str(),
-            threadId,
+        int64_t parseResultCStrSize = ult_sql_parse_new(
+            s_parser,
+            (char *) procedureDefinition.c_str(),
+            static_cast<int64_t>(procedureDefinition.size()),
             &parseResultCStr
         );
         
@@ -78,37 +333,45 @@ namespace ultraverse::state::v2 {
         }
         
         {
-            auto &statements = instance._codes;
             const auto &_procedureInfo = parseResult.statements()[0];
             assert(_procedureInfo.type() == ultparser::Query::PROCEDURE);
             
             const auto &procedureInfo = _procedureInfo.procedure();
+            const auto parsedParams = parseProcedureParams(procedureDefinition);
+            std::unordered_map<std::string, ProcMatcher::ParamDirection> parsedDirectionMap;
+            for (const auto &param : parsedParams) {
+                parsedDirectionMap[utility::toLower(param.name)] = param.direction;
+            }
             
             for (const auto &parameter: procedureInfo.parameters()) {
-                instance._parameters.push_back(parameter.name());
+                const auto name = parameter.name();
+                instance._parameters.push_back(name);
+
+                ProcMatcher::ParamDirection direction = ProcMatcher::ParamDirection::IN;
+                if (!parsedDirectionMap.empty()) {
+                    const auto it = parsedDirectionMap.find(utility::toLower(name));
+                    if (it != parsedDirectionMap.end()) {
+                        direction = it->second;
+                    } else {
+                        direction = ProcMatcher::ParamDirection::UNKNOWN;
+                    }
+                }
+                instance._parameterDirections.push_back(direction);
+                instance._parameterDirectionMap[utility::toLower(name)] = direction;
+            }
+
+            for (const auto &variable: procedureInfo.variables()) {
+                LocalVariableDef def;
+                def.name = variable.name();
+                if (variable.has_default_value()) {
+                    def.defaultExpr = variable.default_value();
+                }
+                instance._localVariables.push_back(std::move(def));
             }
          
-            const std::function<void(const google::protobuf::RepeatedPtrField<ultparser::Query> &)> insertStatements = [&statements, &insertStatements](const google::protobuf::RepeatedPtrField<ultparser::Query> &_statements) {
-                for (const auto &_statement: _statements) {
-                    if (_statement.type() == ultparser::Query_QueryType_IF) {
-                        auto &ifBlock = _statement.if_block();
-                        
-                        insertStatements(ifBlock.then_block());
-                        insertStatements(ifBlock.else_block());
-                        
-                        continue;
-                    } else if (_statement.type() == ultparser::Query_QueryType_WHILE) {
-                        auto &whileBlock = _statement.while_block();
-                        
-                        insertStatements(whileBlock.block());
-                        continue;
-                    }
-                    
-                    statements.push_back(std::make_shared<ultparser::Query>(_statement));
-                }
-            };
-            
-            insertStatements(procedureInfo.statements());
+            for (const auto &statement: procedureInfo.statements()) {
+                instance._codes.push_back(std::make_shared<ultparser::Query>(statement));
+            }
         }
         
         return;
@@ -153,47 +416,10 @@ namespace ultraverse::state::v2 {
         return std::move(columns);
     }
     
-    std::vector<std::unordered_map<std::string, std::string>>
-    ProcMatcher::extractVariableAssignments(const std::string &procedureDefinition) {
-        char *resultCStr = nullptr;
-        int size = ult_extract_select_info((char *) procedureDefinition.c_str(), &resultCStr);
-        
-        if (size <= 0 || resultCStr == nullptr) {
-            goto FAILURE;
-        }
-        
-        {
-            std::vector<std::unordered_map<std::string, std::string>> assignments_list;
-            ultparser::SelectIntoExtractionResult results;
-            if (!results.ParseFromArray(resultCStr, size)) {
-                free(resultCStr);
-                goto FAILURE;
-            }
-            
-            free(resultCStr);
-            
-            for (const auto &result: results.results()) {
-                std::unordered_map<std::string, std::string> assignments;
-                
-                for (const auto &assignment: result.assignments()) {
-                    assignments[assignment.first] = assignment.second;
-                }
-                
-                assignments_list.push_back(std::move(assignments));
-            }
-            
-            return std::move(assignments_list);
-        }
-        
-        FAILURE:
-        return {};
-    }
-    
     ProcMatcher::ProcMatcher(const std::string &procedureDefinition):
         _logger(createLogger("ProcMatcher")),
         _definition(procedureDefinition),
-        _codes(),
-        _variableAssignments(extractVariableAssignments(procedureDefinition))
+        _codes()
     {
         load(procedureDefinition, *this);
         extractRWSets();
@@ -210,11 +436,11 @@ namespace ultraverse::state::v2 {
     }
     
     void ProcMatcher::extractRWSets(const ultparser::Query &statement) {
-        static const auto insertReadSet = [this](std::unordered_set<std::string> readSet) {
+        const auto insertReadSet = [this](std::unordered_set<std::string> readSet) {
             _readSet.insert(readSet.begin(), readSet.end());
         };
         
-        static const auto insertWriteSet = [this](std::unordered_set<std::string> writeSet) {
+        const auto insertWriteSet = [this](std::unordered_set<std::string> writeSet) {
             _writeSet.insert(writeSet.begin(), writeSet.end());
         };
         
@@ -255,111 +481,374 @@ namespace ultraverse::state::v2 {
         }
     }
     
-    int ProcMatcher::matchForward(const std::string &statement, int fromIndex) {
-        int64_t threadId = std::hash<std::thread::id>()(std::this_thread::get_id());
+    TraceResult ProcMatcher::trace(
+        const std::map<std::string, StateData>& initialVariables,
+        const std::vector<std::string>& keyColumns
+    ) const {
+        TraceResult result;
+        SymbolTable symbols;
+
+        // Preload hinted/initial variables (params, locals, @vars) into symbols.
+        for (const auto& entry : initialVariables) {
+            const auto normalized = normalizeVariableName(entry.first);
+            if (!normalized.empty()) {
+                symbols[normalized] = VariableValue::known(entry.second);
+            }
+        }
         
-        for (int i = fromIndex; i < _codes.size(); i++) {
-            // DML일때만 매칭을 시도한다.
-            // TODO: sanitizeSelectInto() 콜해야한다
-            if (_codes[i]->type() == ultparser::Query::DML) {
-                if (ult_query_match((char *) statement.c_str(), (char *) _codes[i]->dml().statement().c_str(), threadId)) {
-                    return i;
-                }
+        // 1. 프로시저 파라미터를 심볼 테이블에 초기화
+        for (const auto& paramName : _parameters) {
+            const auto normalizedName = normalizeVariableName(paramName);
+            if (symbols.find(normalizedName) == symbols.end()) {
+                symbols[normalizedName] = VariableValue{VariableValue::UNDEFINED, StateData()};
+                result.unresolvedVars.push_back(normalizedName);
             }
         }
 
-        return -1;
+        // 1-1. DECLARE 변수 초기화
+        for (const auto& varDef : _localVariables) {
+            const auto normalizedName = normalizeVariableName(varDef.name);
+            if (symbols.find(normalizedName) != symbols.end()) {
+                continue;
+            }
+            VariableValue value = VariableValue::unknown();
+            if (varDef.defaultExpr.has_value()) {
+                value = evaluateExpr(varDef.defaultExpr.value(), symbols);
+            }
+            symbols[normalizedName] = value;
+        }
+        
+        // 2. 각 문장을 순회하며 분석
+        for (const auto& code : _codes) {
+            traceStatement(*code, symbols, result, keyColumns);
+        }
+        
+        return result;
     }
     
-    std::vector<StateItem> ProcMatcher::variableSet(const ProcCall &procCall) const {
-        std::vector<StateItem> _variableSet;
+    void ProcMatcher::traceStatement(
+        const ultparser::Query& stmt,
+        SymbolTable& symbols,
+        TraceResult& result,
+        const std::vector<std::string>& keyColumns
+    ) const {
+        if (stmt.type() == ultparser::Query::SET) {
+            const auto& setQuery = stmt.set();
+            for (const auto& assignment : setQuery.assignments()) {
+                const std::string varName = normalizeVariableName(assignment.name());
+                if (assignment.has_value()) {
+                    symbols[varName] = evaluateExpr(assignment.value(), symbols);
+                } else {
+                    symbols[varName] = VariableValue::unknown();
+                }
+            }
+            return;
+        }
         
-        auto procParameters = procCall.buildItemSet(*this);
-        std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(_variableSet));
-        
-        return std::move(_variableSet);
-    }
-    
-    std::vector<std::shared_ptr<Query>> ProcMatcher::asQuery(int index, const ProcCall &procCall, const std::vector<std::string> &keyColumns) const {
-        std::vector<std::shared_ptr<Query>> queries;
-        
-        auto &code = codes().at(index);
-        
-        const std::function<void(const ultparser::Query &)> processQuery = [&](const ultparser::Query &code) {
-            auto query = std::make_shared<Query>();
-            auto procParameters = procCall.buildItemSet(*this);
-            
-            std::string statement = "SELECT 1";
-            
-            switch (code.type()) {
-                case ultparser::Query_QueryType_DDL:
-                    statement = code.ddl().statement();
-                    break;
-                case ultparser::Query_QueryType_DML:
-                    statement = code.dml().statement();
-                    break;
-                case ultparser::Query_QueryType_IF: {
-                    auto &block = code.if_block();
-                    for (const auto &_query: block.then_block()) {
-                        processQuery(_query);
+        if (stmt.type() == ultparser::Query::DML) {
+            const auto& dml = stmt.dml();
+            const auto& primaryTable = dml.table().real().identifier();
+            const auto isKeyColumn = [&](const std::string& colName) -> bool {
+                if (keyColumns.empty()) {
+                    return true;
+                }
+                for (const auto& kc : keyColumns) {
+                    if (colName == kc) {
+                        return true;
                     }
-                    
-                    for (const auto &_query: block.else_block()) {
-                        processQuery(_query);
+                    const std::string suffix = "." + kc;
+                    if (colName.size() >= suffix.size() &&
+                        colName.compare(colName.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                        return true;
                     }
                 }
-                    return;
-                    
-                case ultparser::Query_QueryType_WHILE: {
-                    auto &whileBlock = code.while_block();
-                    for (const auto &_query: whileBlock.block()) {
-                        processQuery(_query);
-                    }
-                }
-                    return;
-                default:
-                    _logger->error("unsupprted statement type: {}", (int) code.type());
-                    break;
+                return false;
+            };
+            
+            // SELECT의 WHERE 절 → readSet
+            if (dml.type() == ultparser::DMLQuery::SELECT && dml.has_where()) {
+                auto whereItems = buildWhereItemSet(primaryTable, dml.where(), symbols, result.unresolvedVars);
+                result.readSet.insert(result.readSet.end(), whereItems.begin(), whereItems.end());
             }
             
-            auto event = std::make_shared<mariadb::QueryEvent>(
-                "fillme",
-                statement,
-                0
-            );
+            // SELECT INTO 처리: 결과를 변수에 저장하는 경우
+            if (dml.type() == ultparser::DMLQuery::SELECT) {
+                // into_variables()에 변수명들이 있음
+                for (const auto& varName : dml.into_variables()) {
+                    const auto normalizedName = normalizeVariableName(varName);
+                    auto it = symbols.find(normalizedName);
+                    if (it != symbols.end() && it->second.state == VariableValue::KNOWN) {
+                        continue;
+                    }
+                    // SELECT 결과는 런타임에만 알 수 있으므로 UNKNOWN
+                    symbols[normalizedName] = VariableValue::unknown();
+                }
+            }
+            // UPDATE 처리: WHERE → readSet, key column → writeSet
+            else if (dml.type() == ultparser::DMLQuery::UPDATE) {
+                // WHERE 절 → readSet
+                if (dml.has_where()) {
+                    auto whereItems = buildWhereItemSet(primaryTable, dml.where(), symbols, result.unresolvedVars);
+                    result.readSet.insert(result.readSet.end(), whereItems.begin(), whereItems.end());
+                }
+                
+                // UPDATE SET 절: key column만 writeSet에 추가
+                for (const auto& expr : dml.update_or_write()) {
+                    if (expr.has_left() && expr.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+                        std::string colName = expr.left().identifier();
+                        if (colName.find('.') == std::string::npos) {
+                            colName = primaryTable + "." + colName;
+                        }
+                        
+                        if (isKeyColumn(colName) && expr.has_right()) {
+                            result.writeSet.push_back(resolveExprToStateItem(colName, expr.right(), symbols, result.unresolvedVars));
+                        }
+                    }
+                }
+            }
+            // DELETE 처리: WHERE → readSet + writeSet
+            else if (dml.type() == ultparser::DMLQuery::DELETE) {
+                if (dml.has_where()) {
+                    auto whereItems = buildWhereItemSet(primaryTable, dml.where(), symbols, result.unresolvedVars);
+                    result.readSet.insert(result.readSet.end(), whereItems.begin(), whereItems.end());
+                    result.writeSet.insert(result.writeSet.end(), whereItems.begin(), whereItems.end());
+                } else {
+                    // WHERE 없으면 전체 테이블 wildcard
+                    result.writeSet.push_back(StateItem::Wildcard(primaryTable + ".*"));
+                }
+            }
+            // INSERT 처리: key column → writeSet
+            else if (dml.type() == ultparser::DMLQuery::INSERT) {
+                for (const auto& expr : dml.update_or_write()) {
+                    if (expr.has_left() && expr.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+                        std::string colName = expr.left().identifier();
+                        if (colName.find('.') == std::string::npos) {
+                            colName = primaryTable + "." + colName;
+                        }
+                        
+                        if (isKeyColumn(colName) && expr.has_right()) {
+                            result.writeSet.push_back(resolveExprToStateItem(colName, expr.right(), symbols, result.unresolvedVars));
+                        }
+                    }
+                }
+            }
             
-            std::copy(procParameters.begin(), procParameters.end(), std::back_inserter(event->variableSet()));
+            return;
+        }
+        
+        // IF 블록 처리: 양쪽 분기 모두 분석 (union)
+        if (stmt.type() == ultparser::Query::IF) {
+            const auto& ifBlock = stmt.if_block();
             
-            event->parse();
-            event->buildRWSet(keyColumns);
+            // then 블록의 모든 문장 재귀 처리
+            for (const auto& query : ifBlock.then_block()) {
+                traceStatement(query, symbols, result, keyColumns);
+            }
             
-            query->setStatement(statement);
-            query->setFlags(Query::FLAG_IS_PROCCALL_RECOVERED_QUERY);
+            // else 블록의 모든 문장 재귀 처리
+            for (const auto& query : ifBlock.else_block()) {
+                traceStatement(query, symbols, result, keyColumns);
+            }
             
-            query->readSet().insert(
-                query->readSet().end(),
-                event->readSet().begin(), event->readSet().end()
-            );
-            query->writeSet().insert(
-                query->writeSet().end(),
-                event->writeSet().begin(), event->writeSet().end()
-            );
+            return;
+        }
+        
+        // WHILE 블록 처리: 1회 순회 가정
+        if (stmt.type() == ultparser::Query::WHILE) {
+            const auto& whileBlock = stmt.while_block();
             
-            query->varMap().insert(
-                query->varMap().end(),
-                event->variableSet().begin(), event->variableSet().end()
-            );
+            // 블록 내 모든 문장 재귀 처리
+            for (const auto& query : whileBlock.block()) {
+                traceStatement(query, symbols, result, keyColumns);
+            }
             
-            return queries.push_back(query);
+            return;
+        }
+        
+        // TODO: 다른 문장 타입 처리 (다음 태스크에서)
+    }
+    
+    VariableValue ProcMatcher::evaluateExpr(
+        const ultparser::DMLQueryExpr& expr,
+        const SymbolTable& symbols
+    ) const {
+        auto op = expr.operator_();
+        
+        // 사칙연산 처리
+        if (op == ultparser::DMLQueryExpr::PLUS ||
+            op == ultparser::DMLQueryExpr::MINUS ||
+            op == ultparser::DMLQueryExpr::MUL ||
+            op == ultparser::DMLQueryExpr::DIV ||
+            op == ultparser::DMLQueryExpr::MOD) {
+            auto leftVal = evaluateExpr(expr.left(), symbols);
+            auto rightVal = evaluateExpr(expr.right(), symbols);
+            
+            if (leftVal.state == VariableValue::KNOWN &&
+                rightVal.state == VariableValue::KNOWN) {
+                auto result = computeArithmetic(op, leftVal.data, rightVal.data);
+                if (result.has_value()) {
+                    return VariableValue::known(*result);
+                }
+            }
+            return VariableValue::unknown();
+        }
+        
+        // 함수 호출은 UNKNOWN
+        if (expr.value_type() == ultparser::DMLQueryExpr::FUNCTION) {
+            return VariableValue::unknown();
+        }
+        
+        // 복잡한 표현식은 UNKNOWN 반환
+        if (isComplexExpression(expr)) {
+            return VariableValue::unknown();
+        }
+        
+        // VALUE 타입인 경우
+        if (op == ultparser::DMLQueryExpr::VALUE) {
+            switch (expr.value_type()) {
+                case ultparser::DMLQueryExpr::INTEGER:
+                    return VariableValue::known(StateData(expr.integer()));
+                case ultparser::DMLQueryExpr::STRING:
+                    return VariableValue::known(StateData(expr.string()));
+                case ultparser::DMLQueryExpr::DOUBLE:
+                    return VariableValue::known(StateData(expr.double_()));
+                case ultparser::DMLQueryExpr::DECIMAL:
+                    return VariableValue::known(StateData(expr.decimal()));
+                case ultparser::DMLQueryExpr::IDENTIFIER: {
+                    const auto& id = expr.identifier();
+                    if (id.empty()) {
+                        return VariableValue::unknown();
+                    }
+
+                    if (id.find('.') != std::string::npos) {
+                        return VariableValue::unknown();
+                    }
+
+                    const auto normalized = normalizeVariableName(id);
+                    auto it = symbols.find(normalized);
+                    if (it != symbols.end()) {
+                        return it->second;
+                    }
+
+                    if (id[0] == '@') {
+                        return VariableValue{VariableValue::UNDEFINED, StateData()};
+                    }
+
+                    return VariableValue::unknown();
+                }
+                default:
+                    return VariableValue::unknown();
+            }
+        }
+        
+        return VariableValue::unknown();
+    }
+    
+    bool ProcMatcher::isComplexExpression(const ultparser::DMLQueryExpr& expr) {
+        auto op = expr.operator_();
+        // 산술 연산자가 있으면 복잡한 표현식
+        if (op == ultparser::DMLQueryExpr::PLUS ||
+            op == ultparser::DMLQueryExpr::MINUS ||
+            op == ultparser::DMLQueryExpr::MUL ||
+            op == ultparser::DMLQueryExpr::DIV ||
+            op == ultparser::DMLQueryExpr::MOD) {
+            return true;
+        }
+        // 함수 호출도 복잡한 표현식
+        if (expr.value_type() == ultparser::DMLQueryExpr::FUNCTION) {
+            return true;
+        }
+        return false;
+    }
+    
+    StateItem ProcMatcher::resolveExprToStateItem(
+        const std::string& columnName,
+        const ultparser::DMLQueryExpr& expr,
+        const SymbolTable& symbols,
+        std::vector<std::string>& unresolvedVars
+    ) const {
+        auto value = evaluateExpr(expr, symbols);
+        
+        switch (value.state) {
+            case VariableValue::KNOWN:
+                return StateItem::EQ(columnName, value.data);
+            case VariableValue::UNKNOWN:
+                return StateItem::Wildcard(columnName);
+            case VariableValue::UNDEFINED:
+                // 표현식이 변수 참조이고 미정의면 unresolvedVars에 기록
+                if (expr.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+                    const auto& id = expr.identifier();
+                    if (!id.empty() && id[0] == '@') {
+                        unresolvedVars.push_back(id.substr(1));
+                    }
+                }
+                return StateItem::Wildcard(columnName);
+        }
+        return StateItem::Wildcard(columnName);
+    }
+    
+    std::vector<StateItem> ProcMatcher::buildWhereItemSet(
+        const std::string& primaryTable,
+        const ultparser::DMLQueryExpr& whereExpr,
+        const SymbolTable& symbols,
+        std::vector<std::string>& unresolvedVars
+    ) const {
+        ::ultraverse::state::WhereClauseOptions options;
+        options.primaryTable = primaryTable;
+        options.logger = _logger;
+        options.resolveIdentifier = [&symbols, &unresolvedVars](
+            const std::string&,
+            const std::string& identifier,
+            std::vector<StateData>& outValues
+        ) -> bool {
+            if (identifier.empty()) {
+                return false;
+            }
+            if (identifier.find('.') != std::string::npos) {
+                return false;
+            }
+            const auto normalized = normalizeVariableName(identifier);
+            auto it = symbols.find(normalized);
+            if (it == symbols.end()) {
+                if (!identifier.empty() && identifier[0] == '@') {
+                    unresolvedVars.push_back(normalized);
+                }
+                return false;
+            }
+            if (it->second.state == VariableValue::KNOWN) {
+                outValues.push_back(it->second.data);
+                return true;
+            }
+            if (it->second.state == VariableValue::UNDEFINED && !identifier.empty() && identifier[0] == '@') {
+                unresolvedVars.push_back(normalized);
+            }
+            return false;
         };
-        
-        processQuery(*code);
-        
-        return queries;
+
+        return ::ultraverse::state::buildWhereItems(whereExpr, options);
     }
     
     const std::vector<std::string> &ProcMatcher::parameters() const {
         return _parameters;
+    }
+
+    const std::vector<ProcMatcher::ParamDirection> &ProcMatcher::parameterDirections() const {
+        return _parameterDirections;
+    }
+
+    ProcMatcher::ParamDirection ProcMatcher::parameterDirection(size_t index) const {
+        if (index >= _parameterDirections.size()) {
+            return ParamDirection::UNKNOWN;
+        }
+        return _parameterDirections[index];
+    }
+
+    ProcMatcher::ParamDirection ProcMatcher::parameterDirection(const std::string &name) const {
+        auto it = _parameterDirectionMap.find(utility::toLower(name));
+        if (it == _parameterDirectionMap.end()) {
+            return ParamDirection::UNKNOWN;
+        }
+        return it->second;
     }
     
     const std::vector<std::shared_ptr<ultparser::Query>> ProcMatcher::codes() const {

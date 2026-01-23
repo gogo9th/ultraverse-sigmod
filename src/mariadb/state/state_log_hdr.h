@@ -138,10 +138,10 @@ struct state_hash_event
 struct state_log_time
 {
   long sec;
-  ulong sec_part;
+  uint32_t sec_part;
 
   state_log_time() : sec(0), sec_part(0) {}
-  state_log_time(long sec, ulong sec_part) : sec(sec), sec_part(sec_part) {}
+  state_log_time(long sec, uint32_t sec_part) : sec(sec), sec_part(sec_part) {}
 
   state_log_time &operator++()
   {
@@ -315,6 +315,7 @@ enum en_state_log_column_data_type : uint16_t
   en_column_data_uint = 2,
   en_column_data_double = 3,
   en_column_data_string = 4,
+  en_column_data_decimal = 5,
   en_column_data_from_subselect = 0x80,
 };
 inline en_state_log_column_data_type &operator|=(en_state_log_column_data_type &lhs, en_state_log_column_data_type rhs)

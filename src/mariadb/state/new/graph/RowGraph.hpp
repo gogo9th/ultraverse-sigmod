@@ -5,12 +5,19 @@
 #ifndef ULTRAVERSE_ROWGRAPH_HPP
 #define ULTRAVERSE_ROWGRAPH_HPP
 
-#include <string>
-#include <vector>
-#include <memory>
 #include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <set>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include <boost/graph/adjacency_list.hpp>
 
@@ -20,7 +27,6 @@
 #include "../RangeComparisonMethod.hpp"
 
 #include "utils/log.hpp"
-#include "base/TaskExecutor.hpp"
 
 
 namespace ultraverse::state::v2 {
@@ -34,9 +40,11 @@ namespace ultraverse::state::v2 {
         std::mutex mutex;
         
         std::atomic_bool ready = false;
+        std::atomic_bool hold = false;
         std::atomic_int processedBy = -1;
         std::atomic_bool finalized = false;
         std::atomic_bool willBeRemoved = false;
+        std::atomic_uint32_t pendingColumns = 0;
     };
     
     using RowGraphInternal =
@@ -62,10 +70,62 @@ namespace ultraverse::state::v2 {
         struct RWStateHolder {
             RowGraphId read  = nullptr;
             RowGraphId write = nullptr;
+            gid_t readGid = 0;
+            gid_t writeGid = 0;
             
             std::mutex mutex;
         };
-        explicit RowGraph(const std::set<std::string> &keyColumns, const RelationshipResolver &resolver);
+        struct ColumnTask {
+            RowGraphId nodeId;
+            std::vector<StateItem> readItems;
+            std::vector<StateItem> writeItems;
+        };
+        struct ColumnWorker {
+            std::string column;
+            std::unordered_map<StateRange, RWStateHolder> nodeMap;
+            std::mutex mapMutex;
+            RWStateHolder wildcardHolder;
+            bool hasWildcard = false;
+
+            std::mutex queueMutex;
+            std::condition_variable queueCv;
+            std::deque<ColumnTask> queue;
+            std::atomic_bool running = true;
+            std::thread worker;
+        };
+        struct CompositeRange {
+            std::vector<StateRange> ranges;
+            std::size_t hash = 0;
+
+            bool isGlobalWildcard() const;
+        };
+        struct CompositeRangeHash {
+            std::size_t operator()(const CompositeRange &range) const;
+        };
+        struct CompositeRangeEq {
+            bool operator()(const CompositeRange &lhs, const CompositeRange &rhs) const;
+        };
+        struct CompositeTask {
+            RowGraphId nodeId;
+            std::vector<CompositeRange> readRanges;
+            std::vector<CompositeRange> writeRanges;
+        };
+        struct CompositeWorker {
+            std::vector<std::string> columns;
+            std::unordered_map<CompositeRange, RWStateHolder, CompositeRangeHash, CompositeRangeEq> nodeMap;
+            std::mutex mapMutex;
+            RWStateHolder wildcardHolder;
+            bool hasWildcard = false;
+
+            std::mutex queueMutex;
+            std::condition_variable queueCv;
+            std::deque<CompositeTask> queue;
+            std::atomic_bool running = true;
+            std::thread worker;
+        };
+        explicit RowGraph(const std::set<std::string> &keyColumns,
+                          const RelationshipResolver &resolver,
+                          const std::vector<std::vector<std::string>> &keyColumnGroups = {});
         
         ~RowGraph();
         
@@ -74,7 +134,7 @@ namespace ultraverse::state::v2 {
          * @return 그래프의 노드 ID를 반환한다.
          * @note 그래프의 노드 ID는 트랜잭션 GID와 다르다!
          */
-        RowGraphId addNode(std::shared_ptr<Transaction> transaction);
+        RowGraphId addNode(std::shared_ptr<Transaction> transaction, bool hold = false);
         
         /**
          * @brief 사용되지 않음
@@ -105,6 +165,16 @@ namespace ultraverse::state::v2 {
          * @brief 노드 ID로 노드에 액세스한다.
          */
         std::shared_ptr<RowGraphNode> nodeFor(RowGraphId nodeId);
+
+        /**
+         * @brief 수동으로 간선을 추가한다.
+         */
+        void addEdge(RowGraphId from, RowGraphId to);
+
+        /**
+         * @brief 수동 hold를 해제한다.
+         */
+        void releaseNode(RowGraphId nodeId);
         
         /**
          * @brief 가비지 콜렉팅을 실시한다. (처리된 노드들을 제거한다.)
@@ -118,17 +188,34 @@ namespace ultraverse::state::v2 {
         
         RangeComparisonMethod rangeComparisonMethod() const;
         void setRangeComparisonMethod(RangeComparisonMethod rangeComparisonMethod);
+
+// #ifdef ULTRAVERSE_TESTING
+        size_t debugNodeMapSize(const std::string &column);
+        size_t debugTotalNodeMapSize();
+// #endif
         
     private:
         /**
          * @brief 의존성을 해결하여 노드와 노드간 간선 (edge)를 추가한다.
          */
-        void buildEdge(RowGraphId nodeId);
+        void enqueueTask(const std::string &column, ColumnTask task);
+        void enqueueCompositeTask(size_t groupIndex, CompositeTask task);
+        void columnWorkerLoop(ColumnWorker &worker);
+        void processColumnTask(ColumnWorker &worker, ColumnTask &task);
+        void compositeWorkerLoop(CompositeWorker &worker);
+        void processCompositeTask(CompositeWorker &worker, CompositeTask &task);
+        void markColumnTaskDone(RowGraphId nodeId);
         
         LoggerPtr _logger;
         const RelationshipResolver &_resolver;
         
         std::set<std::string> _keyColumns;
+        std::vector<std::vector<std::string>> _keyColumnGroups;
+        std::unordered_map<std::string, std::vector<size_t>> _compositeGroupsByTable;
+        std::unordered_map<std::string, std::vector<std::string>> _keyColumnsByTable;
+        std::vector<bool> _groupIsComposite;
+        std::unordered_map<std::string, size_t> _groupIndexByColumn;
+        std::unordered_set<std::string> _compositeColumns;
         
         RowGraphInternal _graph;
         
@@ -136,20 +223,14 @@ namespace ultraverse::state::v2 {
          * @brief (컬럼, Range)를 가장 마지막으로 읽고 쓴 노드 ID를 저장하는 맵
          * @details 노드간 간선을 빠르게 추가하기 위해 사용한다.
          */
-        std::map<
-            std::string,
-            std::unordered_map<StateRange, RWStateHolder>
-        > _nodeMap;
-        std::shared_mutex _nodeMapMutex;
+        std::unordered_map<std::string, std::unique_ptr<ColumnWorker>> _columnWorkers;
+        std::vector<std::unique_ptr<CompositeWorker>> _compositeWorkers;
         
         
         RWMutex _graphMutex;
         /** @deprecated `_graphMutex`를 대신 사용하십시오. */
         std::mutex _mutex;
         std::atomic_bool _isGCRunning = false;
-        std::atomic_uint64_t _workerCount = 0;
-        
-        TaskExecutor _taskExecutor;
         
         RangeComparisonMethod _rangeComparisonMethod;
     };

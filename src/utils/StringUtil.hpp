@@ -19,6 +19,10 @@ namespace ultraverse::utility {
     std::string normalizeColumnName(const std::string &columnName);
 
     std::string toLower(const std::string &source);
+
+    std::vector<std::vector<std::string>> parseKeyColumnGroups(const std::string &expression);
+    std::vector<std::vector<std::string>> parseKeyColumnGroups(const std::vector<std::string> &expressions);
+    std::vector<std::string> flattenKeyColumnGroups(const std::vector<std::vector<std::string>> &groups);
 }
 
 

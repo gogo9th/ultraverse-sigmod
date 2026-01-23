@@ -8,19 +8,20 @@
 #include <string>
 
 #include "Transaction.hpp"
-#include "StateLogReader.hpp"
+#include "StateIO.hpp"
 #include "StateChangeContext.hpp"
 #include "StateChangePlan.hpp"
 #include "ColumnDependencyGraph.hpp"
 #include "HashWatcher.hpp"
 #include "ProcLogReader.hpp"
 #include "ProcMatcher.hpp"
+#include "TableDependencyGraph.hpp"
 
 #include "cluster/CandidateColumn.hpp"
 #include "cluster/RowCluster.hpp"
 
-#include "base/DBHandlePool.hpp"
 #include "mariadb/DBHandle.hpp"
+#include "mariadb/DBHandlePoolAdapter.hpp"
 #include "utils/log.hpp"
 #include "mariadb/state/new/graph/RowGraph.hpp"
 
@@ -38,7 +39,8 @@ namespace ultraverse::state::v2 {
     public:
         static const std::string QUERY_TAG_STATECHANGE;
         
-        StateChanger(DBHandlePool<mariadb::DBHandle> &dbHandlePool, const StateChangePlan &plan);
+        StateChanger(mariadb::DBHandlePoolBase &dbHandlePool, const StateChangePlan &plan);
+        StateChanger(mariadb::DBHandlePoolBase &dbHandlePool, const StateChangePlan &plan, StateChangerIO io);
         
         void makeCluster();
         
@@ -60,10 +62,13 @@ namespace ultraverse::state::v2 {
         constexpr static int CLUSTER_EXPAND_FLAG_WILDCARD    = 0b100;
         constexpr static int CLUSTER_EXPAND_FLAG_DONT_EXPAND = 0b1000;
         
-        void replayThreadMain(int workerId, RowGraph &rowGraph);
+        void replayThreadMain(int workerId,
+                              RowGraph &rowGraph,
+                              std::atomic_bool &running,
+                              std::atomic_uint64_t &replayedTxns);
         
         std::shared_ptr<Transaction> loadUserQuery(const std::string &path);
-        std::shared_ptr<Transaction> parseUserQuery(const std::vector<std::string> &queries);
+        std::shared_ptr<Transaction> parseUserQuery(const std::string &sql);
         
         void loadBackup(const std::string &dbName, const std::string &fileName);
         
@@ -81,26 +86,31 @@ namespace ultraverse::state::v2 {
         /**
          * updates primary keys
          */
-        void updatePrimaryKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp);
+        void updatePrimaryKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp, std::string schemaName = "");
         
         /**
          * updates foreign keys
          */
-        void updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp);
+        void updateForeignKeys(mariadb::DBHandle &dbHandle, uint64_t timestamp, std::string schemaName = "");
         
         int64_t getAutoIncrement(mariadb::DBHandle &dbHandle, std::string table);
         void setAutoIncrement(mariadb::DBHandle &dbHandle, std::string table, int64_t value);
+
+        void applyStatementContext(mariadb::DBHandle &dbHandle, const Query &query);
         
         LoggerPtr _logger;
         
-        DBHandlePool<mariadb::DBHandle> &_dbHandlePool;
+        mariadb::DBHandlePoolBase &_dbHandlePool;
         
         StateChangePlan _plan;
         OperationMode::Value _mode;
         
         std::string _intermediateDBName;
         
-        StateLogReader _reader;
+        std::unique_ptr<IStateLogReader> _reader;
+        std::unique_ptr<IStateClusterStore> _clusterStore;
+        std::unique_ptr<IBackupLoader> _backupLoader;
+        bool _closeStandardFds;
         
         std::shared_ptr<StateChangeContext> _context;
         

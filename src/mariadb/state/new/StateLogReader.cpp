@@ -4,6 +4,7 @@
 
 #include <cereal/archives/binary.hpp>
 
+#include "GIDIndexReader.hpp"
 #include "StateLogReader.hpp"
 
 namespace ultraverse::state::v2 {
@@ -85,6 +86,16 @@ namespace ultraverse::state::v2 {
     
     std::shared_ptr<Transaction> StateLogReader::txnBody() {
         return _currentBody;
+    }
+
+    bool StateLogReader::seekGid(gid_t gid) {
+        if (_gidIndexReader == nullptr) {
+            _gidIndexReader = std::make_unique<GIDIndexReader>(_logPath, _logName);
+        }
+
+        auto offset = _gidIndexReader->offsetOf(gid);
+        seek(offset);
+        return true;
     }
     
     void StateLogReader::operator>>(RowCluster &rowCluster) {
