@@ -75,10 +75,11 @@ def patch_procedures(session: BenchmarkSession) -> tuple[str, str]:
 
     patched_sql = os.path.join(patch_dir, "procedures.patched.sql")
     helper_sql = os.path.join(patch_dir, "__ultraverse__helper.sql")
+    procpatcher_dir = os.path.join(REPO_ROOT, "procpatcher")
 
     subprocess.check_call(
-        ["go", "run", "./procpatcher", PROCEDURES_SQL, patched_sql],
-        cwd=REPO_ROOT,
+        ["go", "run", ".", PROCEDURES_SQL, patched_sql],
+        cwd=procpatcher_dir,
     )
 
     if not os.path.exists(helper_sql):
@@ -94,7 +95,7 @@ def find_gid_by_query(session: BenchmarkSession, needles: list[str]) -> int:
 
     viewer_path = os.path.join(ultraverse_home, "state_log_viewer")
     result = subprocess.run(
-        [viewer_path, "-i", "benchbase.ultstatelog"],
+        [viewer_path, "-i", "benchbase"],
         cwd=session.session_path,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
