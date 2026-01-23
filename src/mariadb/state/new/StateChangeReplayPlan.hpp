@@ -22,10 +22,11 @@ namespace ultraverse::state::v2 {
     struct StateChangeReplayPlan {
         std::vector<gid_t> gids;
         std::map<gid_t, Transaction> userQueries;
+        std::vector<gid_t> rollbackGids;
 
         template <typename Archive>
         void serialize(Archive &archive) {
-            archive(gids, userQueries);
+            archive(gids, userQueries, rollbackGids);
         }
 
         void save(const std::string &path) const {

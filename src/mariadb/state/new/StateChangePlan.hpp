@@ -33,6 +33,10 @@ namespace ultraverse::state::v2 {
         
         gid_t endGid() const;
         void setEndGid(gid_t endGid);
+
+        gid_t replayFromGid() const;
+        void setReplayFromGid(gid_t replayFromGid);
+        bool hasReplayFromGid() const;
     
         std::vector<gid_t> &rollbackGids();
         std::map<gid_t, std::string> &userQueries();
@@ -104,6 +108,8 @@ namespace ultraverse::state::v2 {
         
         gid_t _startGid;
         gid_t _endGid;
+        gid_t _replayFromGid;
+        bool _hasReplayFromGid;
         
         std::vector<gid_t> _rollbackGids;
         std::map<gid_t, std::string> _userQueries;

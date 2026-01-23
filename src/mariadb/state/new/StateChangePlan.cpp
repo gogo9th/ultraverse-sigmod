@@ -8,6 +8,8 @@ namespace ultraverse::state::v2 {
     StateChangePlan::StateChangePlan():
         _startGid(0),
         _endGid(0),
+        _replayFromGid(0),
+        _hasReplayFromGid(false),
         _threadNum(4),
         _writeStateLog(false),
         _rangeComparisonMethod(RangeComparisonMethod::EQ_ONLY)
@@ -61,6 +63,19 @@ namespace ultraverse::state::v2 {
     
     void StateChangePlan::setEndGid(gid_t endGid) {
         _endGid = endGid;
+    }
+
+    gid_t StateChangePlan::replayFromGid() const {
+        return _replayFromGid;
+    }
+    
+    void StateChangePlan::setReplayFromGid(gid_t replayFromGid) {
+        _replayFromGid = replayFromGid;
+        _hasReplayFromGid = true;
+    }
+
+    bool StateChangePlan::hasReplayFromGid() const {
+        return _hasReplayFromGid;
     }
     
     std::vector<gid_t> &StateChangePlan::rollbackGids() {

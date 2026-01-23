@@ -62,7 +62,10 @@ namespace ultraverse::state::v2 {
         constexpr static int CLUSTER_EXPAND_FLAG_WILDCARD    = 0b100;
         constexpr static int CLUSTER_EXPAND_FLAG_DONT_EXPAND = 0b1000;
         
-        void replayThreadMain(int workerId, RowGraph &rowGraph);
+        void replayThreadMain(int workerId,
+                              RowGraph &rowGraph,
+                              std::atomic_bool &running,
+                              std::atomic_uint64_t &replayedTxns);
         
         std::shared_ptr<Transaction> loadUserQuery(const std::string &path);
         std::shared_ptr<Transaction> parseUserQuery(const std::string &sql);

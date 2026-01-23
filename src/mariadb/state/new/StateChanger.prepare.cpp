@@ -547,6 +547,10 @@ namespace ultraverse::state::v2 {
         std::sort(replayGids.begin(), replayGids.end());
         replayGids.erase(std::unique(replayGids.begin(), replayGids.end()), replayGids.end());
         replayPlan.gids = replayGids;
+        replayPlan.rollbackGids = _plan.rollbackGids();
+        std::sort(replayPlan.rollbackGids.begin(), replayPlan.rollbackGids.end());
+        replayPlan.rollbackGids.erase(std::unique(replayPlan.rollbackGids.begin(), replayPlan.rollbackGids.end()),
+                                      replayPlan.rollbackGids.end());
 
         report.setReplayGidCount(replayGids.size());
         report.setTotalCount(totalCount);

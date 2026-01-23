@@ -91,6 +91,7 @@ The agent should implement the following state machine:
 4) `db_state_change ... replay` 실행 → `.ultreplayplan` 기반 병렬 재실행.
 5) (선택) `db_state_change ... full-replay` 실행 → rollback GID 제외 전체 트랜잭션 순차 재실행.
 - 액션은 `:`로 연결되며 `rollback=-`는 stdin에서 GID 리스트를 읽는다.
+- `db_state_change --replay-from <gid>` 옵션은 replay 단계에서 **pre-replay**를 수행한다. `<gid>..(최소 target GID-1)` 구간을 별도의 RowGraph로 병렬 실행한 뒤, 해당 작업이 종료된 후에 기존 replay plan을 실행한다. **GID는 0부터 시작**하며 `--replay-from 0`도 유효하다.
 
 ## 3. 코드/디렉터리 지도 (파일 위치 → 역할)
 - `src/base/*`: 공통 인터페이스/기반 로직. `base/DBEvent.*`에서 SQL 파싱·R/W set 생성, `base/DBHandlePool.*`/`TaskExecutor.*`로 실행·동시성 관리.
@@ -119,7 +120,7 @@ The agent should implement the following state machine:
 - `.ultindex`: GID → 로그 오프셋 인덱스. `GIDIndexWriter`가 append 방식으로 기록, `GIDIndexReader`가 mmap으로 조회.
 - `.ultcluster`: `StateCluster`(row-level 클러스터) cereal 바이너리.
 - `.ulttables`, `.ultcolumns`: `TableDependencyGraph`/`ColumnDependencyGraph` cereal 바이너리 (make_cluster에서 갱신됨; prepare는 그래프 대신 컬럼 집합 taint로 column-wise 필터 수행).
-- `.ultreplayplan`: `StateChangeReplayPlan` cereal 바이너리 (`gids`, `userQueries`).
+- `.ultreplayplan`: `StateChangeReplayPlan` cereal 바이너리 (`gids`, `userQueries`, `rollbackGids`).
 - `.ultchkpoint`: statelogd 체크포인트 파일. 현재는 serialize 코드가 주석 처리되어 있어 실사용이 제한적.
 
 ## 5. 핵심 모듈 맵
@@ -162,6 +163,7 @@ The agent should implement the following state machine:
 
 ## 9. 프로시저 처리
 - `statelogd`는 `__ULTRAVERSE_PROCEDURE_HINT` row 이벤트의 `callid/procname/args/vars`를 읽어 `ProcCall`로 복원하며, `args/vars`는 JSON object로 파싱된다.
+- `statelogd`는 CALL 재구성 시 OUT/INOUT 파라미터를 `@__ultraverse_out_<idx>` user var로 치환하고, INOUT 입력값은 statement context에서 `SET @...`로 선적용한다.
 - `ProcMatcher`는 `procdef/<proc>.sql`을 파싱해 프로시저 메타/statement를 보관하고, `trace()`로 R/W set을 추정한다.
 - 프로시저 콜 트랜잭션은 `ProcMatcher::trace()` 결과에 더해, 동일 트랜잭션의 RowEvent에서 수집된 read/write set 및 column set을 procCall Query에 병합해 row/column 분석에 반영한다.
 - 프로시저 내부 statement 해시 매칭(matchForward) 기반 복원은 제거됨: 현재는 **CALL 쿼리 + trace 결과만 기록/분석**한다.
@@ -174,6 +176,7 @@ The agent should implement the following state machine:
 - 프로시저 힌트는 `callid/procname/args/vars` 형식만 지원하며 legacy `callinfo` 배열 포맷은 미지원.
 - `statelogd`의 `.ultchkpoint` 직렬화가 주석 처리되어 있어 `-r` 복원은 제한적.
 - `db_state_change`는 `stateLogPath`를 `.`로 고정(FIXME)하고, `BINLOG_PATH`는 계획에만 저장되어 현재 경로에서는 미사용.
+- `db_state_change`의 `--gid-range`(`-s/-e`)와 `-S` skip GID는 파싱되지만 v2 `StateChanger` 경로에서 실제 필터링/스킵에 사용되지 않는다(현재 no-op).
 - `statelogd`는 JSON `keyColumns`를 그룹으로 파싱한 뒤 RW set 계산용으로 flatten하여 `+` 복합키를 반영한다. `db_state_change`와 동일한 그룹 파싱을 사용한다.
 - `make_cluster`에서 column alias(`-a`) 사용 시 순차 처리로 전환됨.
 - `HashWatcher`는 설계만 존재하고 실행 경로에 미연결.

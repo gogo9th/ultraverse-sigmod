@@ -1,9 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -20,6 +22,7 @@
 #include "mariadb/state/new/StateChanger.hpp"
 #include "mariadb/state/new/StateChangePlan.hpp"
 #include "mariadb/state/new/StateChangeContext.hpp"
+#include "mariadb/state/new/StateChangeReplayPlan.hpp"
 #include "mariadb/state/new/StateIO.hpp"
 #include "mariadb/state/new/cluster/StateCluster.hpp"
 #include "mariadb/state/new/cluster/StateRelationshipResolver.hpp"
@@ -30,6 +33,7 @@ namespace {
     using ultraverse::state::v2::StateChanger;
     using ultraverse::state::v2::StateChangerIO;
     using ultraverse::state::v2::StateChangePlan;
+    using ultraverse::state::v2::StateChangeReplayPlan;
     using ultraverse::state::v2::StateCluster;
     using ultraverse::state::v2::StateRelationshipResolver;
     using ultraverse::state::v2::CachedRelationshipResolver;
@@ -194,6 +198,26 @@ namespace {
         }
 
         return position;
+    }
+
+    std::string makeTempDir(const std::string &prefix) {
+        static std::atomic<uint64_t> counter{0};
+        auto suffix = std::to_string(counter.fetch_add(1));
+        auto dir = std::filesystem::temp_directory_path() / (prefix + "_" + suffix);
+        std::filesystem::create_directories(dir);
+        return dir.string();
+    }
+
+    void writeReplayPlan(const std::string &dir,
+                         const std::string &name,
+                         const std::vector<gid_t> &gids,
+                         const std::map<gid_t, Transaction> &userQueries = {},
+                         const std::vector<gid_t> &rollbackGids = {}) {
+        StateChangeReplayPlan plan;
+        plan.gids = gids;
+        plan.userQueries = userQueries;
+        plan.rollbackGids = rollbackGids;
+        plan.save(dir + "/" + name + ".ultreplayplan");
     }
 
     class DelayedDBHandle final : public ultraverse::mariadb::DBHandle {
@@ -623,13 +647,11 @@ TEST_CASE("StateChanger replay respects dependency order within chains", "[state
             chains[chainIndex].push_back(gid);
         }
     }
-
-    std::ostringstream stdinBuilder;
-    for (auto gid : gidsToReplay) {
-        stdinBuilder << gid << "\n";
-    }
-    std::istringstream stdinSource(stdinBuilder.str());
-    ScopedIStreamRedirect cinRedirect(std::cin, stdinSource.rdbuf());
+    auto planDir = makeTempDir("replay_chain");
+    const std::string planName = "plan";
+    plan.setStateLogPath(planDir);
+    plan.setStateLogName(planName);
+    writeReplayPlan(planDir, planName, gidsToReplay);
 
     MockedDBHandlePool pool(kThreadNum, sharedState);
 
@@ -699,13 +721,11 @@ TEST_CASE("StateChanger replay interleaves independent chains", "[statechanger][
             chainB.push_back(gid);
         }
     }
-
-    std::ostringstream stdinBuilder;
-    for (auto gid : gidsToReplay) {
-        stdinBuilder << gid << "\n";
-    }
-    std::istringstream stdinSource(stdinBuilder.str());
-    ScopedIStreamRedirect cinRedirect(std::cin, stdinSource.rdbuf());
+    auto planDir = makeTempDir("replay_parallel");
+    const std::string planName = "plan";
+    plan.setStateLogPath(planDir);
+    plan.setStateLogName(planName);
+    writeReplayPlan(planDir, planName, gidsToReplay);
 
     std::unordered_map<ultraverse::state::v2::gid_t, std::chrono::milliseconds> delays{
         {1, std::chrono::milliseconds(80)},
@@ -744,4 +764,132 @@ TEST_CASE("StateChanger replay interleaves independent chains", "[statechanger][
     const auto firstChainB = std::min({positionIndex[2], positionIndex[4], positionIndex[6]});
     const auto lastChainA = std::max({positionIndex[1], positionIndex[3], positionIndex[5]});
     REQUIRE(firstChainB < lastChainA);
+}
+
+TEST_CASE("StateChanger replay-from runs pre-replay range before replay plan", "[statechanger][replay][replay-from]") {
+    auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+
+    constexpr int kThreadNum = 2;
+    auto plan = makePlan(kThreadNum);
+    plan.setReplayFromGid(2);
+
+    auto planDir = makeTempDir("replay_from");
+    const std::string planName = "plan";
+    plan.setStateLogPath(planDir);
+    plan.setStateLogName(planName);
+
+    StateItem key1 = StateItem::EQ("items.id", StateData(static_cast<int64_t>(1)));
+    StateItem key2 = StateItem::EQ("items.id", StateData(static_cast<int64_t>(2)));
+    StateItem key3 = StateItem::EQ("items.id", StateData(static_cast<int64_t>(3)));
+
+    auto txn1 = makeTransaction(1, plan.dbName(), "/*TXN:1*/", {}, {key1});
+    auto txn2 = makeTransaction(2, plan.dbName(), "/*TXN:2*/", {}, {key1});
+    auto txn3 = makeTransaction(3, plan.dbName(), "/*TXN:3*/", {}, {key2});
+    auto txn4 = makeTransaction(4, plan.dbName(), "/*TXN:4*/", {}, {key3});
+    auto txn5 = makeTransaction(5, plan.dbName(), "/*TXN:5*/", {}, {key1});
+    auto txn6 = makeTransaction(6, plan.dbName(), "/*TXN:6*/", {}, {key2});
+
+    auto logReader = std::make_unique<MockedStateLogReader>();
+    logReader->addTransaction(txn1, 1);
+    logReader->addTransaction(txn2, 2);
+    logReader->addTransaction(txn3, 3);
+    logReader->addTransaction(txn4, 4);
+    logReader->addTransaction(txn5, 5);
+    logReader->addTransaction(txn6, 6);
+
+    std::vector<ultraverse::state::v2::gid_t> replayGids{5, 6};
+    std::vector<ultraverse::state::v2::gid_t> rollbackGids{4};
+    writeReplayPlan(planDir, planName, replayGids, {}, rollbackGids);
+
+    MockedDBHandlePool pool(kThreadNum, sharedState);
+
+    StateChangerIO io;
+    io.stateLogReader = std::move(logReader);
+    io.clusterStore = std::make_unique<MockedStateClusterStore>();
+    io.backupLoader = std::make_unique<NoopBackupLoader>();
+    io.closeStandardFds = false;
+
+    StateChanger changer(pool, plan, std::move(io));
+    changer.replay();
+
+    std::vector<std::string> executedQueries;
+    {
+        std::scoped_lock lock(sharedState->mutex);
+        executedQueries = sharedState->queries;
+    }
+
+    auto executionOrder = extractExecutedGids(executedQueries);
+
+    auto positionIndex = buildPositionIndex(executionOrder);
+    REQUIRE(positionIndex.count(2) == 1);
+    REQUIRE(positionIndex.count(3) == 1);
+    REQUIRE(positionIndex.count(5) == 1);
+    REQUIRE(positionIndex.count(6) == 1);
+    REQUIRE(positionIndex.count(1) == 0);
+    REQUIRE(positionIndex.count(4) == 0);
+
+    const auto lastPreReplay = std::max(positionIndex[2], positionIndex[3]);
+    const auto firstReplay = std::min(positionIndex[5], positionIndex[6]);
+    REQUIRE(lastPreReplay < firstReplay);
+}
+
+TEST_CASE("StateChanger replay-from accepts gid 0", "[statechanger][replay][replay-from]") {
+    auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+
+    constexpr int kThreadNum = 2;
+    auto plan = makePlan(kThreadNum);
+    plan.setReplayFromGid(0);
+
+    auto planDir = makeTempDir("replay_from_zero");
+    const std::string planName = "plan";
+    plan.setStateLogPath(planDir);
+    plan.setStateLogName(planName);
+
+    StateItem key0 = StateItem::EQ("items.id", StateData(static_cast<int64_t>(0)));
+    StateItem key1 = StateItem::EQ("items.id", StateData(static_cast<int64_t>(1)));
+    StateItem key2 = StateItem::EQ("items.id", StateData(static_cast<int64_t>(2)));
+    StateItem key3 = StateItem::EQ("items.id", StateData(static_cast<int64_t>(3)));
+
+    auto txn0 = makeTransaction(0, plan.dbName(), "/*TXN:0*/", {}, {key0});
+    auto txn1 = makeTransaction(1, plan.dbName(), "/*TXN:1*/", {}, {key1});
+    auto txn2 = makeTransaction(2, plan.dbName(), "/*TXN:2*/", {}, {key2});
+    auto txn3 = makeTransaction(3, plan.dbName(), "/*TXN:3*/", {}, {key3});
+
+    auto logReader = std::make_unique<MockedStateLogReader>();
+    logReader->addTransaction(txn0, 0);
+    logReader->addTransaction(txn1, 1);
+    logReader->addTransaction(txn2, 2);
+    logReader->addTransaction(txn3, 3);
+
+    std::vector<ultraverse::state::v2::gid_t> replayGids{3};
+    std::vector<ultraverse::state::v2::gid_t> rollbackGids{2};
+    writeReplayPlan(planDir, planName, replayGids, {}, rollbackGids);
+
+    MockedDBHandlePool pool(kThreadNum, sharedState);
+
+    StateChangerIO io;
+    io.stateLogReader = std::move(logReader);
+    io.clusterStore = std::make_unique<MockedStateClusterStore>();
+    io.backupLoader = std::make_unique<NoopBackupLoader>();
+    io.closeStandardFds = false;
+
+    StateChanger changer(pool, plan, std::move(io));
+    changer.replay();
+
+    std::vector<std::string> executedQueries;
+    {
+        std::scoped_lock lock(sharedState->mutex);
+        executedQueries = sharedState->queries;
+    }
+
+    auto executionOrder = extractExecutedGids(executedQueries);
+    auto positionIndex = buildPositionIndex(executionOrder);
+
+    REQUIRE(positionIndex.count(0) == 1);
+    REQUIRE(positionIndex.count(1) == 1);
+    REQUIRE(positionIndex.count(2) == 0);
+    REQUIRE(positionIndex.count(3) == 1);
+
+    const auto lastPreReplay = std::max(positionIndex[0], positionIndex[1]);
+    REQUIRE(lastPreReplay < positionIndex[3]);
 }

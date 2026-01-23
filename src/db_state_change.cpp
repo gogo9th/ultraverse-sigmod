@@ -108,6 +108,7 @@ namespace ultraverse {
             "Options:\n"
             "    --gid-range START...END    GID range to process\n"
             "    --skip-gids GID1,GID2,...  GIDs to skip\n"
+            "    --replay-from GID          Replay all transactions from GID before executing replay plan\n"
             "    --dry-run                  Dry run mode\n"
             "    -v                         set logger level to DEBUG\n"
             "    -V                         set logger level to TRACE\n"
@@ -131,8 +132,10 @@ namespace ultraverse {
         bool gidRangeSet = false;
         bool skipGidsSet = false;
         bool dryRun = false;
+        bool replayFromSet = false;
         gid_t startGid = 0;
         gid_t endGid = 0;
+        gid_t replayFromGid = 0;
         std::vector<uint64_t> skipGids;
 
         auto trim = [](std::string value) {
@@ -148,6 +151,7 @@ namespace ultraverse {
         static struct option long_options[] = {
             {"gid-range", required_argument, 0, 's'},
             {"skip-gids", required_argument, 0, 'S'},
+            {"replay-from", required_argument, 0, 'R'},
             {"dry-run", no_argument, 0, 'D'},
             {0, 0, 0, 0}
         };
@@ -201,6 +205,21 @@ namespace ultraverse {
                 case 'D':
                     dryRun = true;
                     break;
+                case 'R': {
+                    std::string gidExpr = optarg != nullptr ? std::string(optarg) : "";
+                    if (gidExpr.empty()) {
+                        _logger->error("invalid --replay-from value, expected numeric GID");
+                        return 1;
+                    }
+                    try {
+                        replayFromGid = static_cast<gid_t>(std::stoull(gidExpr));
+                    } catch (const std::exception &) {
+                        _logger->error("invalid --replay-from value, expected numeric GID");
+                        return 1;
+                    }
+                    replayFromSet = true;
+                    break;
+                }
                 case '?':
                 default:
                     _logger->error("invalid option");
@@ -335,6 +354,9 @@ namespace ultraverse {
         }
         if (skipGidsSet) {
             changePlan.skipGids().insert(changePlan.skipGids().end(), skipGids.begin(), skipGids.end());
+        }
+        if (replayFromSet) {
+            changePlan.setReplayFromGid(replayFromGid);
         }
 
         const char *reportEnv = std::getenv("ULTRAVERSE_REPORT_NAME");

@@ -2,6 +2,8 @@
 // Created by cheesekun on 7/12/23.
 //
 
+#include <algorithm>
+
 #include <fmt/color.h>
 
 #include "graph/RowGraph.hpp"
@@ -16,29 +18,175 @@ namespace ultraverse::state::v2 {
         
         createIntermediateDB();
         report.setIntermediateDBName(_intermediateDBName);
-        
-        StateRelationshipResolver relationshipResolver(_plan, *_context);
-        CachedRelationshipResolver cachedResolver(relationshipResolver, 8000);
-        
-        RowGraph rowGraph(_plan.keyColumns(), cachedResolver, _plan.keyColumnGroups());
-        rowGraph.setRangeComparisonMethod(_plan.rangeComparisonMethod());
 
         const std::string replayPlanPath = _plan.stateLogPath() + "/" + _plan.stateLogName() + ".ultreplayplan";
         auto replayPlan = StateChangeReplayPlan::load(replayPlanPath);
         _logger->info("replay(): loaded replay plan from {} ({} gids, {} user queries)",
                       replayPlanPath, replayPlan.gids.size(), replayPlan.userQueries.size());
-        
-        this->_isRunning = true;
-        this->_replayedTxns = 0;
-        
-        
+
+        gid_t firstTargetGid = 0;
+        bool hasTargetGid = false;
+        if (!replayPlan.rollbackGids.empty()) {
+            firstTargetGid = *std::min_element(replayPlan.rollbackGids.begin(), replayPlan.rollbackGids.end());
+            hasTargetGid = true;
+        }
+        if (!replayPlan.userQueries.empty()) {
+            gid_t userGid = replayPlan.userQueries.begin()->first;
+            if (!hasTargetGid || userGid < firstTargetGid) {
+                firstTargetGid = userGid;
+                hasTargetGid = true;
+            }
+        }
+        if (!hasTargetGid && !replayPlan.gids.empty()) {
+            firstTargetGid = replayPlan.gids.front();
+            hasTargetGid = true;
+        }
+
+        if (!_plan.dbDumpPath().empty()) {
+            auto load_backup_start = std::chrono::steady_clock::now();
+            loadBackup(_intermediateDBName, _plan.dbDumpPath());
+
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle->get(), 0);
+            updateForeignKeys(dbHandle->get(), 0);
+            auto load_backup_end = std::chrono::steady_clock::now();
+
+            std::chrono::duration<double> time = load_backup_end - load_backup_start;
+            _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
+            report.setSQLLoadTime(time.count());
+        } else {
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle->get(), 0, _plan.dbName());
+            updateForeignKeys(dbHandle->get(), 0, _plan.dbName());
+        }
+
         for (int i = 0; i < _dbHandlePool.poolSize(); i++) {
             auto dbHandle = _dbHandlePool.take();
             auto &handle = dbHandle->get();
             
             handle.executeQuery(fmt::format("USE {}", _intermediateDBName));
         }
-        
+
+        auto runPreReplay = [&](gid_t startGid, gid_t endGid) {
+            if (startGid > endGid) {
+                return;
+            }
+
+            _logger->info("replay(): pre-replay range {}..{}", startGid, endGid);
+
+            StateRelationshipResolver preResolver(_plan, *_context);
+            CachedRelationshipResolver preCachedResolver(preResolver, 8000);
+
+            RowGraph preGraph(_plan.keyColumns(), preCachedResolver, _plan.keyColumnGroups());
+            preGraph.setRangeComparisonMethod(_plan.rangeComparisonMethod());
+
+            std::atomic_bool preRunning = true;
+            std::atomic_uint64_t preReplayedTxns = 0;
+
+            _reader->open();
+            if (!_reader->seekGid(startGid)) {
+                _logger->warn("replay(): pre-replay start gid #{} not found in state log", startGid);
+                _reader->close();
+                return;
+            }
+
+            std::thread feeder([&]() {
+                uint64_t added = 0;
+                while (_reader->nextHeader()) {
+                    auto header = _reader->txnHeader();
+                    if (!header) {
+                        break;
+                    }
+                    if (header->gid < startGid) {
+                        _reader->skipTransaction();
+                        continue;
+                    }
+                    if (header->gid > endGid) {
+                        break;
+                    }
+
+                    while (added - preReplayedTxns.load() > 4000) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1000 / 60));
+                    }
+
+                    _reader->nextTransaction();
+                    const auto transaction = _reader->txnBody();
+
+                    if (!transaction || !transaction->isRelatedToDatabase(_plan.dbName())) {
+                        continue;
+                    }
+
+                    if (preResolver.addTransaction(*transaction)) {
+                        preCachedResolver.clearCache();
+                    }
+
+                    auto nodeId = preGraph.addNode(transaction);
+                    if (++added % 1000 == 0) {
+                        _logger->info("replay(): pre-replay transaction #{} added as node #{}; {} / {} executed",
+                                      header->gid, nodeId, (int) preReplayedTxns.load(), added);
+                    }
+                }
+            });
+
+            std::thread gcThread([&]() {
+                while (preRunning) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+                    preGraph.gc();
+                }
+            });
+
+            std::vector<std::thread> workerThreads;
+            for (int i = 0; i < _plan.threadNum(); i++) {
+                workerThreads.emplace_back(&StateChanger::replayThreadMain, this, i, std::ref(preGraph),
+                                           std::ref(preRunning), std::ref(preReplayedTxns));
+            }
+
+            if (feeder.joinable()) {
+                feeder.join();
+            }
+
+            _reader->close();
+
+            while (!preGraph.isFinalized()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+
+            preRunning = false;
+
+            for (auto &thread : workerThreads) {
+                if (thread.joinable()) {
+                    thread.join();
+                }
+            }
+
+            if (gcThread.joinable()) {
+                gcThread.join();
+            }
+
+            _logger->info("replay(): pre-replay finished ({} transactions)", (uint64_t) preReplayedTxns.load());
+        };
+
+        if (_plan.hasReplayFromGid()) {
+            const gid_t replayFromGid = _plan.replayFromGid();
+            if (!hasTargetGid) {
+                _logger->warn("replay(): --replay-from specified but target gid is unknown; skipping pre-replay");
+            } else if (replayFromGid >= firstTargetGid) {
+                _logger->warn("replay(): --replay-from {} is not before target gid {}; skipping pre-replay",
+                              replayFromGid, firstTargetGid);
+            } else {
+                runPreReplay(replayFromGid, firstTargetGid - 1);
+            }
+        }
+
+        StateRelationshipResolver relationshipResolver(_plan, *_context);
+        CachedRelationshipResolver cachedResolver(relationshipResolver, 8000);
+
+        RowGraph rowGraph(_plan.keyColumns(), cachedResolver, _plan.keyColumnGroups());
+        rowGraph.setRangeComparisonMethod(_plan.rangeComparisonMethod());
+
+        this->_isRunning = true;
+        this->_replayedTxns = 0;
+
         std::thread replayThread([&]() {
             int i = 0;
             
@@ -129,30 +277,13 @@ namespace ultraverse::state::v2 {
         });
         
         std::vector<std::thread> workerThreads;
-
-        if (!_plan.dbDumpPath().empty()) {
-            auto load_backup_start = std::chrono::steady_clock::now();
-            loadBackup(_intermediateDBName, _plan.dbDumpPath());
-            
-            auto dbHandle = _dbHandlePool.take();
-            updatePrimaryKeys(dbHandle->get(), 0);
-            updateForeignKeys(dbHandle->get(), 0);
-            auto load_backup_end = std::chrono::steady_clock::now();
-            
-            std::chrono::duration<double> time = load_backup_end - load_backup_start;
-            _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
-            report.setSQLLoadTime(time.count());
-        } else {
-            auto dbHandle = _dbHandlePool.take();
-            updatePrimaryKeys(dbHandle->get(), 0, _plan.dbName());
-            updateForeignKeys(dbHandle->get(), 0, _plan.dbName());
-        }
         
         auto phase_main_start = std::chrono::steady_clock::now();
         _logger->info("replay(): executing replay plan...");
 
         for (int i = 0; i < _plan.threadNum(); i++) {
-            workerThreads.emplace_back(&StateChanger::replayThreadMain, this, i, std::ref(rowGraph));
+            workerThreads.emplace_back(&StateChanger::replayThreadMain, this, i, std::ref(rowGraph),
+                                       std::ref(_isRunning), std::ref(_replayedTxns));
         }
         
         if (replayThread.joinable()) {
@@ -195,11 +326,14 @@ namespace ultraverse::state::v2 {
         // dropIntermediateDB();
     }
     
-    void StateChanger::replayThreadMain(int workerId, RowGraph &rowGraph) {
+    void StateChanger::replayThreadMain(int workerId,
+                                        RowGraph &rowGraph,
+                                        std::atomic_bool &running,
+                                        std::atomic_uint64_t &replayedTxns) {
         auto logger = createLogger(fmt::format("ReplayThread #{}", workerId));
         logger->info("thread started");
         
-        while (_isRunning) {
+        while (running) {
             auto nodeId = rowGraph.entrypoint(workerId);
             
             if (nodeId == nullptr) {
@@ -239,7 +373,7 @@ namespace ultraverse::state::v2 {
 
                     bool isProcedureCall = transaction->flags() & Transaction::FLAG_IS_PROCEDURE_CALL;
                     
-                    // logger->info("replaying transaction #{}", transaction->gid());
+                    logger->info("replaying transaction #{}", transaction->gid());
                     
                     handle.executeQuery("SET autocommit=0");
                     handle.executeQuery("START TRANSACTION");
@@ -252,6 +386,8 @@ namespace ultraverse::state::v2 {
                             }
                             
                             applyStatementContext(handle, *query);
+
+                            logger->info("[#{}] executing query: {}", transaction->gid(), query->statement());
                             if (handle.executeQuery(query->statement()) != 0) {
                                 logger->error("query execution failed: {} / {}", handle.lastError(), query->statement());
                             }
@@ -270,7 +406,7 @@ namespace ultraverse::state::v2 {
                     }
                 }
                 
-                _replayedTxns++;
+                replayedTxns++;
                 
                 /*
                 auto it = std::find_if(dependents.begin(), dependents.end(), [&](auto &dependent) {

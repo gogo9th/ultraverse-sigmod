@@ -215,6 +215,7 @@ class BenchmarkSession:
         action: str,
         gid_range: tuple[int, int] | None = None,
         skip_gids: list[int] | None = None,
+        replay_from: int | None = None,
         dry_run: bool = False,
         stdout_name: str = "db_state_change.stdout",
         stderr_name: str = "db_state_change.stderr",
@@ -248,6 +249,8 @@ class BenchmarkSession:
             args += ["--gid-range", f"{gid_range[0]}...{gid_range[1]}"]
         if skip_gids:
             args += ["--skip-gids", ",".join(map(str, skip_gids))]
+        if replay_from is not None:
+            args += ["--replay-from", str(replay_from)]
         if dry_run:
             args.append("--dry-run")
 
