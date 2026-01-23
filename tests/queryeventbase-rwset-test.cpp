@@ -95,7 +95,19 @@ TEST_CASE("QueryEventBase columnRWSet UPDATE uses write columns and where column
     REQUIRE(parsed.readColumns.count("users.id") == 1);
     REQUIRE(parsed.readColumns.count("users.status") == 1);
 
-    // TODO: When RHS column reads are tracked, expect users.age in readColumns.
+    REQUIRE(parsed.readColumns.count("users.age") == 1);
+}
+
+/**
+ * Ensures UPDATE RHS expressions contribute to the read set, which is required
+ * for dependency analysis of self-referential updates.
+ */
+TEST_CASE("QueryEventBase columnRWSet UPDATE includes RHS column reads") {
+    auto parsed = parseColumns("UPDATE users SET age = age + 1 WHERE id = 1;");
+
+    REQUIRE(parsed.writeColumns.count("users.age") == 1);
+    REQUIRE(parsed.readColumns.count("users.id") == 1);
+    REQUIRE(parsed.readColumns.count("users.age") == 1);
 }
 
 TEST_CASE("QueryEventBase columnRWSet DELETE adds wildcard write and where read") {
@@ -103,6 +115,25 @@ TEST_CASE("QueryEventBase columnRWSet DELETE adds wildcard write and where read"
 
     REQUIRE(parsed.writeColumns.count("users.*") == 1);
     REQUIRE(parsed.readColumns.count("users.id") == 1);
+}
+
+/**
+ * Ensures DML read sets include columns from external tables referenced in
+ * subqueries (e.g., FK target lookups) so dependencies are not missed.
+ */
+TEST_CASE("QueryEventBase columnRWSet DELETE with EXISTS subquery collects external columns") {
+    auto parsed = parseColumns(
+        "DELETE FROM orders "
+        "WHERE EXISTS ("
+        "  SELECT 1 FROM users "
+        "  WHERE users.id = orders.user_id AND users.active = 1"
+        ");"
+    );
+
+    REQUIRE(parsed.writeColumns.count("orders.*") == 1);
+    REQUIRE(parsed.readColumns.count("orders.user_id") == 1);
+    REQUIRE(parsed.readColumns.count("users.id") == 1);
+    REQUIRE(parsed.readColumns.count("users.active") == 1);
 }
 
 TEST_CASE("QueryEventBase buildRWSet reflects WHERE items for DML") {

@@ -3,6 +3,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <cereal/archives/binary.hpp>
@@ -19,6 +20,34 @@ using ultraverse::state::v2::NamingHistory;
 namespace {
 std::set<std::string> asSet(const std::vector<std::string> &values) {
     return std::set<std::string>(values.begin(), values.end());
+}
+
+bool hasPath(TableDependencyGraph &graph, const std::string &from, const std::string &to) {
+    if (from == to) {
+        return true;
+    }
+
+    std::unordered_set<std::string> visited;
+    std::vector<std::string> stack;
+    stack.push_back(from);
+
+    while (!stack.empty()) {
+        auto current = stack.back();
+        stack.pop_back();
+        if (!visited.insert(current).second) {
+            continue;
+        }
+        for (const auto &next : graph.getDependencies(current)) {
+            if (next == to) {
+                return true;
+            }
+            if (visited.find(next) == visited.end()) {
+                stack.push_back(next);
+            }
+        }
+    }
+
+    return false;
 }
 
 ForeignKey makeFK(const std::string &fromTable, const std::string &toTable) {
@@ -101,6 +130,20 @@ TEST_CASE("TableDependencyGraph addRelationship ignores read-only query (SELECT)
     REQUIRE_FALSE(graph.addRelationship(readSet, writeSet));
     REQUIRE(graph.getDependencies("users").empty());
     REQUIRE(graph.getDependencies("accounts").empty());
+}
+
+/**
+ * Ensures transitive dependency reachability can be derived from the graph
+ * (Rule 2), even when only direct edges are stored.
+ */
+TEST_CASE("TableDependencyGraph transitive reachability via traversal", "[table-dependency-graph]") {
+    TableDependencyGraph graph;
+    graph.addRelationship("users", "orders");
+    graph.addRelationship("orders", "payments");
+
+    REQUIRE(hasPath(graph, "users", "orders"));
+    REQUIRE(hasPath(graph, "orders", "payments"));
+    REQUIRE(hasPath(graph, "users", "payments"));
 }
 
 TEST_CASE("TableDependencyGraph Table A INSERT policy maps reads to target writes", "[table-dependency-graph]") {

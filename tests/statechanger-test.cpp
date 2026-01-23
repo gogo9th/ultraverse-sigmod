@@ -1,12 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -152,22 +156,30 @@ namespace {
         return gids;
     }
 
+    std::optional<gid_t> parseGidToken(const std::string &query) {
+        auto pos = query.find("/*TXN:");
+        if (pos == std::string::npos) {
+            return std::nullopt;
+        }
+        pos += 6;
+        auto end = query.find("*/", pos);
+        if (end == std::string::npos) {
+            return std::nullopt;
+        }
+        auto token = query.substr(pos, end - pos);
+        return static_cast<gid_t>(std::stoull(token));
+    }
+
     std::vector<gid_t> extractExecutedGids(const std::vector<std::string> &queries) {
         std::vector<gid_t> gids;
         gids.reserve(queries.size());
 
         for (const auto &query : queries) {
-            auto pos = query.find("/*TXN:");
-            if (pos == std::string::npos) {
+            auto token = parseGidToken(query);
+            if (!token.has_value()) {
                 continue;
             }
-            pos += 6;
-            auto end = query.find("*/", pos);
-            if (end == std::string::npos) {
-                continue;
-            }
-            auto token = query.substr(pos, end - pos);
-            gids.push_back(static_cast<gid_t>(std::stoull(token)));
+            gids.push_back(*token);
         }
 
         return gids;
@@ -183,6 +195,132 @@ namespace {
 
         return position;
     }
+
+    class DelayedDBHandle final : public ultraverse::mariadb::DBHandle {
+    public:
+        DelayedDBHandle(std::shared_ptr<MockedDBHandle::SharedState> state,
+                        std::unordered_map<gid_t, std::chrono::milliseconds> delays)
+            : _inner(std::make_shared<MockedDBHandle>(std::move(state))),
+              _delays(std::move(delays)) {
+        }
+
+        void connect(const std::string &host, int port, const std::string &user, const std::string &password) override {
+            _inner->connect(host, port, user, password);
+        }
+
+        void disconnect() override {
+            _inner->disconnect();
+        }
+
+        int executeQuery(const std::string &query) override {
+            auto gid = parseGidToken(query);
+            if (gid.has_value()) {
+                auto it = _delays.find(*gid);
+                if (it != _delays.end()) {
+                    std::this_thread::sleep_for(it->second);
+                }
+            }
+            return _inner->executeQuery(query);
+        }
+
+        const char *lastError() const override {
+            return _inner->lastError();
+        }
+
+        int lastErrno() const override {
+            return _inner->lastErrno();
+        }
+
+        std::unique_ptr<ultraverse::mariadb::DBResult> storeResult() override {
+            return _inner->storeResult();
+        }
+
+        int nextResult() override {
+            return _inner->nextResult();
+        }
+
+        void setAutocommit(bool enabled) override {
+            _inner->setAutocommit(enabled);
+        }
+
+        std::shared_ptr<MYSQL> handle() override {
+            return _inner->handle();
+        }
+
+    private:
+        std::shared_ptr<MockedDBHandle> _inner;
+        std::unordered_map<gid_t, std::chrono::milliseconds> _delays;
+    };
+
+    class DelayedDBHandleLease final : public ultraverse::mariadb::DBHandleLeaseBase {
+    public:
+        DelayedDBHandleLease(
+            std::shared_ptr<DelayedDBHandle> handle,
+            std::function<void()> releaser
+        ):
+            _handle(std::move(handle)),
+            _releaser(std::move(releaser))
+        {
+        }
+
+        ~DelayedDBHandleLease() override {
+            if (_releaser) {
+                _releaser();
+            }
+        }
+
+        ultraverse::mariadb::DBHandle &get() override {
+            return *_handle;
+        }
+
+    private:
+        std::shared_ptr<DelayedDBHandle> _handle;
+        std::function<void()> _releaser;
+    };
+
+    class DelayedDBHandlePool final : public ultraverse::mariadb::DBHandlePoolBase {
+    public:
+        DelayedDBHandlePool(
+            int poolSize,
+            std::shared_ptr<MockedDBHandle::SharedState> sharedState,
+            std::unordered_map<gid_t, std::chrono::milliseconds> delays
+        ):
+            _poolSize(poolSize),
+            _sharedState(std::move(sharedState)),
+            _delays(std::move(delays))
+        {
+            for (int i = 0; i < poolSize; i++) {
+                _handles.push(std::make_shared<DelayedDBHandle>(_sharedState, _delays));
+            }
+        }
+
+        std::unique_ptr<ultraverse::mariadb::DBHandleLeaseBase> take() override {
+            std::unique_lock lock(_mutex);
+            _condvar.wait(lock, [this]() { return !_handles.empty(); });
+
+            auto handle = _handles.front();
+            _handles.pop();
+            lock.unlock();
+
+            return std::make_unique<DelayedDBHandleLease>(handle, [this, handle]() {
+                std::scoped_lock lock(_mutex);
+                _handles.push(handle);
+                _condvar.notify_one();
+            });
+        }
+
+        int poolSize() const override {
+            return _poolSize;
+        }
+
+    private:
+        int _poolSize;
+        std::shared_ptr<MockedDBHandle::SharedState> _sharedState;
+        std::unordered_map<gid_t, std::chrono::milliseconds> _delays;
+        std::mutex _mutex;
+        std::condition_variable _condvar;
+        std::queue<std::shared_ptr<DelayedDBHandle>> _handles;
+    };
 }
 
 TEST_CASE("StateChanger prepare outputs dependent GIDs only", "[statechanger][prepare]") {
@@ -395,6 +533,66 @@ TEST_CASE("StateChanger prepare includes column-wise dependent queries without k
     REQUIRE(gids[0] == 2);
 }
 
+/**
+ * Ensures column-wise dependency propagation is transitive: if a dependent
+ * transaction writes a new column, later reads of that column are replayed.
+ */
+TEST_CASE("StateChanger prepare propagates column taint transitively", "[statechanger][prepare][columnwise]") {
+    auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+
+    auto plan = makePlan(1);
+    plan.rollbackGids().push_back(1);
+
+    StateItem writeA = StateItem::EQ("items.color", StateData(std::string("red")));
+    StateItem readA = StateItem::EQ("items.color", StateData(std::string("red")));
+    StateItem writeB = StateItem::EQ("items.size", StateData(std::string("L")));
+    StateItem readB = StateItem::EQ("items.size", StateData(std::string("L")));
+
+    auto txn1 = makeTransaction(1, plan.dbName(), "/*TXN:1*/", {}, {writeA});
+    auto txn2 = makeTransaction(2, plan.dbName(), "/*TXN:2*/", {readA}, {writeB});
+    auto txn3 = makeTransaction(3, plan.dbName(), "/*TXN:3*/", {readB}, {});
+
+    StateCluster cluster(plan.keyColumns());
+    ultraverse::state::v2::StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+    CachedRelationshipResolver cachedResolver(resolver, 1000);
+
+    cluster.insert(txn1, cachedResolver);
+    cluster.insert(txn2, cachedResolver);
+    cluster.insert(txn3, cachedResolver);
+    cluster.merge();
+
+    auto clusterStore = std::make_unique<MockedStateClusterStore>();
+    clusterStore->save(cluster);
+
+    auto logReader = std::make_unique<MockedStateLogReader>();
+    logReader->addTransaction(txn1, 1);
+    logReader->addTransaction(txn2, 2);
+    logReader->addTransaction(txn3, 3);
+
+    MockedDBHandlePool pool(1, sharedState);
+
+    StateChangerIO io;
+    io.stateLogReader = std::move(logReader);
+    io.clusterStore = std::move(clusterStore);
+    io.backupLoader = std::make_unique<NoopBackupLoader>();
+    io.closeStandardFds = false;
+
+    StateChanger changer(pool, plan, std::move(io));
+
+    std::ostringstream out;
+    ScopedOStreamRedirect coutRedirect(std::cout, out.rdbuf());
+
+    changer.prepare();
+
+    auto gids = parseGidLines(out.str());
+    std::sort(gids.begin(), gids.end());
+
+    REQUIRE(gids.size() == 2);
+    REQUIRE(gids[0] == 2);
+    REQUIRE(gids[1] == 3);
+}
+
 TEST_CASE("StateChanger replay respects dependency order within chains", "[statechanger][replay]") {
     auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
 
@@ -467,4 +665,83 @@ TEST_CASE("StateChanger replay respects dependency order within chains", "[state
             REQUIRE(positionIndex[prevGid] < positionIndex[nextGid]);
         }
     }
+}
+
+/**
+ * Ensures non-conflicting chains can execute in parallel by allowing
+ * interleaving between chains while preserving per-chain order.
+ */
+TEST_CASE("StateChanger replay interleaves independent chains", "[statechanger][replay][parallel]") {
+    auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+
+    constexpr int kThreadNum = 2;
+    auto plan = makePlan(kThreadNum);
+
+    auto logReader = std::make_unique<MockedStateLogReader>();
+    logReader->open();
+
+    std::vector<ultraverse::state::v2::gid_t> gidsToReplay;
+    std::vector<ultraverse::state::v2::gid_t> chainA;
+    std::vector<ultraverse::state::v2::gid_t> chainB;
+
+    for (ultraverse::state::v2::gid_t gid = 1; gid <= 6; gid++) {
+        int64_t keyValue = (gid % 2 == 1) ? 1 : 2;
+        StateItem keyItem = StateItem::EQ("items.id", StateData(keyValue));
+
+        std::string statement = "/*TXN:" + std::to_string(gid) + "*/";
+        auto txn = makeTransaction(gid, plan.dbName(), statement, {}, {keyItem});
+        logReader->addTransaction(txn, gid);
+        gidsToReplay.push_back(gid);
+
+        if (keyValue == 1) {
+            chainA.push_back(gid);
+        } else {
+            chainB.push_back(gid);
+        }
+    }
+
+    std::ostringstream stdinBuilder;
+    for (auto gid : gidsToReplay) {
+        stdinBuilder << gid << "\n";
+    }
+    std::istringstream stdinSource(stdinBuilder.str());
+    ScopedIStreamRedirect cinRedirect(std::cin, stdinSource.rdbuf());
+
+    std::unordered_map<ultraverse::state::v2::gid_t, std::chrono::milliseconds> delays{
+        {1, std::chrono::milliseconds(80)},
+        {3, std::chrono::milliseconds(80)},
+        {5, std::chrono::milliseconds(80)}
+    };
+
+    DelayedDBHandlePool pool(kThreadNum, sharedState, delays);
+
+    StateChangerIO io;
+    io.stateLogReader = std::move(logReader);
+    io.clusterStore = std::make_unique<MockedStateClusterStore>();
+    io.backupLoader = std::make_unique<NoopBackupLoader>();
+    io.closeStandardFds = false;
+
+    StateChanger changer(pool, plan, std::move(io));
+    changer.replay();
+
+    std::vector<std::string> executedQueries;
+    {
+        std::scoped_lock lock(sharedState->mutex);
+        executedQueries = sharedState->queries;
+    }
+
+    auto executionOrder = extractExecutedGids(executedQueries);
+    REQUIRE(executionOrder.size() == gidsToReplay.size());
+
+    auto positionIndex = buildPositionIndex(executionOrder);
+    for (size_t i = 1; i < chainA.size(); i++) {
+        REQUIRE(positionIndex[chainA[i - 1]] < positionIndex[chainA[i]]);
+    }
+    for (size_t i = 1; i < chainB.size(); i++) {
+        REQUIRE(positionIndex[chainB[i - 1]] < positionIndex[chainB[i]]);
+    }
+
+    const auto firstChainB = std::min({positionIndex[2], positionIndex[4], positionIndex[6]});
+    const auto lastChainA = std::max({positionIndex[1], positionIndex[3], positionIndex[5]});
+    REQUIRE(firstChainB < lastChainA);
 }
