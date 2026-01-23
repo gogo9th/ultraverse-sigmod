@@ -81,14 +81,14 @@ The agent should implement the following state machine:
 ## 1. 실행 바이너리 / 엔트리포인트
 - `src/Application.*`: getopt 기반 CLI 베이스. 각 앱이 optString()/main()을 구현하고 `exec()`로 실행.
 - `src/statelogd.cpp`: binlog.index를 순차 읽어 `.ultstatelog` + `.ultchkpoint` 생성. 필수 옵션 `-b`(binlog.index), `-o`(로그 이름), `-k`(키 컬럼). `BinaryLogSequentialReader`(MySQLBinaryLogReaderV2) 사용, `-p`로 프로시저 로그 추가, `-n`로 EOF 후 종료, `-r`로 체크포인트 복원, `-d`로 이전 로그 폐기, `-c` 스레드 수, `-G/-Q` 디버그 출력, `-v/-V` 로그 레벨.
-- `src/db_state_change.cpp`: 상태 변경 CLI. 환경변수 `DB_HOST/DB_PORT/DB_USER/DB_PASS` 필수. 액션은 `action1:action2:...` 형식이며 `make_cluster`, `rollback=gid[,gid...]`, `auto-rollback=ratio`, `prepend=gid,sqlfile`, `full-replay`, `replay` 지원. 옵션 `-i`(state log), `-d`(DB), `-b`(backup), `-k`(키 컬럼 그룹), `-a`(alias), `-C`(스레드), `-S`(skip gid), `-r`(report), `-N`(intermediate DB 유지), `-w`(write state log), `-D`(dry-run), `-s/-e`(gid 범위). `RANGE_COMP_METHOD`(intersect/eqonly)로 범위 비교 방식 지정.
+- `src/db_state_change.cpp`: 상태 변경 CLI. 환경변수 `DB_HOST/DB_PORT/DB_USER/DB_PASS` 필수. 액션은 `action1:action2:...` 형식이며 `make_cluster`, `rollback=gid[,gid...]`, `auto-rollback=ratio`, `prepend=gid,sqlfile`, `full-replay`, `replay` 지원. 옵션 `-i`(state log), `-d`(DB), `-b`(backup), `-k`(키 컬럼 그룹), `-a`(alias), `-C`(스레드), `-S`(skip gid), `-r`(report), `-N`(intermediate DB 유지), `-w`(write state log), `-D`(dry-run), `-s/-e`(gid 범위), `--manual-replace-query/--no-exec-replace-query`(replace query 수동 실행 모드). `RANGE_COMP_METHOD`(intersect/eqonly)로 범위 비교 방식 지정.
 - `src/state_log_viewer.cpp`: `.ultstatelog` 뷰어. `-i` 필수, `-s/-e` 범위, `-v/-V` 상세 출력.
 
 ## 2. 실행 흐름 (CLI 기준)
 1) `statelogd`로 binlog → `.ultstatelog`/`.ultchkpoint` 생성.
 2) `db_state_change ... make_cluster`로 `.ultcluster`, `.ultcolumns`, `.ulttables`, `.ultindex` 생성.
 3) `db_state_change ... rollback=...` 또는 `prepend=...` 실행 → **prepare 단계**가 `.ultreplayplan` + 리포트(JSON)를 생성.
-4) `db_state_change ... replay` 실행 → `.ultreplayplan` 기반 병렬 재실행.
+4) `db_state_change ... replay` 실행 → `.ultreplayplan` 기반 병렬 재실행 후 replace query를 실행하여 원본 DB 반영. (`--manual-replace-query` 사용 시 실행하지 않고 쿼리만 출력, intermediate DB 유지)
 5) (선택) `db_state_change ... full-replay` 실행 → rollback GID 제외 전체 트랜잭션 순차 재실행.
 - 액션은 `:`로 연결되며 `rollback=-`는 stdin에서 GID 리스트를 읽는다.
 - `db_state_change --replay-from <gid>` 옵션은 replay 단계에서 **pre-replay**를 수행한다. `<gid>..(최소 target GID-1)` 구간을 별도의 RowGraph로 병렬 실행한 뒤, 해당 작업이 종료된 후에 기존 replay plan을 실행한다. **GID는 0부터 시작**하며 `--replay-from 0`도 유효하다.
@@ -120,7 +120,7 @@ The agent should implement the following state machine:
 - `.ultindex`: GID → 로그 오프셋 인덱스. `GIDIndexWriter`가 append 방식으로 기록, `GIDIndexReader`가 mmap으로 조회.
 - `.ultcluster`: `StateCluster`(row-level 클러스터) cereal 바이너리.
 - `.ulttables`, `.ultcolumns`: `TableDependencyGraph`/`ColumnDependencyGraph` cereal 바이너리 (make_cluster에서 갱신됨; prepare는 그래프 대신 컬럼 집합 taint로 column-wise 필터 수행).
-- `.ultreplayplan`: `StateChangeReplayPlan` cereal 바이너리 (`gids`, `userQueries`, `rollbackGids`).
+- `.ultreplayplan`: `StateChangeReplayPlan` cereal 바이너리 (`gids`, `userQueries`, `rollbackGids`, `replaceQueries`).
 - `.ultchkpoint`: statelogd 체크포인트 파일. 현재는 serialize 코드가 주석 처리되어 있어 실사용이 제한적.
 
 ## 5. 핵심 모듈 맵

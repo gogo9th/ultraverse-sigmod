@@ -23,10 +23,11 @@ namespace ultraverse::state::v2 {
         std::vector<gid_t> gids;
         std::map<gid_t, Transaction> userQueries;
         std::vector<gid_t> rollbackGids;
+        std::vector<std::string> replaceQueries;
 
         template <typename Archive>
         void serialize(Archive &archive) {
-            archive(gids, userQueries, rollbackGids);
+            archive(gids, userQueries, rollbackGids, replaceQueries);
         }
 
         void save(const std::string &path) const {

@@ -397,7 +397,7 @@ namespace ultraverse::state::v2 {
             std::string toTable(std::move(utility::toLower(row[2])));
             std::string toColumn(std::move(utility::toLower(row[3])));
             
-            // _logger->trace("updateForeignKeys(): adding foreign key: {}.{} -> {}.{}", fromTable, fromColumn, toTable, toColumn);
+            _logger->debug("updateForeignKeys(): adding foreign key: {}.{} -> {}.{}", fromTable, fromColumn, toTable, toColumn);
             
             ForeignKey foreignKey {
                 _context->findTable(fromTable, timestamp), fromColumn,

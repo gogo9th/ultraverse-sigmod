@@ -3,6 +3,7 @@
 //
 
 #include <algorithm>
+#include <sstream>
 
 #include <fmt/color.h>
 
@@ -11,6 +12,7 @@
 #include "StateChanger.hpp"
 #include "StateChangeReport.hpp"
 #include "StateChangeReplayPlan.hpp"
+#include "utils/StringUtil.hpp"
 
 namespace ultraverse::state::v2 {
     void StateChanger::replay() {
@@ -21,6 +23,7 @@ namespace ultraverse::state::v2 {
 
         const std::string replayPlanPath = _plan.stateLogPath() + "/" + _plan.stateLogName() + ".ultreplayplan";
         auto replayPlan = StateChangeReplayPlan::load(replayPlanPath);
+        _plan.setReplaceQueries(replayPlan.replaceQueries);
         _logger->info("replay(): loaded replay plan from {} ({} gids, {} user queries)",
                       replayPlanPath, replayPlan.gids.size(), replayPlan.userQueries.size());
 
@@ -314,13 +317,66 @@ namespace ultraverse::state::v2 {
         if (gcThread.joinable()) {
             gcThread.join();
         }
+
+        const auto &replaceQueries = _plan.replaceQueries();
+        if (replaceQueries.empty()) {
+            _logger->warn("replay(): replace query list is empty; skipping state update");
+        } else if (!_plan.executeReplaceQuery()) {
+            std::ostringstream script;
+            for (const auto &statement : replaceQueries) {
+                if (statement.empty()) {
+                    continue;
+                }
+                auto substituted = utility::replaceAll(statement, "__INTERMEDIATE_DB__", _intermediateDBName);
+                script << substituted << ";\n";
+            }
+            _logger->warn("replay(): manual replace query mode enabled; skipping execution");
+            _logger->info("replay(): execute the following queries manually on '{}':\n{}",
+                          _plan.dbName(), script.str());
+        } else {
+            _logger->info("replay(): executing replace queries...");
+            auto dbHandle = _dbHandlePool.take();
+            auto &handle = dbHandle->get();
+            size_t executed = 0;
+            size_t failed = 0;
+
+            handle.executeQuery("SET autocommit = 0");
+            handle.executeQuery("START TRANSACTION");
+
+            for (const auto &statement : replaceQueries) {
+                if (statement.empty()) {
+                    continue;
+                }
+                auto substituted = utility::replaceAll(statement, "__INTERMEDIATE_DB__", _intermediateDBName);
+
+                _logger->debug("replay(): executing replace query: {}", substituted);
+                if (handle.executeQuery(substituted) != 0) {
+                    _logger->error("replay(): replace query execution failed: {} / {}", handle.lastError(), substituted);
+                    ++failed;
+                }
+                handle.consumeResults();
+                ++executed;
+            }
+            if (failed > 0) {
+                _logger->warn("replay(): replace queries completed with failures ({}/{})", failed, executed);
+            } else {
+                _logger->info("replay(): replace queries executed ({})", executed);
+            }
+
+            handle.executeQuery("COMMIT");
+        }
         
         if (!_plan.reportPath().empty()) {
             report.writeToJSON(_plan.reportPath());
         }
         
         if (_plan.dropIntermediateDB()) {
-            dropIntermediateDB();
+            if (!_plan.executeReplaceQuery()) {
+                _logger->warn("replay(): keeping intermediate database '{}' (manual replace query mode)",
+                              _intermediateDBName);
+            } else {
+                dropIntermediateDB();
+            }
         }
         
         // dropIntermediateDB();

@@ -566,9 +566,19 @@ namespace ultraverse::state::v2 {
             dropIntermediateDB();
         }
         
-        std::string replaceQuery = rowCluster.generateReplaceQuery(_plan.dbName(), "__INTERMEDIATE_DB__", cachedResolver);
-        _logger->debug("TODO: execute query: \n{}", replaceQuery);
-        report.setReplaceQuery(replaceQuery);
+        auto replaceQueries = rowCluster.generateReplaceQuery(_plan.dbName(), "__INTERMEDIATE_DB__", cachedResolver);
+        _plan.setReplaceQueries(replaceQueries);
+        replayPlan.replaceQueries = replaceQueries;
+        _logger->debug("prepare(): generated replace queries (use __INTERMEDIATE_DB__ placeholder)");
+
+        std::ostringstream replaceQueryStream;
+        for (const auto &statement : replaceQueries) {
+            if (statement.empty()) {
+                continue;
+            }
+            replaceQueryStream << statement << ";\n";
+        }
+        report.setReplaceQuery(replaceQueryStream.str());
 
         const std::string replayPlanPath = _plan.stateLogPath() + "/" + _plan.stateLogName() + ".ultreplayplan";
         _logger->info("prepare(): writing replay plan to {}", replayPlanPath);

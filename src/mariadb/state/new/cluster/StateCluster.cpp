@@ -732,8 +732,12 @@ namespace ultraverse::state::v2 {
         return matched > 0;
     }
     
-    std::string StateCluster::generateReplaceQuery(const std::string &targetDB, const std::string &intermediateDB, const RelationshipResolver &resolver) {
-        std::string query = fmt::format("use {};\nSET FOREIGN_KEY_CHECKS=0;\n", targetDB);
+    std::vector<std::string> StateCluster::generateReplaceQuery(const std::string &targetDB,
+                                                                const std::string &intermediateDB,
+                                                                const RelationshipResolver &resolver) {
+        std::vector<std::string> queries;
+        queries.emplace_back(fmt::format("USE {}", targetDB));
+        queries.emplace_back("SET FOREIGN_KEY_CHECKS=0");
         
         for (const auto &pair : _keyColumnGroupsByTable) {
             const auto &tableName = pair.first;
@@ -820,21 +824,19 @@ namespace ultraverse::state::v2 {
             }
 
             if (isWildcard) {
-                query += fmt::format("TRUNCATE {};\n", tableName);
-                query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{};\n", tableName, intermediateDB, tableName);
+                queries.emplace_back(fmt::format("TRUNCATE {}", tableName));
+                queries.emplace_back(fmt::format("REPLACE INTO {} SELECT * FROM {}.{}", tableName, intermediateDB, tableName));
             } else if (changed && !whereGroups.empty()) {
                 std::string _where = fmt::format("{}", fmt::join(whereGroups, " OR "));
 
-                query += fmt::format("DELETE FROM {} WHERE {};\n", tableName, _where);
-                query += fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {};\n", tableName, intermediateDB, tableName, _where);
+                queries.emplace_back(fmt::format("DELETE FROM {} WHERE {}", tableName, _where));
+                queries.emplace_back(fmt::format("REPLACE INTO {} SELECT * FROM {}.{} WHERE {}", tableName, intermediateDB, tableName, _where));
             }
-
-            query += "\n";
         }
-        
-        query += "\nSET FOREIGN_KEY_CHECKS=1;\n";
-        
-        return std::move(query);
+
+        queries.emplace_back("SET FOREIGN_KEY_CHECKS=1");
+
+        return queries;
     }
     
     bool StateCluster::shouldReplay(gid_t gid, const StateCluster::TargetTransactionCache &cache) {

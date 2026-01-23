@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <sstream>
 #include <string>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -8,6 +10,19 @@
 
 using namespace ultraverse::state::v2;
 using namespace ultraverse::state::v2::test_helpers;
+
+namespace {
+    std::string joinStatements(const std::vector<std::string> &statements) {
+        std::ostringstream output;
+        for (const auto &statement : statements) {
+            if (statement.empty()) {
+                continue;
+            }
+            output << statement << ";\n";
+        }
+        return output.str();
+    }
+}
 
 TEST_CASE("StateCluster inserts and matches with alias/row-alias") {
     MockedRelationshipResolver resolver;
@@ -126,7 +141,7 @@ TEST_CASE("StateCluster generateReplaceQuery uses wildcard for composite keys") 
 
     cluster.addRollbackTarget(rollbackTxn, resolver, true);
 
-    auto query = cluster.generateReplaceQuery("targetdb", "intermediate", resolver);
+    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver));
     REQUIRE(query.find("TRUNCATE orders;") != std::string::npos);
     REQUIRE(query.find("REPLACE INTO orders SELECT * FROM intermediate.orders;") != std::string::npos);
 }
@@ -258,7 +273,7 @@ TEST_CASE("StateCluster generateReplaceQuery projects multi-table groups per tab
 
     cluster.addRollbackTarget(rollbackTxn, resolver, true);
 
-    auto query = cluster.generateReplaceQuery("targetdb", "intermediate", resolver);
+    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver));
 
     auto flightPos = query.find("DELETE FROM flight WHERE");
     REQUIRE(flightPos != std::string::npos);
@@ -290,7 +305,7 @@ TEST_CASE("StateCluster generateReplaceQuery uses WHERE for non-wildcard keys") 
 
     cluster.addRollbackTarget(rollbackTxn, resolver, true);
 
-    auto query = cluster.generateReplaceQuery("targetdb", "intermediate", resolver);
+    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver));
     REQUIRE(query.find("TRUNCATE users;") == std::string::npos);
     REQUIRE(query.find("DELETE FROM users WHERE") != std::string::npos);
     REQUIRE(query.find("REPLACE INTO users SELECT * FROM intermediate.users WHERE") != std::string::npos);
@@ -307,7 +322,7 @@ TEST_CASE("StateCluster generateReplaceQuery uses write ranges without reads") {
 
     cluster.addRollbackTarget(rollbackTxn, resolver, true);
 
-    auto query = cluster.generateReplaceQuery("targetdb", "intermediate", resolver);
+    auto query = joinStatements(cluster.generateReplaceQuery("targetdb", "intermediate", resolver));
     REQUIRE(query.find("TRUNCATE users;") == std::string::npos);
     REQUIRE(query.find("DELETE FROM users WHERE") != std::string::npos);
     REQUIRE(query.find("REPLACE INTO users SELECT * FROM intermediate.users WHERE") != std::string::npos);

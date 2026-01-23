@@ -12,6 +12,7 @@ namespace ultraverse::state::v2 {
         _hasReplayFromGid(false),
         _threadNum(4),
         _writeStateLog(false),
+        _executeReplaceQuery(true),
         _rangeComparisonMethod(RangeComparisonMethod::EQ_ONLY)
     {
     
@@ -168,6 +169,14 @@ namespace ultraverse::state::v2 {
     void StateChangePlan::setReportPath(const std::string &reportPath) {
         _reportPath = reportPath;
     }
+
+    const std::vector<std::string> &StateChangePlan::replaceQueries() const {
+        return _replaceQueries;
+    }
+
+    void StateChangePlan::setReplaceQueries(std::vector<std::string> replaceQueries) {
+        _replaceQueries = std::move(replaceQueries);
+    }
     
     bool StateChangePlan::isFullReplay() const {
         return _isFullReplay;
@@ -191,6 +200,14 @@ namespace ultraverse::state::v2 {
     
     void StateChangePlan::setDropIntermediateDB(bool dropIntermediateDB) {
         _dropIntermediateDB = dropIntermediateDB;
+    }
+
+    bool StateChangePlan::executeReplaceQuery() const {
+        return _executeReplaceQuery;
+    }
+
+    void StateChangePlan::setExecuteReplaceQuery(bool executeReplaceQuery) {
+        _executeReplaceQuery = executeReplaceQuery;
     }
     
     int StateChangePlan::threadNum() const {
