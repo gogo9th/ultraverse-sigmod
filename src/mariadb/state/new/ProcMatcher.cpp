@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cmath>
 #include <optional>
+#include <cctype>
 
 #include <libultparser/libultparser.h>
 #include <ultparser_query.pb.h>
@@ -19,6 +20,154 @@
 namespace ultraverse::state::v2 {
 
     namespace {
+        struct ParsedParam {
+            std::string name;
+            ProcMatcher::ParamDirection direction = ProcMatcher::ParamDirection::UNKNOWN;
+        };
+
+        bool isWhitespace(char ch) {
+            return std::isspace(static_cast<unsigned char>(ch)) != 0;
+        }
+
+        std::string trimCopy(const std::string &value) {
+            size_t start = 0;
+            while (start < value.size() && isWhitespace(value[start])) {
+                start++;
+            }
+            if (start == value.size()) {
+                return "";
+            }
+            size_t end = value.size() - 1;
+            while (end > start && isWhitespace(value[end])) {
+                end--;
+            }
+            return value.substr(start, end - start + 1);
+        }
+
+        std::string extractParamName(const std::string &segment, size_t start) {
+            if (start >= segment.size()) {
+                return "";
+            }
+            if (segment[start] == '`') {
+                size_t end = segment.find('`', start + 1);
+                if (end == std::string::npos || end <= start + 1) {
+                    return "";
+                }
+                return segment.substr(start + 1, end - start - 1);
+            }
+            size_t end = start;
+            while (end < segment.size() && !isWhitespace(segment[end])) {
+                end++;
+            }
+            if (end == start) {
+                return "";
+            }
+            return segment.substr(start, end - start);
+        }
+
+        std::vector<ParsedParam> parseProcedureParams(const std::string &definition) {
+            std::vector<ParsedParam> params;
+            if (definition.empty()) {
+                return params;
+            }
+
+            std::string lower = utility::toLower(definition);
+            size_t procPos = lower.find("procedure");
+            if (procPos == std::string::npos) {
+                return params;
+            }
+
+            size_t openPos = lower.find('(', procPos);
+            if (openPos == std::string::npos) {
+                return params;
+            }
+
+            size_t depth = 1;
+            size_t closePos = std::string::npos;
+            for (size_t i = openPos + 1; i < definition.size(); i++) {
+                char ch = definition[i];
+                if (ch == '(') {
+                    depth++;
+                } else if (ch == ')') {
+                    depth--;
+                    if (depth == 0) {
+                        closePos = i;
+                        break;
+                    }
+                }
+            }
+
+            if (closePos == std::string::npos || closePos <= openPos + 1) {
+                return params;
+            }
+
+            std::string paramList = definition.substr(openPos + 1, closePos - openPos - 1);
+            size_t segmentStart = 0;
+            depth = 0;
+            for (size_t i = 0; i <= paramList.size(); i++) {
+                if (i == paramList.size() || (paramList[i] == ',' && depth == 0)) {
+                    std::string segment = trimCopy(paramList.substr(segmentStart, i - segmentStart));
+                    segmentStart = i + 1;
+
+                    if (segment.empty()) {
+                        continue;
+                    }
+
+                    std::string lowerSeg = utility::toLower(segment);
+                    size_t pos = 0;
+                    while (pos < segment.size() && isWhitespace(segment[pos])) {
+                        pos++;
+                    }
+
+                    ProcMatcher::ParamDirection direction = ProcMatcher::ParamDirection::IN;
+                    const auto consumeToken = [&](const std::string &token) -> bool {
+                        if (lowerSeg.compare(pos, token.size(), token) != 0) {
+                            return false;
+                        }
+                        size_t end = pos + token.size();
+                        if (end < lowerSeg.size() && !isWhitespace(lowerSeg[end])) {
+                            return false;
+                        }
+                        pos = end;
+                        return true;
+                    };
+
+                    if (consumeToken("inout")) {
+                        direction = ProcMatcher::ParamDirection::INOUT;
+                    } else if (consumeToken("out")) {
+                        direction = ProcMatcher::ParamDirection::OUT;
+                    } else if (consumeToken("in")) {
+                        direction = ProcMatcher::ParamDirection::IN;
+                    }
+
+                    while (pos < segment.size() && isWhitespace(segment[pos])) {
+                        pos++;
+                    }
+
+                    std::string name = extractParamName(segment, pos);
+                    if (name.empty()) {
+                        continue;
+                    }
+
+                    ParsedParam param;
+                    param.name = std::move(name);
+                    param.direction = direction;
+                    params.push_back(std::move(param));
+                    continue;
+                }
+
+                if (paramList[i] == '(') {
+                    depth++;
+                } else if (paramList[i] == ')') {
+                    if (depth > 0) {
+                        depth--;
+                    }
+                }
+            }
+
+            return params;
+        }
+
         std::string normalizeVariableName(const std::string& name) {
             if (name.empty()) {
                 return name;
@@ -188,9 +337,27 @@ namespace ultraverse::state::v2 {
             assert(_procedureInfo.type() == ultparser::Query::PROCEDURE);
             
             const auto &procedureInfo = _procedureInfo.procedure();
+            const auto parsedParams = parseProcedureParams(procedureDefinition);
+            std::unordered_map<std::string, ProcMatcher::ParamDirection> parsedDirectionMap;
+            for (const auto &param : parsedParams) {
+                parsedDirectionMap[utility::toLower(param.name)] = param.direction;
+            }
             
             for (const auto &parameter: procedureInfo.parameters()) {
-                instance._parameters.push_back(parameter.name());
+                const auto name = parameter.name();
+                instance._parameters.push_back(name);
+
+                ProcMatcher::ParamDirection direction = ProcMatcher::ParamDirection::IN;
+                if (!parsedDirectionMap.empty()) {
+                    const auto it = parsedDirectionMap.find(utility::toLower(name));
+                    if (it != parsedDirectionMap.end()) {
+                        direction = it->second;
+                    } else {
+                        direction = ProcMatcher::ParamDirection::UNKNOWN;
+                    }
+                }
+                instance._parameterDirections.push_back(direction);
+                instance._parameterDirectionMap[utility::toLower(name)] = direction;
             }
 
             for (const auto &variable: procedureInfo.variables()) {
@@ -663,6 +830,25 @@ namespace ultraverse::state::v2 {
     
     const std::vector<std::string> &ProcMatcher::parameters() const {
         return _parameters;
+    }
+
+    const std::vector<ProcMatcher::ParamDirection> &ProcMatcher::parameterDirections() const {
+        return _parameterDirections;
+    }
+
+    ProcMatcher::ParamDirection ProcMatcher::parameterDirection(size_t index) const {
+        if (index >= _parameterDirections.size()) {
+            return ParamDirection::UNKNOWN;
+        }
+        return _parameterDirections[index];
+    }
+
+    ProcMatcher::ParamDirection ProcMatcher::parameterDirection(const std::string &name) const {
+        auto it = _parameterDirectionMap.find(utility::toLower(name));
+        if (it == _parameterDirectionMap.end()) {
+            return ParamDirection::UNKNOWN;
+        }
+        return it->second;
     }
     
     const std::vector<std::shared_ptr<ultparser::Query>> ProcMatcher::codes() const {

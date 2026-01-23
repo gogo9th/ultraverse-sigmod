@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cctype>
 #include <condition_variable>
+#include <cstring>
 #include <iostream>
 #include <fstream>
 #include <optional>
@@ -501,8 +502,12 @@ public:
             return finalizeTransaction(transaction);
         }
 
+        std::vector<state::v2::Query::UserVar> inoutVars;
+        const auto callStatement = buildCallStatement(*procCall, *procMatcher, &inoutVars);
         if (procCall->statements().empty()) {
-            procCall->statements().push_back(buildCallStatement(*procCall, *procMatcher));
+            procCall->statements().push_back(callStatement);
+        } else {
+            procCall->statements()[0] = callStatement;
         }
         
         std::shared_ptr<state::v2::Query> firstQuery;
@@ -545,12 +550,16 @@ public:
         
         {
             auto procCallQuery = std::make_shared<state::v2::Query>();
-            procCallQuery->setStatement(procCall->statements()[0]);
+            procCallQuery->setStatement(callStatement);
             if (firstQuery != nullptr) {
                 procCallQuery->setDatabase(firstQuery->database());
                 procCallQuery->setTimestamp(firstQuery->timestamp());
             }
             procCallQuery->setFlags(state::v2::Query::FLAG_IS_PROCCALL_QUERY);
+            if (!inoutVars.empty()) {
+                auto &context = procCallQuery->statementContext();
+                context.userVars.insert(context.userVars.end(), inoutVars.begin(), inoutVars.end());
+            }
 
             auto initialVariables = procCall->buildInitialVariables(*procMatcher);
             auto traceResult = procMatcher->trace(initialVariables, _keyColumns);
@@ -1087,9 +1096,101 @@ public:
         }
     }
 
+    std::string encodeUint64LE(uint64_t value) {
+        std::string out;
+        out.resize(8);
+        for (size_t i = 0; i < 8; i++) {
+            out[i] = static_cast<char>(value & 0xFF);
+            value >>= 8;
+        }
+        return out;
+    }
+
+    bool stateDataToUserVar(const StateData &data, state::v2::Query::UserVar &out) {
+        out.isNull = false;
+        out.isUnsigned = false;
+        out.charset = 0;
+        out.value.clear();
+
+        switch (data.Type()) {
+            case en_column_data_null:
+                out.type = state::v2::Query::UserVar::STRING;
+                out.isNull = true;
+                return true;
+            case en_column_data_int: {
+                int64_t value = 0;
+                if (!data.Get(value)) {
+                    out.type = state::v2::Query::UserVar::STRING;
+                    out.isNull = true;
+                    return false;
+                }
+                out.type = state::v2::Query::UserVar::INT;
+                out.isUnsigned = false;
+                out.value = encodeUint64LE(static_cast<uint64_t>(value));
+                return true;
+            }
+            case en_column_data_uint: {
+                uint64_t value = 0;
+                if (!data.Get(value)) {
+                    out.type = state::v2::Query::UserVar::STRING;
+                    out.isNull = true;
+                    return false;
+                }
+                out.type = state::v2::Query::UserVar::INT;
+                out.isUnsigned = true;
+                out.value = encodeUint64LE(value);
+                return true;
+            }
+            case en_column_data_double: {
+                double value = 0.0;
+                if (!data.Get(value)) {
+                    out.type = state::v2::Query::UserVar::STRING;
+                    out.isNull = true;
+                    return false;
+                }
+                uint64_t bits = 0;
+                std::memcpy(&bits, &value, sizeof(bits));
+                out.type = state::v2::Query::UserVar::REAL;
+                out.value = encodeUint64LE(bits);
+                return true;
+            }
+            case en_column_data_decimal: {
+                std::string value;
+                if (!data.Get(value)) {
+                    out.type = state::v2::Query::UserVar::STRING;
+                    out.isNull = true;
+                    return false;
+                }
+                out.type = state::v2::Query::UserVar::STRING;
+                out.value = std::move(value);
+                return true;
+            }
+            case en_column_data_string: {
+                std::string value;
+                if (!data.Get(value)) {
+                    out.type = state::v2::Query::UserVar::STRING;
+                    out.isNull = true;
+                    return false;
+                }
+                out.type = state::v2::Query::UserVar::STRING;
+                out.value = std::move(value);
+                return true;
+            }
+            default:
+                out.type = state::v2::Query::UserVar::STRING;
+                out.isNull = true;
+                return false;
+        }
+    }
+
+    std::string outParamUserVarName(size_t index) {
+        return "__ultraverse_out_" + std::to_string(index + 1);
+    }
+
     std::string buildCallStatement(
         const ProcCall &procCall,
-        const ultraverse::state::v2::ProcMatcher &procMatcher
+        const ultraverse::state::v2::ProcMatcher &procMatcher,
+        std::vector<state::v2::Query::UserVar> *inoutVars = nullptr
     ) {
         std::stringstream sstream;
         sstream << "CALL " << procCall.procName() << "(";
@@ -1097,6 +1198,31 @@ public:
         const auto &params = procMatcher.parameters();
         for (size_t i = 0; i < params.size(); i++) {
             const auto &param = params[i];
+            const auto direction = procMatcher.parameterDirection(i);
+            if (direction == ultraverse::state::v2::ProcMatcher::ParamDirection::OUT ||
+                direction == ultraverse::state::v2::ProcMatcher::ParamDirection::INOUT) {
+                const auto varName = outParamUserVarName(i);
+                if (inoutVars != nullptr &&
+                    direction == ultraverse::state::v2::ProcMatcher::ParamDirection::INOUT) {
+                    const auto it = procCall.args().find(param);
+                    state::v2::Query::UserVar userVar;
+                    userVar.name = varName;
+                    if (it == procCall.args().end()) {
+                        userVar.type = state::v2::Query::UserVar::STRING;
+                        userVar.isNull = true;
+                    } else {
+                        stateDataToUserVar(it->second, userVar);
+                    }
+                    inoutVars->push_back(std::move(userVar));
+                }
+
+                sstream << "@" << varName;
+                if (i + 1 < params.size()) {
+                    sstream << ", ";
+                }
+                continue;
+            }
+
             const auto it = procCall.args().find(param);
             if (it == procCall.args().end()) {
                 _logger->warn("procedure hint missing arg {} for {}", param, procCall.procName());

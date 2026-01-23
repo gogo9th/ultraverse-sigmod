@@ -58,6 +58,10 @@ std::vector<StateItem> ProcCall::buildItemSet(const ultraverse::state::v2::ProcM
     std::vector<StateItem> itemSet;
 
     for (const auto &name : procMatcher.parameters()) {
+        const auto direction = procMatcher.parameterDirection(name);
+        if (direction == ultraverse::state::v2::ProcMatcher::ParamDirection::OUT) {
+            continue;
+        }
         auto it = _args.find(name);
         if (it == _args.end()) {
             continue;
@@ -74,6 +78,10 @@ std::map<std::string, StateData> ProcCall::buildInitialVariables(
     std::map<std::string, StateData> variables;
 
     for (const auto &name : procMatcher.parameters()) {
+        const auto direction = procMatcher.parameterDirection(name);
+        if (direction == ultraverse::state::v2::ProcMatcher::ParamDirection::OUT) {
+            continue;
+        }
         auto it = _args.find(name);
         if (it == _args.end()) {
             continue;

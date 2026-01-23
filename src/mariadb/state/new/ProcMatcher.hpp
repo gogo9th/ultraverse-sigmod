@@ -5,6 +5,7 @@
 #ifndef ULTRAVERSE_PROCMATCHER_HPP
 #define ULTRAVERSE_PROCMATCHER_HPP
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <optional>
@@ -44,6 +45,13 @@ namespace ultraverse::state::v2 {
 
     class ProcMatcher {
     public:
+        enum class ParamDirection : uint8_t {
+            IN = 0,
+            OUT = 1,
+            INOUT = 2,
+            UNKNOWN = 3,
+        };
+
         static void load(const std::string &procedureDefinition, ProcMatcher &instance);
         static std::unordered_set<std::string> extractTableColumns(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr);
         
@@ -63,6 +71,9 @@ namespace ultraverse::state::v2 {
         
         
         const std::vector<std::string> &parameters() const;
+        const std::vector<ParamDirection> &parameterDirections() const;
+        ParamDirection parameterDirection(size_t index) const;
+        ParamDirection parameterDirection(const std::string &name) const;
         const std::vector<std::shared_ptr<ultparser::Query>> codes() const;
         
         const std::unordered_set<std::string> &readSet() const;
@@ -105,6 +116,8 @@ namespace ultraverse::state::v2 {
         std::vector<std::shared_ptr<ultparser::Query>> _codes;
         
         std::vector<std::string> _parameters;
+        std::vector<ParamDirection> _parameterDirections;
+        std::unordered_map<std::string, ParamDirection> _parameterDirectionMap;
         
         std::unordered_set<std::string> _readSet;
         std::unordered_set<std::string> _writeSet;
