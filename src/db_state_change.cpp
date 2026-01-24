@@ -109,8 +109,7 @@ namespace ultraverse {
             "    --gid-range START...END    GID range to process\n"
             "    --skip-gids GID1,GID2,...  GIDs to skip\n"
             "    --replay-from GID          Replay all transactions from GID before executing replay plan\n"
-            "    --manual-replace-query     Do not execute replace queries; print them for manual run\n"
-            "    --no-exec-replace-query    Alias for --manual-replace-query\n"
+            "    --no-exec-replace-query    Do not execute replace queries; print them for manual run\n"
             "    --dry-run                  Dry run mode\n"
             "    -v                         set logger level to DEBUG\n"
             "    -V                         set logger level to TRACE\n"
@@ -155,7 +154,6 @@ namespace ultraverse {
             {"gid-range", required_argument, 0, 's'},
             {"skip-gids", required_argument, 0, 'S'},
             {"replay-from", required_argument, 0, 'R'},
-            {"manual-replace-query", no_argument, 0, 'M'},
             {"no-exec-replace-query", no_argument, 0, 'M'},
             {"dry-run", no_argument, 0, 'D'},
             {0, 0, 0, 0}
