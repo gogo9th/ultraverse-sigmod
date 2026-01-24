@@ -11,7 +11,7 @@ message StateData {
     int64 int_value = 5;
     uint64 uint_value = 6;
     double double_value = 7;
-    string string_value = 8;
+    bytes string_value = 8;
   }
 }
 

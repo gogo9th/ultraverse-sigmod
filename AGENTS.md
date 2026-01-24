@@ -174,7 +174,7 @@ The agent should implement the following state machine:
 - `prepend` input SQL supports DML only (DDL is an error/skip).
 - `statelogd` requires `binlog_row_metadata=FULL`; `PARTIAL_UPDATE_ROWS_EVENT` is unsupported.
 - Procedure hints support only the `callid/procname/args/vars` format; the legacy `callinfo` array format is unsupported.
-- Protobuf-based `.ult*` serialization is a breaking change; legacy cereal logs are not readable.
+- Protobuf-based `.ult*` serialization is a breaking change; legacy cereal logs are not readable, and the cereal submodule/serialization sources have been removed.
 - `statelogd`'s `.ultchkpoint` serialization is commented out, so `-r` restore is limited.
 - `db_state_change` fixes `stateLogPath` to `.` (FIXME), and `BINLOG_PATH` is stored only in the plan and unused in the current path.
 - `db_state_change`'s `--gid-range` (`-s/-e`) and `-S` skip GID are parsed but not used in the v2 `StateChanger` path (currently no-op).
