@@ -8,16 +8,25 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   ultraverse-test:
     if: >
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/ultraverse-ci:ubuntu-24.04
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     env:
       GOCACHE: /tmp/go-build-cache
       GOMODCACHE: /tmp/go-mod-cache
-      GOPATH: /tmp/go
+      GOPATH: /go
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,22 +48,6 @@ jobs:
           ref: mysql-9.6.0
           path: mysql-server
           fetch-depth: 1
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake pkg-config bison flex \
-            libboost-all-dev libssl-dev zlib1g-dev libzstd-dev \
-            libprotobuf-dev protobuf-compiler \
-            libmysqlclient-dev libtbb-dev libtirpc-dev \
-            golang-go
-
-      - name: Install protoc-gen-go
-        run: |
-          mkdir -p "${GOPATH}/bin"
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28
-          echo "${GOPATH}/bin" >> "${GITHUB_PATH}"
 
       - name: Prepare MySQL headers
         run: |
