@@ -316,7 +316,11 @@ Codex는 기본적으로 자율적(Autonomous)으로 행동하지만, 아래의 
 
 ## Build
 ```bash
-# Configure (필수: MySQL 소스 트리(=libbinlogevents)가 ./mysql-server 에 있어야 함)
+# Configure
+# - MySQL 소스 트리(=libbinlogevents)가 ./mysql-server 에 있거나
+#   cmake -DULTRAVERSE_MYSQLD_SRC_PATH=/path/to/mysql-server 로 경로를 지정해야 함
+# - MySQL 소스 트리는 최소 1회 cmake configure가 필요함
+#   (autogen 헤더 include/my_config.h, include/mysql_version.h 참조 때문)
 cmake -S . -B build
 
 # Build all targets (Go cache 권한 문제를 피하려면 /tmp 캐시 사용)
@@ -456,6 +460,9 @@ python scripts/esperanza/minishop.py
 | `procpatcher/main.go` | stored procedure 패치 CLI |
 | `procpatcher/delimiter/preprocessor.go` | DELIMITER-aware lexer: statement 분할 + 원문 byte offset 추적 |
 | `procpatcher/patcher/text_patch.go` | OriginTextPosition 기반 원문 패치(들여쓰기 보존) |
+
+- `procpatcher`는 `--depatch` 모드로 `__ULTRAVERSE_PROCEDURE_HINT` INSERT와 legacy `__ultraverse_callinfo` 선언/INSERT를 제거하며, 이 모드에서는 `__ultraverse__helper.sql`을 생성하지 않는다.
+- `--repatch`는 depatch 후 최신 힌트 포맷으로 다시 패치하며, helper SQL 생성은 patch와 동일하다.
 
 ## Esperanza (scripts/esperanza/)
 | 파일 | 역할 |
