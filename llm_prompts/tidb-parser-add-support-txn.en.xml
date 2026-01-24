@@ -1,0 +1,117 @@
+<agent-task mode="planning">
+    <objective>
+        # Support `START TRANSACTION` syntax
+
+        - Currently tidb/parser does not support `START TRANSACTION` syntax.
+        - Please create a plan to support the syntax above.
+    </objective>
+    <stderr>
+        Error: line 3 column 10 near "START TRANSACTION;
+    </stderr>
+    <code lang="sql; variant=mysql">
+        CREATE PROCEDURE test_proc()
+        BEGIN
+            START TRANSACTION;
+            SELECT 1;
+            COMMIT;
+        END;
+    </code>
+    <hint source="claude-code (claude-opus-4-5-20251101)">
+        (Below is a conversation log from when adding SELECT INTO support. Use for reference only.)
+        * Hey, SELECT INTO syntax is failing:
+
+        testing SELECT score INTO game_score FROM game_records WHERE user_id = 1; ... FAIL
+        parser error: line 1 column 28 near "game_score FROM game_records WHERE user_id = 1;"
+
+        It seems the TiDB parser does not support MySQL procedure-style SELECT ... INTO variable syntax. TiDB supports SELECT ... INTO OUTFILE/DUMPFILE, but it doesn't seem to support variable assignment syntax.
+
+        The plan said "TiDB parser supports SELECT INTO", so how should we proceed?
+
+        1. Fork TiDB parser and add SELECT INTO support - requires grammar changes
+        2. Keep the current approach - remove the INTO part via ult_sanitize_select_into and extract variables via extract_select_into into the into_variables field
+        3. Suggest another approach if you have one
+
+        > 1. I'll fork it and build a version that supports INTO. But how do I install the forked version in Go? Do I just change it to github username/repo form?
+        > Also, can you tell me which files to touch in tidb/parser?
+
+        * Yep! To add SELECT INTO variable assignment support in TiDB parser, look at these files:
+
+        * Bash(ls -la /Users/cheesekun/go/pkg/mod/github.com/pingcap/tidb/pkg/parser@v0.0.0-20260121072752-93c65e2234ad/)
+          total 17936
+        dr-xr-xr-x@ 48 cheesekun  staff     1536  Jan 21 17:00 .
+        drwxr-xr-x@  3 cheesekun  staff       96  Jan 21 17:00 ..
+        ... +46 lines (ctrl+o to expand)
+
+        * Key files:
+
+        1. parser.y - yacc grammar file (most important!)
+        2. ast/dml.go - SelectStmt struct definition
+        3. parser.go - auto-generated from parser.y (do not edit directly)
+
+        Let's locate the SELECT grammar section in parser.y:
+
+        * Bash(grep -n "SelectStmt\\|SelectInto\\|INTO" /Users/cheesekun/go/pkg/mod/github.com/pingcap/tidb/pkg/parser@v0.0.0-20260121072752-93c65e2234ad/parser.y | head -50)
+          178:       into              "INTO"
+        1043:      InsertIntoStmt             "INSERT INTO statement"
+        1045:      ImportIntoStmt             "IMPORT INTO statement"
+        ... +47 lines (ctrl+o to expand)
+
+        * Bash(grep -n -A 20 "SelectStmtIntoOption:" /Users/cheesekun/go/pkg/mod/github.com/pingcap/tidb/pkg/parser@v0.0.0-20260121072752-93c65e2234ad/parser.y)
+          10567:SelectStmtIntoOption:
+        10568-     {
+        10569-             $$ = nil
+        ... +18 lines (ctrl+o to expand)
+
+        * Found it! Files to modify:
+
+        1. parser.y (grammar file)
+
+        Add a variable-assignment case to the SelectStmtIntoOption: rule around line 10567:
+
+        SelectStmtIntoOption:
+        {
+        $$ = nil
+        }
+        |     "INTO" "OUTFILE" stringLit Fields Lines
+        {
+        // ... existing OUTFILE code ...
+        }
+        |     "INTO" VariableList      // <-- add this!
+        {
+        // logic to store the variable list
+        }
+
+        2. ast/dml.go (AST definitions)
+
+        Add a variable-list field to SelectStmt, or extend SelectIntoOption:
+
+        // Add to SelectStmt
+        type SelectStmt struct {
+        // ... existing fields ...
+        IntoVariables []*VariableExpr  // <-- add
+        }
+
+        Or in SelectIntoOption:
+        type SelectIntoOption struct {
+        Tp         SelectIntoType
+        FileName   string
+        FieldsInfo *FieldsClause
+        LinesInfo  *LinesClause
+        Variables  []*VariableExpr  // <-- add
+        }
+
+        3. Build
+
+        After changes, running make will regenerate parser.go from parser.y.
+
+        ---
+        For reference, MySQL SELECT INTO variable syntax is:
+        SELECT col1, col2 INTO @var1, @var2 FROM table;
+        SELECT col1, col2 INTO var1, var2 FROM table;  -- inside procedures
+
+        When forking, also check VariableList grammar rules! (Search for "Variable:" in parser.y)
+    </hint>
+    <agent-rule>
+        - **Harmony is important; be harmonious**: AI-generated code is generally not welcomed. Please respect the existing code conventions as much as possible to ensure your code harmonizes with the work of other TiDB contributors.
+    </agent-rule>
+</agent-task>

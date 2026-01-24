@@ -1,0 +1,88 @@
+<agent-task mode="planning">
+    <objective>
+        # Refactor ultsqlparser
+
+        ## 1. Separate source code
+        - Separate the part that actually parses SQL and builds the syntax tree from the externally exported interface that provides functionality via C interop.
+
+        ## 2. Define the public interface
+        - Define a C interop interface like the code below.
+        - Functions that exist today but are not included below must be **removed**.
+            - Most of them are HACKs for syntax not supported by old TiDB parser versions. The TiDB parser has matured enough now, so remove those HACKs.
+
+        ## 2-1. Handle breaking changes in the public interface
+        - Since there will be breaking changes in the public interface, update the upper C++ modules that use ultsqlparser accordingly.
+
+        ## 3. Code cleanup
+        - Improve the overly messy code structure.
+        - Remove unnecessary comments, debugging code, etc.
+        - Refactor the code to follow Go best practices.
+        - Add GoDoc to clearly describe the roles of functions and types.
+
+        ## 4. Write tests
+        - Write tests inside the Go package that behave similarly to `tests/sqlparser-test.cpp`.
+
+    </objective>
+    <code lang="text/x-pseudocode; variant=swift" name="ultparserlib.go (what it should look like)">
+        // ultsqlparser.go
+
+        /// # ABOUT PARSER INSTANCES
+        /// - Not thread-safe. Create a separate parser instance per thread and do not share/mix between threads.
+        // Actually a pointer, but treat it like a handle
+        typealias ult_sql_parser_t = Int // TODO: typeof(pointer)
+
+        /// Create a new parser instance.
+        @convention(c)
+        @exported(c)
+        func ult_sql_parser_create() -> ult_parser_t? {
+            // TODO: create and return a tidb.parser.Parser instance
+        }
+
+        /// Destroy a parser instance.
+        @convention(c)
+        @exported(c)
+        func ult_sql_parser_destroy(parser: ult_sql_parser_t?) {
+        }
+
+        /// Parse SQL statements.
+        /// - Parameters:
+        ///   - parser: parser instance
+        ///   - sql: SQL string to parse
+        ///   - sql_len: SQL string length
+        ///   - out_stmts: buffer to store parsed statements (protobuf-serialized bytes: ParseResult message)
+        /// - Returns: byte length of parsed statements; negative on error
+        func ult_sql_parse(
+            parser: ult_sql_parser_t,
+            sql: UnsafePointer<CChar>?,
+            sql_len: Int,
+            out_stmts: UnsafeMutablePointer<CChar>?
+        ) -> Int
+
+        /// Compute a hash of the SQL Statement Tree to compare whether queries are the same.
+        /// - Parameters:
+        ///   - parser: parser instance
+        ///   - sql: SQL string to hash
+        ///   - sql_len: SQL string length
+        ///   - out_hash: buffer to store the computed hash (20-byte SHA1 hash)
+        /// - Returns: byte length of the hash (20); negative on error
+        func ult_query_hash(
+            parser: ult_sql_parser_t,
+            sql: UnsafePointer<CChar>?,
+            sql_len: Int,
+            out_hash: UnsafeMutablePointer<CChar>?
+        ) -> Int
+
+        /// Parse SQL statements and return JSON. For debugging only!!
+        func ult_parse_jsonify(
+            parser: ult_sql_parser_t,
+            sql: UnsafePointer<CChar>?,
+            sql_len: Int,
+            out_json: UnsafeMutablePointer<CChar>?
+        ) -> Int
+    </code>
+    <note>
+        - Delegate the actual implementation to OpenAI Codex using the @codex-delegate skill.
+        - Do not delegate the entire task at once; split and delegate step by step.
+        - Review the code implemented for each step, and if needed, request fixes/improvements from Codex.
+    </note>
+</agent-task>
