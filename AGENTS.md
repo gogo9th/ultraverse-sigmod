@@ -116,11 +116,11 @@ The agent should implement the following state machine:
 - `cmake/*`, `src/CMakeLists.txt`: Build/dependency configuration.
 
 ## 4. Data/File Formats (As Implemented)
-- `.ultstatelog`: `StateLogWriter` writes packed `TransactionHeader` + cereal-serialized `Transaction` records consecutively. Can skip using `TransactionHeader.nextPos`. (`StateLogReader::skipTransaction`)
+- `.ultstatelog`: `StateLogWriter` writes packed `TransactionHeader` + Protobuf-serialized `Transaction` records consecutively. Can skip using `TransactionHeader.nextPos`. (`StateLogReader::skipTransaction`)
 - `.ultindex`: GID -> log offset index. `GIDIndexWriter` appends; `GIDIndexReader` queries via mmap.
-- `.ultcluster`: `StateCluster` (row-level cluster) cereal binary.
-- `.ulttables`, `.ultcolumns`: `TableDependencyGraph`/`ColumnDependencyGraph` cereal binaries (updated in make_cluster; prepare performs column-wise filtering using column-set taint instead of graphs).
-- `.ultreplayplan`: `StateChangeReplayPlan` cereal binary (`gids`, `userQueries`, `rollbackGids`, `replaceQueries`).
+- `.ultcluster`: `StateCluster` (row-level cluster) Protobuf binary (single message).
+- `.ulttables`, `.ultcolumns`: `TableDependencyGraph`/`ColumnDependencyGraph` Protobuf binaries (updated in make_cluster; prepare performs column-wise filtering using column-set taint instead of graphs).
+- `.ultreplayplan`: `StateChangeReplayPlan` Protobuf binary (`gids`, `userQueries`, `rollbackGids`, `replaceQueries`).
 - `.ultchkpoint`: statelogd checkpoint file. Serialize code is currently commented out, so practical use is limited.
 
 ## 5. Core Module Map
@@ -174,6 +174,7 @@ The agent should implement the following state machine:
 - `prepend` input SQL supports DML only (DDL is an error/skip).
 - `statelogd` requires `binlog_row_metadata=FULL`; `PARTIAL_UPDATE_ROWS_EVENT` is unsupported.
 - Procedure hints support only the `callid/procname/args/vars` format; the legacy `callinfo` array format is unsupported.
+- Protobuf-based `.ult*` serialization is a breaking change; legacy cereal logs are not readable.
 - `statelogd`'s `.ultchkpoint` serialization is commented out, so `-r` restore is limited.
 - `db_state_change` fixes `stateLogPath` to `.` (FIXME), and `BINLOG_PATH` is stored only in the plan and unused in the current path.
 - `db_state_change`'s `--gid-range` (`-s/-e`) and `-S` skip GID are parsed but not used in the v2 `StateChanger` path (currently no-op).
@@ -368,7 +369,7 @@ cd build && ctest -R sqlparser-test
 - `relationship-resolver-test`: Column alias/FK chain resolution tests
 - `statehash-test`: Table state hash tests
 - `stateitem-test`: StateItem range operation tests
-- `query-transaction-serialization-test`: Query/Transaction cereal round-trip tests
+- `query-transaction-serialization-test`: Query/Transaction Protobuf round-trip tests
 - `sqlparser-test`: libultparser SQL parsing tests
 - `tabledependencygraph-test`: Table dependency graph tests
 - `naminghistory-test`: Table rename history tests
@@ -428,7 +429,7 @@ python scripts/esperanza/minishop.py
 ## State Management (src/mariadb/state/new/)
 | File | Role |
 |------|------|
-| `src/mariadb/state/new/Transaction.*`, `src/mariadb/state/new/Query.*` | Transaction/Query data structures + cereal serialization. |
+| `src/mariadb/state/new/Transaction.*`, `src/mariadb/state/new/Query.*` | Transaction/Query data structures + Protobuf conversion helpers. |
 | `src/mariadb/state/new/StateLogWriter.*`, `src/mariadb/state/new/StateLogReader.*` | `.ultstatelog` file I/O. |
 | `src/mariadb/state/new/GIDIndexWriter.*`, `src/mariadb/state/new/GIDIndexReader.*` | `.ultindex` GID->offset index. |
 | `src/mariadb/state/new/StateChanger.*` | State change orchestration (prepare/replay/full-replay). |
@@ -440,6 +441,8 @@ python scripts/esperanza/minishop.py
 | `src/mariadb/state/new/StateChangeReport.*` | Report (JSON) generation. |
 | `src/mariadb/state/new/StateChangeReplayPlan.hpp` | `.ultreplayplan` serialization schema. |
 | `src/mariadb/state/new/StateIO.*` | State I/O abstraction (file/mock/backup loader). |
+| `src/mariadb/state/new/proto/ultraverse_state.proto` | Protobuf schemas for state log/cluster/plan serialization. |
+| `src/mariadb/state/new/proto/ultraverse_state_fwd.hpp` | Forward declarations for generated Protobuf types. |
 
 ## Clustering & Analysis (src/mariadb/state/new/)
 | File | Role |

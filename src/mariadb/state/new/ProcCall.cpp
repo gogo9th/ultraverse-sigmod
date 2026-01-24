@@ -4,6 +4,8 @@
 
 #include "ProcCall.hpp"
 
+#include "ultraverse_state.pb.h"
+
 ProcCall::ProcCall():
   _callId(0),
   _procName(),
@@ -94,4 +96,59 @@ std::map<std::string, StateData> ProcCall::buildInitialVariables(
     }
     
     return variables;
+}
+
+void ProcCall::toProtobuf(ultraverse::state::v2::proto::ProcCall *out) const {
+  if (out == nullptr) {
+    return;
+  }
+
+  out->Clear();
+  out->set_call_id(_callId);
+  out->set_proc_name(_procName);
+  out->set_call_info(_callInfo);
+
+  auto *argsMap = out->mutable_args();
+  argsMap->clear();
+  for (const auto &pair : _args) {
+    auto &dataMsg = (*argsMap)[pair.first];
+    pair.second.toProtobuf(&dataMsg);
+  }
+
+  auto *varsMap = out->mutable_vars();
+  varsMap->clear();
+  for (const auto &pair : _vars) {
+    auto &dataMsg = (*varsMap)[pair.first];
+    pair.second.toProtobuf(&dataMsg);
+  }
+
+  for (const auto &statement : _statements) {
+    out->add_statements(statement);
+  }
+}
+
+void ProcCall::fromProtobuf(const ultraverse::state::v2::proto::ProcCall &msg) {
+  _callId = msg.call_id();
+  _procName = msg.proc_name();
+  _callInfo = msg.call_info();
+
+  _args.clear();
+  for (const auto &pair : msg.args()) {
+    StateData data;
+    data.fromProtobuf(pair.second);
+    _args.emplace(pair.first, std::move(data));
+  }
+
+  _vars.clear();
+  for (const auto &pair : msg.vars()) {
+    StateData data;
+    data.fromProtobuf(pair.second);
+    _vars.emplace(pair.first, std::move(data));
+  }
+
+  _statements.clear();
+  _statements.reserve(static_cast<size_t>(msg.statements_size()));
+  for (const auto &statement : msg.statements()) {
+    _statements.emplace_back(statement);
+  }
 }

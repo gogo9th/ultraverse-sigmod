@@ -15,6 +15,8 @@
 #include "utils/StringUtil.hpp"
 #include "StateCluster.hpp"
 
+#include "ultraverse_state.pb.h"
+
 namespace ultraverse::state::v2 {
 
     namespace {
@@ -972,5 +974,80 @@ std::vector<std::string> StateCluster::generateReplaceQuery(const std::string &t
             // std::any_of(read.begin(), read.end(), [&containsGid](const auto &pair) { return containsGid(READ, pair); }) ||
             std::any_of(write.begin(), write.end(), [&containsGid](const auto &pair) { return containsGid(WRITE, pair); })
         );
+    }
+
+    void StateCluster::Cluster::toProtobuf(ultraverse::state::v2::proto::StateClusterCluster *out) const {
+        if (out == nullptr) {
+            return;
+        }
+
+        out->Clear();
+
+        for (const auto &pair : read) {
+            auto *entry = out->add_read();
+            pair.first.toProtobuf(entry->mutable_range());
+            for (const auto gid : pair.second) {
+                entry->add_gids(gid);
+            }
+        }
+
+        for (const auto &pair : write) {
+            auto *entry = out->add_write();
+            pair.first.toProtobuf(entry->mutable_range());
+            for (const auto gid : pair.second) {
+                entry->add_gids(gid);
+            }
+        }
+    }
+
+    void StateCluster::Cluster::fromProtobuf(const ultraverse::state::v2::proto::StateClusterCluster &msg) {
+        read.clear();
+        write.clear();
+
+        for (const auto &entry : msg.read()) {
+            StateRange range;
+            range.fromProtobuf(entry.range());
+            std::unordered_set<gid_t> gids;
+            gids.reserve(static_cast<size_t>(entry.gids_size()));
+            for (const auto gid : entry.gids()) {
+                gids.insert(gid);
+            }
+            read.emplace(std::move(range), std::move(gids));
+        }
+
+        for (const auto &entry : msg.write()) {
+            StateRange range;
+            range.fromProtobuf(entry.range());
+            std::unordered_set<gid_t> gids;
+            gids.reserve(static_cast<size_t>(entry.gids_size()));
+            for (const auto gid : entry.gids()) {
+                gids.insert(gid);
+            }
+            write.emplace(std::move(range), std::move(gids));
+        }
+    }
+
+    void StateCluster::toProtobuf(ultraverse::state::v2::proto::StateCluster *out) const {
+        if (out == nullptr) {
+            return;
+        }
+
+        out->Clear();
+        auto *clusters = out->mutable_clusters();
+        clusters->clear();
+
+        for (const auto &pair : _clusters) {
+            auto &clusterMsg = (*clusters)[pair.first];
+            pair.second.toProtobuf(&clusterMsg);
+        }
+    }
+
+    void StateCluster::fromProtobuf(const ultraverse::state::v2::proto::StateCluster &msg) {
+        _clusters.clear();
+        for (const auto &pair : msg.clusters()) {
+            Cluster cluster;
+            cluster.fromProtobuf(pair.second);
+            _clusters.emplace(pair.first, std::move(cluster));
+        }
     }
 }

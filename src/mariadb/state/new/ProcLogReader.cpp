@@ -4,6 +4,8 @@
 
 #include "ProcLogReader.hpp"
 
+#include "ultraverse_state.pb.h"
+
 namespace ultraverse::state::v2 {
     ProcLogReader::ProcLogReader() {
     
@@ -48,11 +50,41 @@ namespace ultraverse::state::v2 {
     }
     
     bool ProcLogReader::nextProcCall() {
+        if (_currentHeader == nullptr) {
+            _current = nullptr;
+            return false;
+        }
+
+        const auto startPos = static_cast<std::streamoff>(_stream.tellg());
+        if (!_stream.good()) {
+            _current = nullptr;
+            return false;
+        }
+
+        const auto endPos = static_cast<std::streamoff>(_currentHeader->nextPos);
+        if (endPos <= startPos) {
+            _current = nullptr;
+            return false;
+        }
+
+        const auto size = static_cast<size_t>(endPos - startPos);
+        std::string buffer(size, '\0');
+        _stream.read(buffer.data(), static_cast<std::streamsize>(size));
+        if (!_stream.good()) {
+            _current = nullptr;
+            return false;
+        }
+
+        ultraverse::state::v2::proto::ProcCall protoCall;
+        if (!protoCall.ParseFromString(buffer)) {
+            _current = nullptr;
+            return false;
+        }
+
         auto procCall = std::make_shared<ProcCall>();
-        cereal::BinaryInputArchive archive(_stream);
-        archive(*procCall);
+        procCall->fromProtobuf(protoCall);
         _current = procCall;
-        
+
         return true;
     }
     

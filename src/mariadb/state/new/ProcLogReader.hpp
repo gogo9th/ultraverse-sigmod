@@ -8,8 +8,6 @@
 #include <string>
 #include <fstream>
 
-#include <cereal/archives/binary.hpp>
-
 #include "ProcCall.hpp"
 
 namespace ultraverse::state::v2 {

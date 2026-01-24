@@ -7,6 +7,8 @@
 
 #include <boost/graph/adjacency_list.hpp>
 
+#include "mariadb/state/new/proto/ultraverse_state_fwd.hpp"
+
 #include "Query.hpp"
 #include "StateChangeContext.hpp"
 
@@ -26,6 +28,9 @@ namespace ultraverse::state::v2 {
         
         template <typename Archive>
         void serialize(Archive &archive);
+
+        void toProtobuf(ultraverse::state::v2::proto::ColumnDependencyNode *out) const;
+        void fromProtobuf(const ultraverse::state::v2::proto::ColumnDependencyNode &msg);
     };
     
     /**
@@ -63,6 +68,9 @@ namespace ultraverse::state::v2 {
     
         template <typename Archive>
         void load(Archive &archive);
+
+        void toProtobuf(ultraverse::state::v2::proto::ColumnDependencyGraph *out) const;
+        void fromProtobuf(const ultraverse::state::v2::proto::ColumnDependencyGraph &msg);
     private:
         std::string dumpColumnSet(const ColumnSet &columnSet) const;
         
@@ -72,7 +80,5 @@ namespace ultraverse::state::v2 {
         std::map<size_t, int> _nodeMap;
     };
 }
-
-#include "ColumnDependencyGraph.cereal.cpp"
 
 #endif //ULTRAVERSE_COLUMNDEPENDENCYGRAPH_HPP

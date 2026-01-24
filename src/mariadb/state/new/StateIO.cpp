@@ -12,11 +12,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <cereal/archives/binary.hpp>
 #include <fmt/format.h>
 
 #include "StateIO.hpp"
 #include "StateClusterWriter.hpp"
+
+#include "ultraverse_state.pb.h"
 
 namespace {
     std::string resolveMysqlBinaryPath() {
@@ -204,14 +205,20 @@ namespace ultraverse::state::v2 {
         }
 
         std::istringstream stream(_data);
-        cereal::BinaryInputArchive archive(stream);
-        archive(cluster);
+        ultraverse::state::v2::proto::StateCluster protoCluster;
+        if (!protoCluster.ParseFromIstream(&stream)) {
+            throw std::runtime_error("failed to read mocked state cluster protobuf");
+        }
+        cluster.fromProtobuf(protoCluster);
     }
 
     void MockedStateClusterStore::save(StateCluster &cluster) {
         std::ostringstream stream;
-        cereal::BinaryOutputArchive archive(stream);
-        archive(cluster);
+        ultraverse::state::v2::proto::StateCluster protoCluster;
+        cluster.toProtobuf(&protoCluster);
+        if (!protoCluster.SerializeToOstream(&stream)) {
+            throw std::runtime_error("failed to serialize mocked state cluster protobuf");
+        }
         _data = stream.str();
     }
 

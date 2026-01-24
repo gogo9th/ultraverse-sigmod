@@ -7,6 +7,8 @@
 
 #include <boost/graph/adjacency_list.hpp>
 
+#include "mariadb/state/new/proto/ultraverse_state_fwd.hpp"
+
 #include "Query.hpp"
 #include "StateChangeContext.hpp"
 #include "utils/log.hpp"
@@ -36,6 +38,9 @@ namespace ultraverse::state::v2 {
         
         template <typename Archive>
         void load(Archive &archive);
+
+        void toProtobuf(ultraverse::state::v2::proto::TableDependencyGraph *out) const;
+        void fromProtobuf(const ultraverse::state::v2::proto::TableDependencyGraph &msg);
         
     private:
         LoggerPtr _logger;
@@ -45,7 +50,5 @@ namespace ultraverse::state::v2 {
     };
     
 }
-
-#include "TableDependencyGraph.cereal.cpp"
 
 #endif //ULTRAVERSE_TABLEDEPENDENCYGRAPH_HPP

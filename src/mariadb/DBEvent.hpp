@@ -12,8 +12,6 @@
 #include <string>
 #include <vector>
 
-#include <cereal/access.hpp>
-
 #include "base/DBEvent.hpp"
 
 namespace ultraverse::mariadb {
@@ -171,8 +169,7 @@ namespace ultraverse::mariadb {
         int sizeOf(int columnIndex) const;
         std::string nameOf(int columnIndex) const;
 
-        template <typename Archive>
-        void serialize(Archive &archive);
+        // Serialization removed: protobuf-based serialization is handled by state log types.
         
     private:
         uint64_t _timestamp;
@@ -294,7 +291,5 @@ namespace ultraverse::mariadb {
     
 
 }
-
-#include "DBEvent.cereal.cpp"
 
 #endif //ULTRAVERSE_MARIADB_DBEVENT_HPP

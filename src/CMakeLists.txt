@@ -27,6 +27,44 @@ pkg_check_modules(MYSQL REQUIRED mysqlclient)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/mysql_binlogevents.cmake)
 
+find_program(PROTOC_EXECUTABLE protoc)
+if (NOT PROTOC_EXECUTABLE)
+    message(FATAL_ERROR "protoc not found (required for ultraverse_state.proto)")
+endif()
+
+set(ULTRAVERSE_STATE_PROTO_DIR
+    ${CMAKE_CURRENT_SOURCE_DIR}/mariadb/state/new/proto
+)
+set(ULTRAVERSE_STATE_PROTO
+    ${ULTRAVERSE_STATE_PROTO_DIR}/ultraverse_state.proto
+)
+set(ULTRAVERSE_STATE_PROTO_OUT
+    ${CMAKE_CURRENT_BINARY_DIR}/proto_autogen
+)
+
+file(MAKE_DIRECTORY ${ULTRAVERSE_STATE_PROTO_OUT})
+
+set(ULTRAVERSE_STATE_PROTO_SRCS
+    ${ULTRAVERSE_STATE_PROTO_OUT}/ultraverse_state.pb.cc
+)
+set(ULTRAVERSE_STATE_PROTO_HDRS
+    ${ULTRAVERSE_STATE_PROTO_OUT}/ultraverse_state.pb.h
+)
+
+add_custom_command(
+    OUTPUT ${ULTRAVERSE_STATE_PROTO_SRCS} ${ULTRAVERSE_STATE_PROTO_HDRS}
+    COMMAND ${PROTOC_EXECUTABLE}
+        --cpp_out=${ULTRAVERSE_STATE_PROTO_OUT}
+        -I ${ULTRAVERSE_STATE_PROTO_DIR}
+        ${ULTRAVERSE_STATE_PROTO}
+    DEPENDS ${ULTRAVERSE_STATE_PROTO}
+    COMMENT "Generating protobuf for ultraverse state serialization"
+)
+
+add_custom_target(ultraverse_state_proto
+    DEPENDS ${ULTRAVERSE_STATE_PROTO_SRCS} ${ULTRAVERSE_STATE_PROTO_HDRS}
+)
+
 
 # add_compile_options(-march=native -O2)
 
@@ -73,6 +111,7 @@ set(LIBULTRAVERSE_BASE_SRCS
     mariadb/state/new/CombinedIterator.hpp
     
     ${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen/ultparser_query.pb.cc
+    ${ULTRAVERSE_STATE_PROTO_SRCS}
 )
 
 set(LIBULTRAVERSE_STATE_SRCS
@@ -157,7 +196,7 @@ set(ULTRAVERSE_APP_BASE_SRCS
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp)
 include_directories(../dependencies/nlohmann-json/include)
-include_directories(../dependencies/cereal/include)
+include_directories(${ULTRAVERSE_STATE_PROTO_OUT})
 include_directories(${Boost_INCLUDE_DIRS})
 include_directories(${MYSQL_INCLUDE_DIRS})
 include_directories(${PYTHON3_INCLUDE_DIRS})
@@ -208,7 +247,7 @@ function(ultraverse_add_homebrew_link_dir target_name)
 endfunction()
 
 add_library(ultraverse SHARED ${LIBULTRAVERSE_SRCS})
-add_dependencies(ultraverse ultparserlib)
+add_dependencies(ultraverse ultparserlib ultraverse_state_proto)
 
 target_link_libraries(ultraverse ${ULTRAVERSE_DEPENDENCIES})
 

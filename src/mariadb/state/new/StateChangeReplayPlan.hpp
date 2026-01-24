@@ -11,9 +11,7 @@
 #include <string>
 #include <vector>
 
-#include <cereal/archives/binary.hpp>
-#include <cereal/types/map.hpp>
-#include <cereal/types/vector.hpp>
+#include "ultraverse_state.pb.h"
 
 #include "Transaction.hpp"
 
@@ -25,9 +23,57 @@ namespace ultraverse::state::v2 {
         std::vector<gid_t> rollbackGids;
         std::vector<std::string> replaceQueries;
 
-        template <typename Archive>
-        void serialize(Archive &archive) {
-            archive(gids, userQueries, rollbackGids, replaceQueries);
+        void toProtobuf(ultraverse::state::v2::proto::StateChangeReplayPlan *out) const {
+            if (out == nullptr) {
+                return;
+            }
+
+            out->Clear();
+            for (const auto gid : gids) {
+                out->add_gids(gid);
+            }
+
+            auto *userQueryMap = out->mutable_user_queries();
+            userQueryMap->clear();
+            for (const auto &pair : userQueries) {
+                auto &txnMsg = (*userQueryMap)[pair.first];
+                pair.second.toProtobuf(&txnMsg);
+            }
+
+            for (const auto gid : rollbackGids) {
+                out->add_rollback_gids(gid);
+            }
+
+            for (const auto &query : replaceQueries) {
+                out->add_replace_queries(query);
+            }
+        }
+
+        void fromProtobuf(const ultraverse::state::v2::proto::StateChangeReplayPlan &msg) {
+            gids.clear();
+            gids.reserve(static_cast<size_t>(msg.gids_size()));
+            for (const auto gid : msg.gids()) {
+                gids.push_back(gid);
+            }
+
+            userQueries.clear();
+            for (const auto &pair : msg.user_queries()) {
+                Transaction txn;
+                txn.fromProtobuf(pair.second);
+                userQueries.emplace(pair.first, std::move(txn));
+            }
+
+            rollbackGids.clear();
+            rollbackGids.reserve(static_cast<size_t>(msg.rollback_gids_size()));
+            for (const auto gid : msg.rollback_gids()) {
+                rollbackGids.push_back(gid);
+            }
+
+            replaceQueries.clear();
+            replaceQueries.reserve(static_cast<size_t>(msg.replace_queries_size()));
+            for (const auto &query : msg.replace_queries()) {
+                replaceQueries.emplace_back(query);
+            }
         }
 
         void save(const std::string &path) const {
@@ -35,8 +81,11 @@ namespace ultraverse::state::v2 {
             if (!stream.is_open()) {
                 throw std::runtime_error("cannot open replay plan file for write: " + path);
             }
-            cereal::BinaryOutputArchive archive(stream);
-            archive(*this);
+            ultraverse::state::v2::proto::StateChangeReplayPlan protoPlan;
+            toProtobuf(&protoPlan);
+            if (!protoPlan.SerializeToOstream(&stream)) {
+                throw std::runtime_error("failed to serialize replay plan protobuf: " + path);
+            }
         }
 
         static StateChangeReplayPlan load(const std::string &path) {
@@ -45,8 +94,11 @@ namespace ultraverse::state::v2 {
             if (!stream.is_open()) {
                 throw std::runtime_error("cannot open replay plan file for read: " + path);
             }
-            cereal::BinaryInputArchive archive(stream);
-            archive(plan);
+            ultraverse::state::v2::proto::StateChangeReplayPlan protoPlan;
+            if (!protoPlan.ParseFromIstream(&stream)) {
+                throw std::runtime_error("failed to read replay plan protobuf: " + path);
+            }
+            plan.fromProtobuf(protoPlan);
             return plan;
         }
     };

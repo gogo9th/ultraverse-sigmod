@@ -6,7 +6,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include <cereal/archives/binary.hpp>
+#include "ultraverse_state.pb.h"
 
 #include "mariadb/state/new/TableDependencyGraph.hpp"
 #include "mariadb/state/new/StateChangeContext.hpp"
@@ -210,23 +210,21 @@ TEST_CASE("TableDependencyGraph addRelationship from foreign keys uses current n
     REQUIRE(asSet(graph.getDependencies("invoices")) == std::set<std::string>{"members"});
 }
 
-TEST_CASE("TableDependencyGraph cereal round-trip preserves dependencies", "[table-dependency-graph]") {
+TEST_CASE("TableDependencyGraph protobuf round-trip preserves dependencies", "[table-dependency-graph]") {
     TableDependencyGraph graph;
     graph.addRelationship("users", "orders");
     graph.addRelationship("orders", "payments");
 
-    std::stringstream buffer;
-    {
-        cereal::BinaryOutputArchive outputArchive(buffer);
-        outputArchive(graph);
-    }
+    ultraverse::state::v2::proto::TableDependencyGraph protoGraph;
+    graph.toProtobuf(&protoGraph);
+    std::string payload;
+    REQUIRE(protoGraph.SerializeToString(&payload));
+
+    ultraverse::state::v2::proto::TableDependencyGraph restoredProto;
+    REQUIRE(restoredProto.ParseFromString(payload));
 
     TableDependencyGraph restored;
-    buffer.seekg(0);
-    {
-        cereal::BinaryInputArchive inputArchive(buffer);
-        inputArchive(restored);
-    }
+    restored.fromProtobuf(restoredProto);
 
     REQUIRE(restored.isRelated("users", "orders"));
     REQUIRE(restored.isRelated("orders", "payments"));
