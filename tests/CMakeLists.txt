@@ -1,13 +1,5 @@
 include(CTest)
 include(FetchContent)
-set(CMAKE_CXX_STANDARD 20)
-
-add_compile_options(-O0 -g)
-add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-
-if (APPLE)
-    add_compile_options(-fexperimental-library)
-endif()
 
 find_package(Boost REQUIRED)
 
@@ -49,6 +41,12 @@ function(ultraverse_copy_ultparser target_name)
             "$<TARGET_FILE_DIR:${target_name}>/libultparser.so"
         COMMENT "Copying libultparser.so next to ${target_name}"
     )
+endfunction()
+
+function(ultraverse_add_homebrew_link_dir target_name)
+    if (APPLE)
+        target_link_options(${target_name} PRIVATE "-L/opt/homebrew/lib")
+    endif()
 endfunction()
 
 FetchContent_Declare(
@@ -151,26 +149,8 @@ set(ULTRAVERSE_TEST_TARGETS
 foreach(ultrav_target IN LISTS ULTRAVERSE_TEST_TARGETS)
     ultraverse_set_rpath(${ultrav_target})
     ultraverse_copy_ultparser(${ultrav_target})
+    ultraverse_add_homebrew_link_dir(${ultrav_target})
 endforeach()
-
-if (APPLE)
-    target_link_options(statecluster-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(rowgraph-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(relationship-resolver-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(statehash-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(ultraverseconfig-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(keycolumnparser-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(stateitem-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(query-transaction-serialization-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(sqlparser-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(tabledependencygraph-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(naminghistory-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(rowcluster-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(taintanalyzer-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(queryeventbase-rwset-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(procmatcher-trace-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(statechanger-test PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
-endif()
 
 add_test(NAME statecluster-test COMMAND statecluster-test)
 add_test(NAME rowgraph-test COMMAND rowgraph-test)
@@ -188,3 +168,9 @@ add_test(NAME taintanalyzer-test COMMAND taintanalyzer-test)
 add_test(NAME queryeventbase-rwset-test COMMAND queryeventbase-rwset-test)
 add_test(NAME procmatcher-trace-test COMMAND procmatcher-trace-test)
 add_test(NAME statechanger-test COMMAND statechanger-test)
+
+add_custom_target(allTests
+    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -C $<CONFIG>
+    DEPENDS ${ULTRAVERSE_TEST_TARGETS}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
