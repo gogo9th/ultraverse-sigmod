@@ -401,7 +401,7 @@ namespace ultraverse::mariadb {
                 if (columnSize == -1) {
                     strLength = (_rowData.get()[offset]);
                 } else if (columnSize == -2) {
-                    strLength = (uint16_t) *reinterpret_cast<uint16_t *>(_rowData.get() + offset);
+                    strLength = static_cast<uint64_t>(readValue<uint16_t>(offset));
                     strLengthSize = 2;
                 } else if (columnSize == -3) {
                     strLength = static_cast<uint64_t>(_rowData.get()[offset]) |
@@ -409,10 +409,10 @@ namespace ultraverse::mariadb {
                                 (static_cast<uint64_t>(_rowData.get()[offset + 2]) << 16);
                     strLengthSize = 3;
                 } else if (columnSize == -4) {
-                    strLength = (uint32_t) *reinterpret_cast<uint32_t *>(_rowData.get() + offset);
+                    strLength = static_cast<uint64_t>(readValue<uint32_t>(offset));
                     strLengthSize = 4;
                 } else if (columnSize == -8) {
-                    strLength = (uint64_t) *reinterpret_cast<uint64_t *>(_rowData.get() + offset);
+                    strLength = readValue<uint64_t>(offset);
                     strLengthSize = 8;
                 } else {
                     strLength = columnSize;

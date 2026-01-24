@@ -185,6 +185,7 @@ The agent should implement the following state machine:
 - `MySQLBackupLoader` checks mysql client paths in `MYSQL_BIN_PATH`/`MYSQL_BIN`/`MYSQL_PATH` first; if a directory is given, it appends `/mysql`; otherwise it uses `/usr/bin/mysql`.
 - When deserializing `StateData`, string memory must follow the `malloc/free` convention (`new/free` mixing can crash).
 - `ProcMatcher::trace()` interprets procedure parameters, `DECLARE` local variables, and `@var` as symbols. `SELECT ... INTO` defaults to UNKNOWN, but if a KNOWN value already exists (hints/initial vars), it is kept. Functions/complex expressions become UNKNOWN; if such a value is written to a key column, it remains a wildcard.
+- RowEvent string-length decoding avoids unaligned/strict-aliasing reads (uses memcpy-style loads) to keep -O2 behavior consistent.
 
 ## 11. Test/I/O Abstractions
 - DB handle abstraction: `mariadb::DBHandle` (interface) + `MySQLDBHandle` + `MockedDBHandle`; also introduced `DBResult` and `DBHandlePoolAdapter`.

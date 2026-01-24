@@ -14,7 +14,7 @@ add_compile_definitions(SPDLOG_FMT_EXTERNAL)
 add_compile_options(
     "$<$<CONFIG:Debug>:-O0>"
     "$<$<CONFIG:Debug>:-g>"
-    "$<$<CONFIG:Release>:-O1>"
+    "$<$<CONFIG:Release>:-O2>"
 )
 
 if (APPLE)
