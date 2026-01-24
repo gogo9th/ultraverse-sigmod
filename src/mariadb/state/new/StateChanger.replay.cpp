@@ -125,8 +125,9 @@ namespace ultraverse::state::v2 {
 
                     auto nodeId = preGraph.addNode(transaction);
                     if (++added % 1000 == 0) {
+                        auto gid = header->gid;
                         _logger->info("replay(): pre-replay transaction #{} added as node #{}; {} / {} executed",
-                                      header->gid, nodeId, (int) preReplayedTxns.load(), added);
+                                      gid, nodeId, (int) preReplayedTxns.load(), added);
                     }
                 }
             });
