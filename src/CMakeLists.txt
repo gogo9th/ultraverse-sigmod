@@ -1,5 +1,3 @@
-set(CMAKE_CXX_STANDARD 20)
-
 set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "Use external fmt library" FORCE)
 
 Include(FetchContent)
@@ -24,35 +22,59 @@ find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
 
 # pkg_check_modules(JEMALLOC REQUIRED jemalloc)
-pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
-
-pkg_check_modules(MARIADB mysqlclient)
-
-if (NOT MARIADB_FOUND)
-    message(WARNING "libmysqlclient not found, using libmariadb instead")
-    pkg_check_modules(MARIADB REQUIRED mariadb)
-endif()
+pkg_check_modules(MYSQL REQUIRED mysqlclient)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/mysql_binlogevents.cmake)
 
-
-add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-# add_compile_options(-march=native -O2)
-add_compile_options()
-
-if (APPLE)
-    add_compile_options(-fexperimental-library)
+find_program(PROTOC_EXECUTABLE protoc)
+if (NOT PROTOC_EXECUTABLE)
+    message(FATAL_ERROR "protoc not found (required for ultraverse_state.proto)")
 endif()
+
+set(ULTRAVERSE_STATE_PROTO_DIR
+    ${CMAKE_CURRENT_SOURCE_DIR}/mariadb/state/new/proto
+)
+set(ULTRAVERSE_STATE_PROTO
+    ${ULTRAVERSE_STATE_PROTO_DIR}/ultraverse_state.proto
+)
+set(ULTRAVERSE_STATE_PROTO_OUT
+    ${CMAKE_CURRENT_BINARY_DIR}/proto_autogen
+)
+
+file(MAKE_DIRECTORY ${ULTRAVERSE_STATE_PROTO_OUT})
+
+set(ULTRAVERSE_STATE_PROTO_SRCS
+    ${ULTRAVERSE_STATE_PROTO_OUT}/ultraverse_state.pb.cc
+)
+set(ULTRAVERSE_STATE_PROTO_HDRS
+    ${ULTRAVERSE_STATE_PROTO_OUT}/ultraverse_state.pb.h
+)
+
+add_custom_command(
+    OUTPUT ${ULTRAVERSE_STATE_PROTO_SRCS} ${ULTRAVERSE_STATE_PROTO_HDRS}
+    COMMAND ${PROTOC_EXECUTABLE}
+        --cpp_out=${ULTRAVERSE_STATE_PROTO_OUT}
+        -I ${ULTRAVERSE_STATE_PROTO_DIR}
+        ${ULTRAVERSE_STATE_PROTO}
+    DEPENDS ${ULTRAVERSE_STATE_PROTO}
+    COMMENT "Generating protobuf for ultraverse state serialization"
+)
+
+add_custom_target(ultraverse_state_proto
+    DEPENDS ${ULTRAVERSE_STATE_PROTO_SRCS} ${ULTRAVERSE_STATE_PROTO_HDRS}
+)
+
+
+# add_compile_options(-march=native -O2)
 
 # add_link_options(-fsanitize=leak)
 
 set(ULTRAVERSE_DEPENDENCIES
     ${BOOST_LIBRARIES}
-    ${MARIADB_LIBRARIES}
+    ${MYSQL_LIBRARIES}
     fmt::fmt spdlog::spdlog
     ${Boost_LIBRARIES}
-    ${GRAPHVIZ_LIBRARIES}
     
     ${PROTOBUF_LIBRARIES}
     
@@ -60,9 +82,13 @@ set(ULTRAVERSE_DEPENDENCIES
     
     tbb
     mysql_binlog_event_standalone
+)
 
+set(ULTPARSERLIB_SO_PATH
     ${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp/libultparser/libultparser.so
 )
+
+list(APPEND ULTRAVERSE_DEPENDENCIES ${ULTPARSERLIB_SO_PATH})
 
 set(LIBULTRAVERSE_BASE_SRCS
     
@@ -85,6 +111,7 @@ set(LIBULTRAVERSE_BASE_SRCS
     mariadb/state/new/CombinedIterator.hpp
     
     ${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen/ultparser_query.pb.cc
+    ${ULTRAVERSE_STATE_PROTO_SRCS}
 )
 
 set(LIBULTRAVERSE_STATE_SRCS
@@ -169,14 +196,58 @@ set(ULTRAVERSE_APP_BASE_SRCS
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp)
 include_directories(../dependencies/nlohmann-json/include)
-include_directories(../dependencies/cereal/include)
+include_directories(${ULTRAVERSE_STATE_PROTO_OUT})
 include_directories(${Boost_INCLUDE_DIRS})
+include_directories(${MYSQL_INCLUDE_DIRS})
 include_directories(${PYTHON3_INCLUDE_DIRS})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
+if (APPLE)
+    set(ULTRAVERSE_RPATH_ORIGIN "@loader_path")
+else()
+    set(ULTRAVERSE_RPATH_ORIGIN "$ORIGIN")
+endif()
+
+function(ultraverse_set_rpath target_name)
+    if (NOT WIN32)
+        set_property(TARGET ${target_name} APPEND PROPERTY
+            BUILD_RPATH "${ULTRAVERSE_RPATH_ORIGIN}"
+        )
+        set_property(TARGET ${target_name} APPEND PROPERTY
+            INSTALL_RPATH "${ULTRAVERSE_RPATH_ORIGIN}"
+        )
+    endif()
+endfunction()
+
+function(ultraverse_copy_ultparser target_name)
+    add_custom_command(
+        TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ULTPARSERLIB_SO_PATH}"
+            "$<TARGET_FILE_DIR:${target_name}>/libultparser.so"
+        COMMENT "Copying libultparser.so next to ${target_name}"
+    )
+endfunction()
+
+function(ultraverse_fix_ultparser_load target_name)
+    if (APPLE)
+        add_custom_command(
+            TARGET ${target_name} POST_BUILD
+            COMMAND install_name_tool -change "libultparser.so" "@rpath/libultparser.so" "$<TARGET_FILE:${target_name}>"
+            COMMENT "Fixing libultparser load path for ${target_name}"
+        )
+    endif()
+endfunction()
+
+function(ultraverse_add_homebrew_link_dir target_name)
+    if (APPLE)
+        target_link_options(${target_name} PRIVATE "-L/opt/homebrew/lib")
+    endif()
+endfunction()
+
 add_library(ultraverse SHARED ${LIBULTRAVERSE_SRCS})
-add_dependencies(ultraverse ultparserlib)
+add_dependencies(ultraverse ultparserlib ultraverse_state_proto)
 
 target_link_libraries(ultraverse ${ULTRAVERSE_DEPENDENCIES})
 
@@ -205,12 +276,19 @@ add_executable(state_log_viewer ${STATE_LOG_VIEWER_SRCS})
 add_executable(statelogd ${STATELOGD_SRCS})
 add_executable(db_state_change ${DB_STATE_CHANGE_SRCS})
 
-if (APPLE)
-    target_link_options(ultraverse PRIVATE -fexperimental-library "-L/opt/homebrew/lib" -fstandalone-debug)
-    target_link_options(state_log_viewer PRIVATE "-L/opt/homebrew/lib" -fexperimental-library -fstandalone-debug)
-    target_link_options(statelogd PRIVATE "-L/opt/homebrew/lib" -fexperimental-library -fstandalone-debug)
-    target_link_options(db_state_change PRIVATE "-L/opt/homebrew/lib" -fexperimental-library -fstandalone-debug)
-endif()
+set(ULTRAVERSE_RUNTIME_TARGETS
+    ultraverse
+    state_log_viewer
+    statelogd
+    db_state_change
+)
+
+foreach(ultrav_target IN LISTS ULTRAVERSE_RUNTIME_TARGETS)
+    ultraverse_set_rpath(${ultrav_target})
+    ultraverse_copy_ultparser(${ultrav_target})
+    ultraverse_fix_ultparser_load(${ultrav_target})
+    ultraverse_add_homebrew_link_dir(${ultrav_target})
+endforeach()
 
 target_link_libraries(state_log_viewer ultraverse ${ULTRAVERSE_DEPENDENCIES})
 target_link_libraries(statelogd ultraverse ${ULTRAVERSE_DEPENDENCIES})

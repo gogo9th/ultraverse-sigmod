@@ -1,24 +1,53 @@
 include(CTest)
 include(FetchContent)
-set(CMAKE_CXX_STANDARD 20)
-
-add_compile_options(-O0 -g)
-add_compile_definitions(SPDLOG_FMT_EXTERNAL)
-
-if (APPLE)
-    add_compile_options(-fexperimental-library)
-endif()
 
 find_package(Boost REQUIRED)
 
 include_directories(../dependencies/nlohmann-json/include)
-include_directories(../dependencies/cereal/include)
 include_directories(${Boost_INCLUDE_DIRS})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp)
+include_directories(${CMAKE_BINARY_DIR}/src/proto_autogen)
 
 include_directories(../src)
+
+if (APPLE)
+    set(ULTRAVERSE_RPATH_ORIGIN "@loader_path")
+else()
+    set(ULTRAVERSE_RPATH_ORIGIN "$ORIGIN")
+endif()
+
+set(ULTPARSERLIB_SO_PATH
+    ${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp/libultparser/libultparser.so
+)
+
+function(ultraverse_set_rpath target_name)
+    if (NOT WIN32)
+        set_property(TARGET ${target_name} APPEND PROPERTY
+            BUILD_RPATH "${ULTRAVERSE_RPATH_ORIGIN}"
+        )
+        set_property(TARGET ${target_name} APPEND PROPERTY
+            INSTALL_RPATH "${ULTRAVERSE_RPATH_ORIGIN}"
+        )
+    endif()
+endfunction()
+
+function(ultraverse_copy_ultparser target_name)
+    add_custom_command(
+        TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ULTPARSERLIB_SO_PATH}"
+            "$<TARGET_FILE_DIR:${target_name}>/libultparser.so"
+        COMMENT "Copying libultparser.so next to ${target_name}"
+    )
+endfunction()
+
+function(ultraverse_add_homebrew_link_dir target_name)
+    if (APPLE)
+        target_link_options(${target_name} PRIVATE "-L/opt/homebrew/lib")
+    endif()
+endfunction()
 
 FetchContent_Declare(
   Catch2
@@ -98,24 +127,30 @@ target_link_libraries(statechanger-test ultraverse Catch2::Catch2WithMain tbb)
 
 add_dependencies(sqlparser-test ultparserlib)
 
-if (APPLE)
-    target_link_options(statecluster-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(rowgraph-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(relationship-resolver-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(statehash-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(ultraverseconfig-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(keycolumnparser-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(stateitem-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(query-transaction-serialization-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(sqlparser-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(tabledependencygraph-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(naminghistory-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(rowcluster-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(taintanalyzer-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(queryeventbase-rwset-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(procmatcher-trace-test PRIVATE "-L/opt/homebrew/lib")
-    target_link_options(statechanger-test PRIVATE "-L/opt/homebrew/lib" -fexperimental-library)
-endif()
+set(ULTRAVERSE_TEST_TARGETS
+    statecluster-test
+    rowgraph-test
+    relationship-resolver-test
+    statehash-test
+    ultraverseconfig-test
+    keycolumnparser-test
+    stateitem-test
+    query-transaction-serialization-test
+    sqlparser-test
+    tabledependencygraph-test
+    naminghistory-test
+    rowcluster-test
+    taintanalyzer-test
+    queryeventbase-rwset-test
+    procmatcher-trace-test
+    statechanger-test
+)
+
+foreach(ultrav_target IN LISTS ULTRAVERSE_TEST_TARGETS)
+    ultraverse_set_rpath(${ultrav_target})
+    ultraverse_copy_ultparser(${ultrav_target})
+    ultraverse_add_homebrew_link_dir(${ultrav_target})
+endforeach()
 
 add_test(NAME statecluster-test COMMAND statecluster-test)
 add_test(NAME rowgraph-test COMMAND rowgraph-test)
@@ -133,3 +168,9 @@ add_test(NAME taintanalyzer-test COMMAND taintanalyzer-test)
 add_test(NAME queryeventbase-rwset-test COMMAND queryeventbase-rwset-test)
 add_test(NAME procmatcher-trace-test COMMAND procmatcher-trace-test)
 add_test(NAME statechanger-test COMMAND statechanger-test)
+
+add_custom_target(allTests
+    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -C $<CONFIG>
+    DEPENDS ${ULTRAVERSE_TEST_TARGETS}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)

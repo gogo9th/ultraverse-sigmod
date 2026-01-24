@@ -1,0 +1,174 @@
+<agent-task>
+    <context name="audit-result">
+        # statelogd code review results
+
+        - **High** The checkpoint restore path is effectively broken: `pos` is used uninitialized in `seek`, and `_gid`/state deserialization is commented out, so `-r` can break log continuity. `src/statelogd.cpp:214` `src/statelogd.cpp:239` `src/statelogd.cpp:798`
+        - **Medium** There are performance/feature gaps from the ultraverse.md perspective: Hash-Jumper table hashes are not updated/recorded, cluster key selection depends on `-k` input instead of the Choice Rule, and `-c` threadnum is not actually used, limiting throughput. `src/statelogd.cpp:22` `src/statelogd.cpp:112` `src/statelogd.cpp:69` `src/statelogd.cpp:136` `src/statelogd.cpp:975`
+    </context>
+    <code name="statelogd.cpp" partial="true" range=":85~:105" lang="cpp">
+        if (isArgSet('h')) {
+            std::cout <<
+            "statelogd - state-logging daemon\n"
+            "\n"
+            "Options: \n"
+            "    -b file        specify binlog.index file\n"
+            "    -o file        specify log output name\n"
+            "    -p file        use procedure log to append additional queries (SELECT ...)\n"
+            "    -k columns     key columns (eg. user.id,article.id or orders.user_id+orders.item_id)\n"
+            "    -c threadnum   concurrent processing (default = std::thread::hardware_concurrency() + 1)\n"
+            "    -r file        restore state and resume from given .ultchkpoint file\n"
+            "    -d             force discard previous log and start over\n"
+            "    -G             print processed transactions with GIDs\n"
+            "    -Q             print query statements for processed transactions\n"
+            "    -n             do not read binlog.index continuously (quit after reaching EOF)\n"
+            "    -v             set logger level to DEBUG\n"
+            "    -V             set logger level to TRACE\n"
+            "    -h             print this help and exit application\n";
+
+            return 0;
+        }
+    </code>
+    <objective>
+        # Refactor the "option hell" of statelogd and db_state_change
+
+        - The command-line arguments of statelogd and db_state_change are literally "hell". There are too many options tangled together, making them hard to use and hard to maintain.
+
+        ## What instead?
+        - Introduce a JSON config file. When statelogd / db_state_change starts, it takes the JSON file path as an argument and loads configuration from that file. (See the schema definition below.)
+        - Provide only 3 options for statelogd:
+            - `-c [ultraverse.json]`: config file path
+            - `-h`: print help
+            - `-v / -V`: enable debug / trace output
+
+        - Change db_state_change usage as follows:
+            `db_state_change [--gid-range startgid...endgid] [--skip-gids skip_gid1,skip_gid2,...] [--dry-run] ULTRAVERSE_CONFIG_JSON ACTION`
+
+            - `--gid-range [startgid...endgid]`: GID range to process (optional)
+                - Treat -1 as unspecified (e.g., 1...-1, -1...99)
+            - `--skip-gids [gids]`: list of GIDs to skip
+            - `--dry-run`: dry-run
+            - `ULTRAVERSE_CONFIG_JSON`: config file path
+            - `ACTION`: action to execute (same as today)
+            - `-h`: print help
+            - `-v / -V`: enable debug / trace output
+
+            - Environment variables:
+                - `ULTRAVERSE_REPORT_NAME`: report name (if unset, use the format statechange_{action}_YYYYMMDD_HHMMSS)
+        ## Expected work
+        - Define a shared config struct / parser code used by statelogd and db_state_change
+        - Add JSON config file loading and parsing code
+        - Remove unused parts from existing command-line argument parsing code
+        - Improve existing command-line argument parsing code
+
+    </objective>
+    <code name="json-schema" lang="text/pseudocode; variant=typescript">
+        const DEVELOPMENT_FLAGS = [
+            // print processed transactions with GIDs (-G)
+            "com.ultraverse.statelogd.dev-flags.print-processed-txn-gids",
+            // print query statements for processed transactions (-Q)
+            "com.ultraverse.statelogd.dev-flags.print-query-statements",
+        ] as const;
+
+        type UltraverseConfig = {
+            /**
+             * Base path for MySQL binary logs. (-b: path)
+             *
+             * - All binary logs are referenced from this location.
+             *
+             * @example "/var/lib/mysql/"
+             */
+            binlogPath: string;
+
+            /**
+             * Name of the MySQL binary log index file. (-b: filename)
+             *
+             * @example "mysql-bin.index"
+             */
+            binlogIndexName: string;
+
+            /**
+             * Storage path for Ultraverse state logs. (-o: path)
+             *
+             * - All auxiliary data related to Ultraverse state changes is stored under this path.
+             *
+             * @example "/var/lib/ultraverse/statelog/"
+             */
+            stateLogPath: string;
+
+            /**
+             * Name of the Ultraverse state log. (-o: filename)
+             *
+             * @example "tpcc"
+             */
+            stateLogName: string;
+
+            /**
+             * Key columns.
+             *
+             * @example ["table_a.column1", "table_b.column2", "table_c.column3"]
+             * @example ["users.id", "orders.user_id+orders.item_id"]
+             */
+            keyColumns: string[];
+
+            /**
+             * column aliases (e.g. user.name => user.id ...)
+             */
+            columnAliases: Record<string, string[]>;
+
+            /**
+             * statelogd-specific configuration
+             */
+            statelogd: {
+                /**
+                 * Number of threads to use for parallel processing. (-C: thread_count)
+                 *
+                 * - If unspecified, use std::thread::hardware_concurrency().
+                 */
+                threadCount?: number;
+
+                /**
+                 * Do not poll binlogs.
+                 * Process only up to the last binlog listed in the index and then exit. (-n)
+                 */
+                oneshotMode?: boolean;
+
+                /**
+                 * Developer flag list.
+                 */
+                developmentFlags?: typeof DEVELOPMENT_FLAGS;
+            },
+
+            db_state_change: {
+                /**
+                 * Number of threads to use for parallel processing. (-C: thread_count)
+                 *
+                 * - If unspecified, use std::thread::hardware_concurrency().
+                 */
+                threadCount?: number;
+
+                backup_sqlfile?: string;
+
+                database: {
+                    host: string;
+                    port: number;
+                    name: string;
+                    username: string;
+                    password: string;
+                }
+
+                /**
+                 * @default false
+                 */
+                keepIntermediateDatabase?: boolean;
+
+                // range comparison method (default = intersect)
+                range_comp_method: 'intersect' | 'eqonly';
+            },
+        }
+    </code>
+    <rules>
+        - In the actual implementation phase, delegate implementation to @codex-delegate.
+        - Do not delegate all tasks at once; delegate them one by one.
+        - When running Codex CLI, cwd must be the repo root.
+    </rules>
+</agent-task>

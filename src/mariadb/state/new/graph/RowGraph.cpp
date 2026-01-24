@@ -9,8 +9,6 @@
 #include <optional>
 #include <unordered_set>
 
-#include <boost/graph/graphviz.hpp>
-
 #include <fmt/format.h>
 
 

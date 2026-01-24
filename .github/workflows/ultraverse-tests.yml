@@ -1,0 +1,66 @@
+name: ultraverse-tests
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  ultraverse-test:
+    runs-on: ubuntu-24.04
+    env:
+      GOCACHE: /tmp/go-build-cache
+      GOMODCACHE: /tmp/go-mod-cache
+      GOPATH: /tmp/go
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache MySQL source
+        id: mysql-cache
+        uses: actions/cache@v4
+        with:
+          path: mysql-server
+          key: ${{ runner.os }}-mysql-server-9.6
+
+      - name: Checkout MySQL Server 9.6.0
+        if: steps.mysql-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: mysql/mysql-server
+          ref: mysql-9.6.0
+          path: mysql-server
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config bison flex \
+            libboost-all-dev libssl-dev zlib1g-dev libzstd-dev \
+            libprotobuf-dev protobuf-compiler \
+            libmysqlclient-dev libtbb-dev libtirpc-dev \
+            golang-go
+
+      - name: Install protoc-gen-go
+        run: |
+          mkdir -p "${GOPATH}/bin"
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28
+          echo "${GOPATH}/bin" >> "${GITHUB_PATH}"
+
+      - name: Prepare MySQL headers
+        run: |
+          if [ ! -f mysql-server/include/my_config.h ] || [ ! -f mysql-server/include/mysql_version.h ]; then
+            cmake -S mysql-server -B mysql-server/build
+            cp mysql-server/build/include/my_config.h mysql-server/build/include/mysql_version.h mysql-server/include/
+          fi
+
+      - name: Build & run tests
+        run: |
+          cmake -S . -B build
+          cmake --build build --target allTests -j"$(nproc)"

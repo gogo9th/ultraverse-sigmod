@@ -7,6 +7,8 @@
 
 #include <boost/tuple/tuple.hpp>
 
+#include "ultraverse_state.pb.h"
+
 namespace {
 
 struct DecimalParts {
@@ -1795,4 +1797,185 @@ StateItem StateItem::Wildcard(const std::string &name) {
     item.function_type = FUNCTION_WILDCARD;
     
     return item;
+}
+
+void StateData::toProtobuf(ultraverse::state::v2::proto::StateData *out) const {
+    if (out == nullptr) {
+        return;
+    }
+
+    out->Clear();
+    out->set_is_subselect(is_subselect);
+    out->set_is_equal(is_equal);
+    out->set_type(static_cast<uint32_t>(type));
+    out->set_hash(static_cast<uint64_t>(_hash));
+
+    switch (type) {
+        case en_column_data_int:
+            out->set_int_value(d.ival);
+            break;
+        case en_column_data_uint:
+            out->set_uint_value(d.uval);
+            break;
+        case en_column_data_double:
+            out->set_double_value(d.fval);
+            break;
+        case en_column_data_string:
+        case en_column_data_decimal:
+            if (d.str != nullptr && str_len > 0) {
+                out->set_string_value(std::string(d.str, str_len));
+            } else {
+                out->set_string_value("");
+            }
+            break;
+        case en_column_data_null:
+        case en_column_data_from_subselect:
+        default:
+            break;
+    }
+}
+
+void StateData::fromProtobuf(const ultraverse::state::v2::proto::StateData &msg) {
+    Clear();
+
+    const auto dataType = static_cast<en_state_log_column_data_type>(msg.type());
+    switch (dataType) {
+        case en_column_data_int:
+            Set(static_cast<int64_t>(msg.int_value()));
+            break;
+        case en_column_data_uint:
+            Set(static_cast<uint64_t>(msg.uint_value()));
+            break;
+        case en_column_data_double:
+            Set(static_cast<double>(msg.double_value()));
+            break;
+        case en_column_data_string: {
+            const auto &value = msg.string_value();
+            Set(value.c_str(), value.size());
+            break;
+        }
+        case en_column_data_decimal: {
+            const auto &value = msg.string_value();
+            SetDecimal(value.c_str(), value.size());
+            break;
+        }
+        case en_column_data_null:
+        case en_column_data_from_subselect:
+        default:
+            Clear();
+            break;
+    }
+
+    is_subselect = msg.is_subselect();
+    is_equal = msg.is_equal();
+    type = dataType;
+    _hash = static_cast<std::size_t>(msg.hash());
+}
+
+void StateRange::ST_RANGE::toProtobuf(ultraverse::state::v2::proto::StateRangeInterval *out) const {
+    if (out == nullptr) {
+        return;
+    }
+
+    out->Clear();
+    begin.toProtobuf(out->mutable_begin());
+    end.toProtobuf(out->mutable_end());
+}
+
+void StateRange::ST_RANGE::fromProtobuf(const ultraverse::state::v2::proto::StateRangeInterval &msg) {
+    begin.fromProtobuf(msg.begin());
+    end.fromProtobuf(msg.end());
+}
+
+void StateRange::toProtobuf(ultraverse::state::v2::proto::StateRange *out) const {
+    if (out == nullptr) {
+        return;
+    }
+
+    out->Clear();
+    out->set_hash(static_cast<uint64_t>(_hash));
+
+    if (!range) {
+        return;
+    }
+
+    for (const auto &entry : *range) {
+        auto *interval = out->add_range();
+        entry.toProtobuf(interval);
+    }
+}
+
+void StateRange::fromProtobuf(const ultraverse::state::v2::proto::StateRange &msg) {
+    range = std::make_shared<std::vector<ST_RANGE>>();
+    range->reserve(static_cast<size_t>(msg.range_size()));
+    _wildcard = false;
+    _hash = static_cast<std::size_t>(msg.hash());
+
+    for (const auto &interval : msg.range()) {
+        ST_RANGE entry;
+        entry.fromProtobuf(interval);
+        range->push_back(std::move(entry));
+    }
+}
+
+void StateItem::toProtobuf(ultraverse::state::v2::proto::StateItem *out) const {
+    if (out == nullptr) {
+        return;
+    }
+
+    out->Clear();
+    out->set_condition_type(static_cast<uint32_t>(condition_type));
+    out->set_function_type(static_cast<uint32_t>(function_type));
+    out->set_name(name);
+
+    for (const auto &arg : arg_list) {
+        auto *argMsg = out->add_arg_list();
+        arg.toProtobuf(argMsg);
+    }
+
+    for (const auto &data : data_list) {
+        auto *dataMsg = out->add_data_list();
+        data.toProtobuf(dataMsg);
+    }
+
+    for (const auto &subQuery : sub_query_list) {
+        auto *subMsg = out->add_sub_query_list();
+        subQuery.toProtobuf(subMsg);
+    }
+
+    _rangeCache.toProtobuf(out->mutable_range_cache());
+    out->set_is_range_cache_built(_isRangeCacheBuilt);
+}
+
+void StateItem::fromProtobuf(const ultraverse::state::v2::proto::StateItem &msg) {
+    condition_type = static_cast<EN_CONDITION_TYPE>(msg.condition_type());
+    function_type = static_cast<EN_FUNCTION_TYPE>(msg.function_type());
+    name = msg.name();
+
+    arg_list.clear();
+    arg_list.reserve(static_cast<size_t>(msg.arg_list_size()));
+    for (const auto &argMsg : msg.arg_list()) {
+        StateItem arg;
+        arg.fromProtobuf(argMsg);
+        arg_list.emplace_back(std::move(arg));
+    }
+
+    data_list.clear();
+    data_list.reserve(static_cast<size_t>(msg.data_list_size()));
+    for (const auto &dataMsg : msg.data_list()) {
+        StateData data;
+        data.fromProtobuf(dataMsg);
+        data_list.emplace_back(std::move(data));
+    }
+
+    sub_query_list.clear();
+    sub_query_list.reserve(static_cast<size_t>(msg.sub_query_list_size()));
+    for (const auto &subMsg : msg.sub_query_list()) {
+        StateItem sub;
+        sub.fromProtobuf(subMsg);
+        sub_query_list.emplace_back(std::move(sub));
+    }
+
+    _rangeCache.fromProtobuf(msg.range_cache());
+    _isRangeCacheBuilt = msg.is_range_cache_built();
 }

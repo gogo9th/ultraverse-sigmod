@@ -1,0 +1,257 @@
+<agent-task mode="planning">
+    <objective>
+        # Support `CREATE / DROP FUNCTION` syntax
+
+        - Currently tidb/parser does not support `CREATE FUNCTION` / `DROP FUNCTION` syntax.
+        - Please create a plan to support the syntax above.
+        - TiDB originally does not support User Defined Functions (UDF) in stored-procedure form (CREATE FUNCTION), so the grammar likely does not exist.
+        - It seems you can copy the `CREATE / DROP PROCEDURE` grammar definitions and just insert a rule to parse `RETURNS type` in the middle.
+    </objective>
+    <stderr>
+        === tidb/parser DROP/CREATE FUNCTION Support Test ===
+
+        FAIL DROP FUNCTION IF EXISTS
+           Error: line 1 column 13 near "FUNCTION IF EXISTS test_func;"
+
+        OK DROP PROCEDURE IF EXISTS
+
+        FAIL CREATE FUNCTION basic
+           Error: line 1 column 15 near "FUNCTION test_func(x INT) RETURNS INT
+        BEGIN
+            RETURN x * 2;
+        END;"
+
+        FAIL CREATE FUNCTION with DETERMINISTIC
+           Error: line 1 column 15 near "FUNCTION test_func(x INT) RETURNS INT DETERMINISTIC
+        BEGIN
+            RETURN x * 2;
+        END;"
+
+        FAIL CREATE FUNCTION with NO SQL
+           Error: line 1 column 15 near "FUNCTION test_func(x INT) RETURNS INT NO SQL
+        BEGIN
+            RETURN x * 2;
+        END;"
+
+        FAIL CREATE FUNCTION with READS SQL DATA
+           Error: line 1 column 15 near "FUNCTION get_name(p_id INT) RETURNS VARCHAR(100) READS SQL DATA
+        BEGIN
+            DECLARE v_name VARCHAR(100);
+            SELECT name INTO v_name FROM users WHERE id = p_id;
+            RETURN v_name;
+        END;"
+
+        FAIL CREATE FUNCTION RETURNS FLOAT
+           Error: line 1 column 15 near "FUNCTION RandomNumber(minval INT, maxval INT) RETURNS FLOAT
+        BEGIN
+            RETURN FLOOR(RAND()*(maxval - minval + 1)) + minval;
+        END;"
+
+        FAIL CREATE FUNCTION RETURNS DECIMAL
+           Error: line 1 column 15 near "FUNCTION calc_tax(amount DECIMAL(10,2)) RETURNS DECIMAL(10,2)
+        BEGIN
+            RETURN amount * 0.1;
+        END;"
+
+        === Summary ===
+        Supported: 1 / 8
+        Unsupported: 7 / 8
+    </stderr>
+    <code lang="sql; variant=mysql">
+        //go:build ignore
+
+        package main
+
+        import (
+            "fmt"
+
+            "github.com/pingcap/tidb/pkg/parser"
+            _ "github.com/pingcap/tidb/pkg/types/parser_driver"
+        )
+
+        type TestCase struct {
+            Name string
+            SQL  string
+        }
+
+        func main() {
+            cases := []TestCase{
+                {
+                    Name: "DROP FUNCTION IF EXISTS",
+                    SQL:  `DROP FUNCTION IF EXISTS test_func;`,
+                },
+                {
+                    Name: "DROP PROCEDURE IF EXISTS",
+                    SQL:  `DROP PROCEDURE IF EXISTS test_proc;`,
+                },
+                {
+                    Name: "CREATE FUNCTION basic",
+                    SQL: `CREATE FUNCTION test_func(x INT) RETURNS INT
+        BEGIN
+            RETURN x * 2;
+        END;`,
+                },
+                {
+                    Name: "CREATE FUNCTION with DETERMINISTIC",
+                    SQL: `CREATE FUNCTION test_func(x INT) RETURNS INT DETERMINISTIC
+        BEGIN
+            RETURN x * 2;
+        END;`,
+                },
+                {
+                    Name: "CREATE FUNCTION with NO SQL",
+                    SQL: `CREATE FUNCTION test_func(x INT) RETURNS INT NO SQL
+        BEGIN
+            RETURN x * 2;
+        END;`,
+                },
+                {
+                    Name: "CREATE FUNCTION with READS SQL DATA",
+                    SQL: `CREATE FUNCTION get_name(p_id INT) RETURNS VARCHAR(100) READS SQL DATA
+        BEGIN
+            DECLARE v_name VARCHAR(100);
+            SELECT name INTO v_name FROM users WHERE id = p_id;
+            RETURN v_name;
+        END;`,
+                },
+                {
+                    Name: "CREATE FUNCTION RETURNS FLOAT",
+                    SQL: `CREATE FUNCTION RandomNumber(minval INT, maxval INT) RETURNS FLOAT
+        BEGIN
+            RETURN FLOOR(RAND()*(maxval - minval + 1)) + minval;
+        END;`,
+                },
+                {
+                    Name: "CREATE FUNCTION RETURNS DECIMAL",
+                    SQL: `CREATE FUNCTION calc_tax(amount DECIMAL(10,2)) RETURNS DECIMAL(10,2)
+        BEGIN
+            RETURN amount * 0.1;
+        END;`,
+                },
+            }
+
+            p := parser.New()
+
+            fmt.Println("=== tidb/parser DROP/CREATE FUNCTION Support Test ===")
+            fmt.Println()
+
+            supported := 0
+            unsupported := 0
+
+            for _, tc := range cases {
+                _, _, err := p.Parse(tc.SQL, "", "")
+                if err != nil {
+                    fmt.Printf("FAIL %s\n", tc.Name)
+                    fmt.Printf("   Error: %v\n\n", err)
+                    unsupported++
+                } else {
+                    fmt.Printf("OK %s\n\n", tc.Name)
+                    supported++
+                }
+            }
+
+            fmt.Println("=== Summary ===")
+            fmt.Printf("Supported: %d / %d\n", supported, len(cases))
+            fmt.Printf("Unsupported: %d / %d\n", unsupported, len(cases))
+        }
+    </code>
+    <hint source="claude-code (claude-opus-4-5-20251101)">
+        (Below is a conversation log from when adding SELECT INTO support. Use for reference only.)
+        * Hey, SELECT INTO syntax is failing:
+
+        testing SELECT score INTO game_score FROM game_records WHERE user_id = 1; ... FAIL
+        parser error: line 1 column 28 near "game_score FROM game_records WHERE user_id = 1;"
+
+        It seems the TiDB parser does not support MySQL procedure-style SELECT ... INTO variable syntax. TiDB supports SELECT ... INTO OUTFILE/DUMPFILE, but it doesn't seem to support variable assignment syntax.
+
+        The plan said "TiDB parser supports SELECT INTO", so how should we proceed?
+
+        1. Fork TiDB parser and add SELECT INTO support - requires grammar changes
+        2. Keep the current approach - remove the INTO part via ult_sanitize_select_into and extract variables via extract_select_into into the into_variables field
+        3. Suggest another approach if you have one
+
+        > 1. I'll fork it and build a version that supports INTO. But how do I install the forked version in Go? Do I just change it to github username/repo form?
+        > Also, can you tell me which files to touch in tidb/parser?
+
+        * Yep! To add SELECT INTO variable assignment support in TiDB parser, look at these files:
+
+        * Bash(ls -la /Users/cheesekun/go/pkg/mod/github.com/pingcap/tidb/pkg/parser@v0.0.0-20260121072752-93c65e2234ad/)
+          total 17936
+        dr-xr-xr-x@ 48 cheesekun  staff     1536  Jan 21 17:00 .
+        drwxr-xr-x@  3 cheesekun  staff       96  Jan 21 17:00 ..
+        ... +46 lines (ctrl+o to expand)
+
+        * Key files:
+
+        1. parser.y - yacc grammar file (most important!)
+        2. ast/dml.go - SelectStmt struct definition
+        3. parser.go - auto-generated from parser.y (do not edit directly)
+
+        Let's locate the SELECT grammar section in parser.y:
+
+        * Bash(grep -n "SelectStmt\\|SelectInto\\|INTO" /Users/cheesekun/go/pkg/mod/github.com/pingcap/tidb/pkg/parser@v0.0.0-20260121072752-93c65e2234ad/parser.y | head -50)
+          178:       into              "INTO"
+        1043:      InsertIntoStmt             "INSERT INTO statement"
+        1045:      ImportIntoStmt             "IMPORT INTO statement"
+        ... +47 lines (ctrl+o to expand)
+
+        * Bash(grep -n -A 20 "SelectStmtIntoOption:" /Users/cheesekun/go/pkg/mod/github.com/pingcap/tidb/pkg/parser@v0.0.0-20260121072752-93c65e2234ad/parser.y)
+          10567:SelectStmtIntoOption:
+        10568-     {
+        10569-             $$ = nil
+        ... +18 lines (ctrl+o to expand)
+
+        * Found it! Files to modify:
+
+        1. parser.y (grammar file)
+
+        Add a variable-assignment case to the SelectStmtIntoOption: rule around line 10567:
+
+        SelectStmtIntoOption:
+        {
+        $$ = nil
+        }
+        |     "INTO" "OUTFILE" stringLit Fields Lines
+        {
+        // ... existing OUTFILE code ...
+        }
+        |     "INTO" VariableList      // <-- add this!
+        {
+        // logic to store the variable list
+        }
+
+        2. ast/dml.go (AST definitions)
+
+        Add a variable-list field to SelectStmt, or extend SelectIntoOption:
+
+        // Add to SelectStmt
+        type SelectStmt struct {
+        // ... existing fields ...
+        IntoVariables []*VariableExpr  // <-- add
+        }
+
+        Or in SelectIntoOption:
+        type SelectIntoOption struct {
+        Tp         SelectIntoType
+        FileName   string
+        FieldsInfo *FieldsClause
+        LinesInfo  *LinesClause
+        Variables  []*VariableExpr  // <-- add
+        }
+
+        3. Build
+
+        After changes, running make will regenerate parser.go from parser.y.
+
+        ---
+        For reference, MySQL SELECT INTO variable syntax is:
+        SELECT col1, col2 INTO @var1, @var2 FROM table;
+        SELECT col1, col2 INTO var1, var2 FROM table;  -- inside procedures
+
+        When forking, also check VariableList grammar rules! (Search for "Variable:" in parser.y)
+    </hint>
+    <agent-rule>
+        - **Harmony is important; be harmonious**: AI-generated code is generally not welcomed. Please respect the existing code conventions as much as possible to ensure your code harmonizes with the work of other TiDB contributors.
+        - Run tests via 'sh test.sh'.
+    </agent-rule>
+</agent-task>

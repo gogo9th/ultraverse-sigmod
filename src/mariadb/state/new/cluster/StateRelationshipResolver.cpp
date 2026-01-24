@@ -8,7 +8,24 @@
 
 #include "utils/StringUtil.hpp"
 
+#include "ultraverse_state.pb.h"
+
 namespace ultraverse::state::v2 {
+
+    void RowAlias::toProtobuf(ultraverse::state::v2::proto::RowAlias *out) const {
+        if (out == nullptr) {
+            return;
+        }
+
+        out->Clear();
+        alias.toProtobuf(out->mutable_alias());
+        real.toProtobuf(out->mutable_real());
+    }
+
+    void RowAlias::fromProtobuf(const ultraverse::state::v2::proto::RowAlias &msg) {
+        alias.fromProtobuf(msg.alias());
+        real.fromProtobuf(msg.real());
+    }
     
     std::string RelationshipResolver::resolveChain(const std::string &columnExpr) const {
         std::string _columnExpr = columnExpr;

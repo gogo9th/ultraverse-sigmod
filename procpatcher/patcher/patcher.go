@@ -2,7 +2,6 @@ package patcher
 
 import (
 	"fmt"
-	"regexp"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -16,9 +15,6 @@ type PatchResult struct {
 	PatchedSQL string
 	Warnings   []string
 }
-
-// hintTablePattern matches INSERT INTO __ULTRAVERSE_PROCEDURE_HINT
-var hintTablePattern = regexp.MustCompile(`(?i)__ULTRAVERSE_PROCEDURE_HINT`)
 
 // Patch patches all stored procedures in the SQL with hint inserts
 func Patch(sql string) (*PatchResult, error) {
@@ -58,7 +54,7 @@ func Patch(sql string) (*PatchResult, error) {
 		}
 
 		// Check if already patched (idempotency)
-		if hintTablePattern.MatchString(stmt.Text) {
+		if hasHintTableReference(stmt.Text) {
 			result.Warnings = append(result.Warnings,
 				fmt.Sprintf("Warning: Procedure '%s' already patched, skipping", procName))
 			continue

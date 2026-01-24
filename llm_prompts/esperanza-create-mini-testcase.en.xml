@@ -1,0 +1,207 @@
+<agent-task mode="planning">
+    <objective>
+        # Esperanza: Create a small integration test case.
+
+        ## Goals
+        - Instead of the existing BenchBase (Java) + Ultraverse integration test case, create a small test case to exercise the minimal state transition functionality.
+          - (Make the Esperanza script itself also act as the BenchBase driver.)
+
+        - Start a MySQL server, run the scenario below, shut down the MySQL server, and then run a scenario that actually cancels operations via Ultraverse.
+        - Verify that Ultraverse's transaction rollback functionality works correctly.
+    </objective>
+    <scenario name="minishop">
+        <human-readable-description>
+            # Minishop: A small convenience-store network scenario
+
+            ## Overview
+            - Create at least 2 items and 3 orders.
+            - Mark the fraudulent refund (REFUND_ITEM) as the rollback target.
+            - After rollback, check whether inventory/order status/refund records become identical to a "history with no refund".
+            - Expect operations on a different item (id=2) to be skipped via row-wise clustering.
+
+            ## Main operations
+
+            - `ADD_ITEM(id, name, price, stock)`    - Add a new item
+            - `RESTOCK_ITEM(id, additional_stock)` - Restock an existing item
+            - `BUY_ITEM(id, quantity, &order_id)`  - Customer purchases an item
+            - `REFUND_ITEM(order_id)`              - Customer refunds a purchased item
+
+            ## Execution sequence (SQL call order)
+            - Before running, make sure to run `SET autocommit = 0;` in the session.
+            - Wrap every procedure call with `START TRANSACTION; ... COMMIT;`.
+            1) ADD_ITEM(1, 'cola', 100, 10)
+            2) ADD_ITEM(2, 'chips', 200, 5)
+            3) RESTOCK_ITEM(1, 5)         -- item1 stock: 15
+            4) BUY_ITEM(1, 3, @o1)        -- item1 stock: 12
+            5) BUY_ITEM(2, 1, @o2)        -- item2 stock: 4
+            6) REFUND_ITEM(@o1)           -- item1 stock: 15 (fraud)
+            7) RESTOCK_ITEM(2, 2)         -- item2 stock: 6 (independent)
+            8) BUY_ITEM(1, 2, @o3)        -- item1 stock: 13 (after the refund)
+
+            ## Cancellation scenario
+            - After discovering that the customer made a fraudulent refund, admins cancel the REFUND_ITEM operation.
+            - After rollback, replay subsequent queries with the refund's effects removed.
+
+            ## Expected results (correct state)
+            - items.id=1 stock: 10
+              (Without the refund: 12 -> buy_item(2 units) -> 10)
+            - items.id=2 stock: 6 (restock_item(2,2) is an independent query)
+            - orders.order_id=@o1 status: PAID
+            - refunds table: no record for order_id=@o1
+
+            ## Recommended key columns
+            - items.id
+            - orders.order_id
+
+            ## GID selection guidelines (rollback target)
+            - Wrap each procedure call with `START TRANSACTION ... COMMIT` so it is grouped into **a single GID**.
+            - The rollback target is the single GID for the `refund_item(@o1)` transaction.
+            - How to find the GID:
+              1) Run `state_log_viewer -i <path>/benchbase.ultstatelog -Q -v`
+              2) Find the SQL bundle included in the `refund_item` transaction and record its GID
+              3) Run `db_state_change ... rollback=<gid>:replay`
+
+        </human-readable-description>
+        <table-definition lang="sql">
+            CREATE TABLE items (
+                id INT PRIMARY KEY,
+                name VARCHAR(64) NOT NULL,
+                price INT NOT NULL,
+                stock INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB;
+
+            CREATE TABLE orders (
+                order_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                item_id INT NOT NULL,
+                quantity INT NOT NULL,
+                total_price INT NOT NULL,
+                status ENUM('PAID','REFUNDED') NOT NULL DEFAULT 'PAID',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT fk_orders_item FOREIGN KEY (item_id) REFERENCES items(id)
+            ) ENGINE=InnoDB;
+
+            CREATE TABLE refunds (
+                refund_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                order_id BIGINT NOT NULL,
+                amount INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT fk_refunds_order FOREIGN KEY (order_id) REFERENCES orders(order_id)
+            ) ENGINE=InnoDB;
+        </table-definition>
+        <db-operation name="add-item" lang="sql" hint="mysql-stored-procedure">
+            CREATE PROCEDURE add_item(
+                IN p_id INT,
+                IN p_name VARCHAR(64),
+                IN p_price INT,
+                IN p_stock INT
+            )
+            BEGIN
+                INSERT INTO items(id, name, price, stock)
+                VALUES (p_id, p_name, p_price, p_stock);
+            END;
+        </db-operation>
+        <db-operation name="restock-item" lang="sql" hint="mysql-stored-procedure">
+            CREATE PROCEDURE restock_item(
+                IN p_id INT,
+                IN p_additional INT
+            )
+            BEGIN
+                UPDATE items
+                SET stock = stock + p_additional
+                WHERE id = p_id;
+            END;
+        </db-operation>
+        <db-operation name="buy-item" lang="sql" hint="mysql-stored-procedure">
+            CREATE PROCEDURE buy_item(
+                IN p_item_id INT,
+                IN p_qty INT,
+                OUT p_order_id BIGINT
+            )
+            BEGIN
+                DECLARE v_price INT;
+
+                SELECT price INTO v_price
+                FROM items
+                WHERE id = p_item_id;
+
+                INSERT INTO orders(item_id, quantity, total_price, status)
+                VALUES (p_item_id, p_qty, v_price * p_qty, 'PAID');
+
+                SET p_order_id = LAST_INSERT_ID();
+
+                UPDATE items
+                SET stock = stock - p_qty
+                WHERE id = p_item_id;
+            END;
+        </db-operation>
+        <db-operation name="refund-item" lang="sql" hint="mysql-stored-procedure">
+            CREATE PROCEDURE refund_item(
+                IN p_order_id BIGINT
+            )
+            BEGIN
+                DECLARE v_item_id INT;
+                DECLARE v_qty INT;
+                DECLARE v_amount INT;
+
+                SELECT item_id, quantity, total_price
+                INTO v_item_id, v_qty, v_amount
+                FROM orders
+                WHERE order_id = p_order_id;
+
+                UPDATE orders
+                SET status = 'REFUNDED'
+                WHERE order_id = p_order_id;
+
+                UPDATE items
+                SET stock = stock + v_qty
+                WHERE id = v_item_id;
+
+                INSERT INTO refunds(order_id, amount)
+                VALUES (p_order_id, v_amount);
+            END;
+        </db-operation>
+        <scenario-steps lang="sql">
+            SET autocommit = 0;
+
+            START TRANSACTION;
+            CALL add_item(1, 'cola', 100, 10);
+            COMMIT;
+
+            START TRANSACTION;
+            CALL add_item(2, 'chips', 200, 5);
+            COMMIT;
+
+            START TRANSACTION;
+            CALL restock_item(1, 5);
+            COMMIT;
+
+            START TRANSACTION;
+            CALL buy_item(1, 3, @o1);
+            COMMIT;
+
+            START TRANSACTION;
+            CALL buy_item(2, 1, @o2);
+            COMMIT;
+
+            START TRANSACTION;
+            CALL refund_item(@o1);
+            COMMIT;
+
+            START TRANSACTION;
+            CALL restock_item(2, 2);
+            COMMIT;
+
+            START TRANSACTION;
+            CALL buy_item(1, 2, @o3);
+            COMMIT;
+        </scenario-steps>
+        <verification>
+            -- Verification queries for expected values
+            SELECT stock FROM items WHERE id = 1;     -- expect 10
+            SELECT stock FROM items WHERE id = 2;     -- expect 6
+            SELECT status FROM orders WHERE order_id = @o1; -- expect PAID
+            SELECT COUNT(*) FROM refunds WHERE order_id = @o1; -- expect 0
+        </verification>
+    </scenario>
+</agent-task>

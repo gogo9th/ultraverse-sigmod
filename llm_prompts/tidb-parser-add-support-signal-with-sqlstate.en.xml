@@ -1,0 +1,40 @@
+<agent-task mode="planning">
+    <objective>
+        # Add statement offset recording and reliably obtain original-text positions from AST nodes.
+
+        # Background
+        - Currently, OriginTextPosition() is recorded only for expr, and not for stmt.
+        - To compute insertion positions in procpatcher while preserving original text, we need the start/end offsets of StmtNode.
+
+        # Goals
+        1. Record start offset on StmtNode (or on all Node/stmtNode).
+        2. If possible, extend it to also record end offset (new field/method).
+        3. Modify the parser so it fills the offsets accurately when building each statement.
+        4. Verify it works at least for ProcedureInfo, FunctionInfo, and general statements.
+
+        # Hints/notes
+        - Currently yySetOffset sets offsets only for expr: pkg/parser/yy_parser.go.
+        - ParserConfig.SkipPositionRecording exists to turn position recording on/off.
+        - AST nodes support SetOriginTextPosition / OriginTextPosition.
+        - In parser.y, at the time a statement is created, startOffset / endOffset may be accessible.
+        - Review how parser.lexer obtains the statement range (start/end).
+
+        # Files to modify (expected)
+        - pkg/parser/yy_parser.go
+        - pkg/parser/parser.y -> regenerate via goyacc (parser.go)
+        - If needed, pkg/parser/lexer.go or Scanner-related code
+        - pkg/parser/ast/base.go (if storing end offset)
+
+        # Requirements
+        - Do not break existing formats/behavior.
+        - Keep offsets as byte offsets in the original text (existing OriginTextPosition convention).
+        - Add/strengthen tests: add stmt offset verification cases in parser_test.go.
+
+        # Verification
+        - After Parse, ensure stmt.OriginTextPosition() is set to a non-zero value.
+        - For multiple statements, ensure each start offset is correct.
+    </objective>
+    <agent-rule>
+        - **Harmony is important; be harmonious**: AI-generated code is generally not welcomed. Please respect the existing code conventions as much as possible to ensure your code harmonizes with the work of other TiDB contributors.
+    </agent-rule>
+</agent-task>

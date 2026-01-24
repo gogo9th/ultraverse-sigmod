@@ -1,0 +1,118 @@
+<agent-task mode="planning">
+    <objective partial="true">
+        # Implement the `procpatcher` tool in Go
+
+        ## Background
+        - MySQL binary logs (ROW format) do not include information about stored procedure calls.
+        - The `procpatcher` tool patches MySQL stored procedure source code to force procedure-call information to be added to the binary log.
+
+        ## BUT HOW?
+        - `procpatcher` works as follows. Let's look at a sample procedure for illustration:
+    </objective>
+    <code reference="before" name="lucky_chance.orig.sql" lang="sql; variant=mysql">
+        DELIMITER $$
+
+        CREATE PROCEDURE lucky_chance(IN p_user_id INT)
+        BEGIN
+            DECLARE v_random_val INT;
+
+            -- Generate a random integer between 1 and 10
+            -- RAND() returns 0 <= v < 1.0; * 10 gives 0~9.xxx; FLOOR then +1 gives 1~10
+            SET v_random_val = FLOOR(1 + RAND() * 10);
+
+            -- Add 10,000 to the balance only when the random value is 7
+            IF v_random_val = 7 THEN
+                UPDATE accounts
+                SET balance = balance + 10000
+                WHERE user_id = p_user_id;
+
+                SELECT CONCAT('Lucky! You rolled a 7. Balance updated for User ', p_user_id) AS result;
+            ELSE
+                SELECT CONCAT('Sorry, you rolled a ', v_random_val, '. No luck this time.') AS result;
+            END IF;
+        END $$
+
+        DELIMITER ;
+    </code>
+    <code reference="helper" name="__ultraverse__helper.sql" lang="sql; variant=mysql">
+        DROP TABLE IF EXISTS __ULTRAVERSE_PROCEDURE_HINT;
+
+        -- Magic happens here!
+        -- Using the BLACKHOLE engine, no data is actually stored, but call info is recorded in the binlog!
+        CREATE TABLE __ULTRAVERSE_PROCEDURE_HINT(
+            callid   BIGINT UNSIGNED PRIMARY KEY,
+            procname VARCHAR(255)  NOT NULL,
+            args     VARCHAR(4096) DEFAULT NULL,
+            vars     VARCHAR(4096) DEFAULT NULL
+        ) ENGINE = BLACKHOLE;
+    </code>
+    <code reference="patched" lang="sql; variant=mysql">
+        DELIMITER $$
+
+        CREATE PROCEDURE lucky_chance(IN p_user_id INT)
+        BEGIN
+            DECLARE v_random_val INT;
+
+            -- Generate a random integer between 1 and 10
+            -- RAND() returns 0 <= v < 1.0; * 10 gives 0~9.xxx; FLOOR then +1 gives 1~10
+            SET v_random_val = FLOOR(1 + RAND() * 10);
+
+            -- Add 10,000 to the balance only when the random value is 7
+            IF v_random_val = 7 THEN
+                UPDATE accounts
+                SET balance = balance + 10000
+                WHERE user_id = p_user_id;
+
+                SELECT CONCAT('Lucky! You rolled a 7. Balance updated for User ', p_user_id) AS result;
+            ELSE
+                SELECT CONCAT('Sorry, you rolled a ', v_random_val, '. No luck this time.') AS result;
+            END IF;
+
+            INSERT INTO
+                __ULTRAVERSE_PROCEDURE_HINT (callid, procname, args, vars)
+            VALUES (
+                UUID_SHORT(),   -- identifier
+                'lucky_chance', -- procedure name
+                JSON_OBJECT(    -- parameter info (nullable)
+                    'p_user_id', p_user_id
+                ),
+                JSON_OBJECT(    -- local variable info (nullable)
+                    'v_random_val', v_random_val
+                )
+            );
+        END $$
+
+        DELIMITER ;
+    </code>
+    <objective partial="true">
+        - Like this, insert procedure-call information into the `__ULTRAVERSE_PROCEDURE_HINT` table near the end of the procedure or right before it exits.
+        - The `procpatcher` tool parses the given SQL file and performs the insertion work above for each procedure.
+
+        ## SPECS
+        - Implement in Go. (Important)
+            - Because we need to use tidb/parser, a MySQL-compatible parser.
+        - Use the tidb/parser library to parse the SQL file and manipulate the AST.
+        - Find each procedure AST and insert an `INSERT INTO __ULTRAVERSE_PROCEDURE_HINT ...` statement at the end of the procedure or right before each early exit (LEAVE, SIGNAL, RESIGNAL).
+            - In this statement, you must dump all parameters and known variables accessible in that context into JSON.
+                - If possible, consider nested BEGIN...END blocks and include **only variables that are valid (accessible) at the insertion point** in JSON_OBJECT.
+        - Convert the modified AST back into SQL and output it.
+
+        - Provide a CLI interface. It takes an input SQL file path and an output SQL file path as arguments. (Output is optional.)
+            - If the output path is not provided, print the modified SQL to stdout.
+        - Also generate `__ultraverse__helper.sql` for creating the BLACKHOLE table.
+            - If an output file is specified, generate it in the same directory as the output file.
+            - If output is not specified (stdout), generate it in the current working directory.
+
+        ## Idempotency (avoid re-patching)
+        - Re-patching an already patched procedure could insert duplicate INSERT statements.
+        - If the procedure body already contains an INSERT into `__ULTRAVERSE_PROCEDURE_HINT`:
+            - Skip that procedure and print a warning message to stderr.
+            - Patch other procedures normally.
+
+        ## IMPORTANT NOTE
+        - tidb/parser is a MySQL-compatible parser, but not a 'MySQL CLI' compatible parser.
+        - That is, it does not recognize `DELIMITER [charseq]`.
+
+        - When patching procedures, you must temporarily remove DELIMITER statements, perform patching, and then restore the DELIMITER statements.
+    </objective>
+</agent-task>

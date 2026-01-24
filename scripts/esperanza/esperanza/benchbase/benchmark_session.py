@@ -59,6 +59,35 @@ class BenchmarkSession:
     def _config_path(self) -> str:
         return f"{self.session_path}/ultraverse.json"
 
+    def _mysql_bin(self) -> str:
+        mysql_bin_dir = os.environ.get("MYSQL_BIN_PATH")
+        if not mysql_bin_dir:
+            raise EnvironmentError("MYSQL_BIN_PATH is not set; expected to point to the cached MySQL bin directory")
+        mysql_bin = f"{mysql_bin_dir}/mysql"
+        if not os.path.exists(mysql_bin):
+            raise FileNotFoundError(f"mysql client not found at {mysql_bin}")
+        return mysql_bin
+
+    def _mysql_admin_args(self) -> list[str]:
+        host = os.environ.get("DB_HOST", "127.0.0.1")
+        port = os.environ.get("DB_PORT", "3306")
+        user = os.environ.get("DB_USER", "admin")
+        password = os.environ.get("DB_PASS", "password")
+        return [f"-h{host}", f"--port={port}", f"-u{user}", f"-p{password}", "--protocol=tcp"]
+
+    def _reset_database(self, db_name: str) -> None:
+        sql = f"DROP DATABASE IF EXISTS {db_name}; CREATE DATABASE {db_name};"
+        cmd = [self._mysql_bin()] + self._mysql_admin_args() + ["-B", "--silent", "--raw"]
+        result = subprocess.run(
+            cmd,
+            input=sql.encode('utf-8'),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        if result.returncode != 0:
+            output = result.stdout.decode('utf-8', errors='replace')
+            raise Exception(f"failed to reset database '{db_name}': {output}")
+
     def _generate_config(
         self,
         key_columns: list[str],
@@ -134,38 +163,77 @@ class BenchmarkSession:
         """
         benchbase_home = os.environ['BENCHBASE_HOME']
 
-        cwd = os.getcwd()
+        if len(args) not in (3, 4):
+            raise ValueError(f"invalid benchbase args: {args}")
 
+        bench_name = args[0]
+        db_profile = args[1]
+        amount = args[2]
+        stage = args[3] if len(args) == 4 else None
+
+        jar_path = f"{benchbase_home}/target/benchbase-mariadb/benchbase.jar"
+        if not os.path.exists(jar_path):
+            raise FileNotFoundError(
+                f"benchbase.jar not found at {jar_path}. "
+                "Run ./make-mariadb in the benchbase repo first."
+            )
+
+        config_path = f"{benchbase_home}/config/mariadb/{bench_name}_{db_profile}_{amount}.xml"
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"benchbase config not found: {config_path}")
+
+        statedb_flag = None
+        if db_profile.startswith("statedb"):
+            statedb_flag = f"-{db_profile}"
+
+        if stage is None:
+            actions = ["create", "load", "execute"]
+        elif stage == "prepare":
+            actions = ["create", "load"]
+        else:
+            actions = [stage]
+
+        if "create" in actions:
+            self._reset_database("benchbase")
+
+        cwd = os.getcwd()
         os.chdir(benchbase_home)
 
-        handle = subprocess.Popen(
-            [f"{benchbase_home}/run-mariadb"] + args,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE
-        )
-
-        # Q: should i use handle.communicate() instead of handle.stdout.read()?
-        # A: no, because handle.communicate() waits for the process to finish, which is not what we want.
-        #    we want to read the output while the process is running.
-
         with open(f"{self.session_path}/benchbase.log", 'w') as f:
-            while True:
-                line = handle.stdout.readline()
-                if not line:
-                    break
-                print("\33[2K\r", end='')
-                print(line.decode('utf-8').strip(), end='')
-                sys.stdout.flush()
-                f.write(line.decode('utf-8'))
+            for action in actions:
+                cmd = ["java", "-jar", jar_path]
+                if statedb_flag is not None:
+                    cmd.append(statedb_flag)
+                cmd += ["-b", bench_name, "-d", "/dev/null", "-c", config_path, f"--{action}=true"]
 
-        print()
+                handle = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
 
-        retval = handle.wait()
+                # Q: should i use handle.communicate() instead of handle.stdout.read()?
+                # A: no, because handle.communicate() waits for the process to finish, which is not what we want.
+                #    we want to read the output while the process is running.
+
+                while True:
+                    line = handle.stdout.readline()
+                    if not line:
+                        break
+                    print("\33[2K\r", end='')
+                    print(line.decode('utf-8').strip(), end='')
+                    sys.stdout.flush()
+                    f.write(line.decode('utf-8'))
+
+                print()
+
+                retval = handle.wait()
+                if retval != 0:
+                    os.chdir(cwd)
+                    raise Exception(f"failed to run benchbase action: {action}")
 
         os.chdir(cwd)
-
-        if retval != 0:
-            raise Exception("failed to run benchbase")
 
     def run_statelogd(self, key_columns: list[str], development_flags: list[str] = []):
         """

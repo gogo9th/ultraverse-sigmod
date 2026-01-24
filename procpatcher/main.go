@@ -9,15 +9,25 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: procpatcher <input.sql> [output.sql]")
+	args := os.Args[1:]
+	mode := "patch"
+	if len(args) > 0 && (args[0] == "--depatch" || args[0] == "-d") {
+		mode = "depatch"
+		args = args[1:]
+	} else if len(args) > 0 && (args[0] == "--repatch" || args[0] == "-r") {
+		mode = "repatch"
+		args = args[1:]
+	}
+
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: procpatcher [--depatch|-d] [--repatch|-r] <input.sql> [output.sql]")
 		os.Exit(1)
 	}
 
-	inputPath := os.Args[1]
+	inputPath := args[0]
 	var outputPath string
-	if len(os.Args) >= 3 {
-		outputPath = os.Args[2]
+	if len(args) >= 2 {
+		outputPath = args[1]
 	}
 
 	// Read input file
@@ -27,8 +37,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Patch the SQL
-	result, err := patcher.Patch(string(inputSQL))
+	var result *patcher.PatchResult
+	if mode == "depatch" {
+		result, err = patcher.Depatch(string(inputSQL))
+	} else if mode == "repatch" {
+		result, err = patcher.Repatch(string(inputSQL))
+	} else {
+		result, err = patcher.Patch(string(inputSQL))
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error patching SQL: %v\n", err)
 		os.Exit(1)
@@ -42,22 +58,26 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Generate helper.sql in the same directory as output
-		helperPath := filepath.Join(filepath.Dir(outputPath), "__ultraverse__helper.sql")
-		err = os.WriteFile(helperPath, []byte(generateHelperSQL()), 0644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing helper file: %v\n", err)
-			os.Exit(1)
+		if mode != "depatch" {
+			// Generate helper.sql in the same directory as output
+			helperPath := filepath.Join(filepath.Dir(outputPath), "__ultraverse__helper.sql")
+			err = os.WriteFile(helperPath, []byte(generateHelperSQL()), 0644)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing helper file: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	} else {
 		fmt.Print(result.PatchedSQL)
 
-		// Generate helper.sql in CWD
-		helperPath := "__ultraverse__helper.sql"
-		err = os.WriteFile(helperPath, []byte(generateHelperSQL()), 0644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing helper file: %v\n", err)
-			os.Exit(1)
+		if mode != "depatch" {
+			// Generate helper.sql in CWD
+			helperPath := "__ultraverse__helper.sql"
+			err = os.WriteFile(helperPath, []byte(generateHelperSQL()), 0644)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing helper file: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	}
 

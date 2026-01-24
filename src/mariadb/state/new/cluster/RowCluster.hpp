@@ -13,6 +13,8 @@
 
 #include <boost/graph/adjacency_list.hpp>
 
+#include "mariadb/state/new/proto/ultraverse_state_fwd.hpp"
+
 #include "mariadb/state/StateItem.h"
 #include "mariadb/state/new/Query.hpp"
 #include "mariadb/state/new/Transaction.hpp"
@@ -80,6 +82,9 @@ namespace ultraverse::state::v2 {
     
         template <typename Archive>
         void serialize(Archive &archive);
+
+        void toProtobuf(ultraverse::state::v2::proto::RowCluster *out) const;
+        void fromProtobuf(const ultraverse::state::v2::proto::RowCluster &msg);
     private:
         LoggerPtr _logger;
         using ClusterGraph =
@@ -109,7 +114,5 @@ namespace ultraverse::state::v2 {
         std::unordered_map<std::string, std::vector<std::pair<CompositeRange, std::vector<gid_t>>>> _compositeClusterMap;
     };
 }
-
-#include "RowCluster.cereal.cpp"
 
 #endif //ULTRAVERSE_ROWCLUSTER_HPP

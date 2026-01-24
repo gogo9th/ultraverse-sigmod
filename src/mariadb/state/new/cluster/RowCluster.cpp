@@ -10,6 +10,8 @@
 
 #include "base/TaskExecutor.hpp"
 
+#include "ultraverse_state.pb.h"
+
 namespace ultraverse::state::v2 {
     RowCluster::RowCluster():
         _logger(createLogger("RowCluster"))
@@ -693,5 +695,67 @@ namespace ultraverse::state::v2 {
         }
         
         return std::move(dst);
+    }
+
+    void RowCluster::toProtobuf(ultraverse::state::v2::proto::RowCluster *out) const {
+        if (out == nullptr) {
+            return;
+        }
+
+        out->Clear();
+        auto *clusterMap = out->mutable_cluster_map();
+        clusterMap->clear();
+
+        for (const auto &pair : _clusterMap) {
+            auto &rangeContainer = (*clusterMap)[pair.first];
+            for (const auto &rangePair : pair.second) {
+                auto *entry = rangeContainer.add_entries();
+                if (rangePair.first) {
+                    rangePair.first->toProtobuf(entry->mutable_range());
+                }
+                for (const auto gid : rangePair.second) {
+                    entry->add_gids(gid);
+                }
+            }
+        }
+
+        out->clear_aliases();
+        for (const auto &aliasPair : _aliases) {
+            const auto &column = aliasPair.first;
+            for (const auto &entry : aliasPair.second) {
+                auto *aliasMsg = out->add_aliases();
+                aliasMsg->set_column(column);
+                entry.first.toProtobuf(aliasMsg->mutable_key());
+                entry.second.toProtobuf(aliasMsg->mutable_alias());
+            }
+        }
+    }
+
+    void RowCluster::fromProtobuf(const ultraverse::state::v2::proto::RowCluster &msg) {
+        _clusterMap.clear();
+        _aliases.clear();
+
+        for (const auto &pair : msg.cluster_map()) {
+            auto &rangeList = _clusterMap[pair.first];
+            rangeList.reserve(static_cast<size_t>(pair.second.entries_size()));
+            for (const auto &entry : pair.second.entries()) {
+                auto rangePtr = std::make_shared<StateRange>();
+                rangePtr->fromProtobuf(entry.range());
+                std::vector<gid_t> gids;
+                gids.reserve(static_cast<size_t>(entry.gids_size()));
+                for (const auto gid : entry.gids()) {
+                    gids.push_back(gid);
+                }
+                rangeList.emplace_back(std::move(rangePtr), std::move(gids));
+            }
+        }
+
+        for (const auto &aliasMsg : msg.aliases()) {
+            StateData key;
+            key.fromProtobuf(aliasMsg.key());
+            RowAlias alias;
+            alias.fromProtobuf(aliasMsg.alias());
+            _aliases[aliasMsg.column()].emplace(std::move(key), std::move(alias));
+        }
     }
 }

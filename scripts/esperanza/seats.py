@@ -6,18 +6,19 @@ from esperanza.utils.download_mysql import download_mysql
 from esperanza.utils.state_change_report import read_state_change_report
 
 KEY_COLUMNS = [
+    'country.co_id',
+    'airport.ap_id',
+    'airline.al_id',
     'customer2.c_id',
     'flight.f_id',
-    'frequent_flyer.ff_c_id',
+    'frequent_flyer.ff_c_id+frequent_flyer.ff_al_id',
     'reservation.r_c_id+reservation.r_f_id',
-    'airport.ap_id',
+    'airport_distance.d_ap_id0+airport_distance.d_ap_id1',
 ]
 BACKUP_FILE = "dbdump.sql"
 COLUMN_ALIASES: dict[str, list[str]] = {
     "customer2.c_id_str": ["customer2.c_id"],
-    "flight.f_id": ["flight.f_al_id"],
     "frequent_flyer.ff_c_id_str": ["frequent_flyer.ff_c_id"],
-    "airport.ap_id": ["airport.ap_co_id"],
 }
 
 DB_TABLE_DIFF_OPTIONS = {

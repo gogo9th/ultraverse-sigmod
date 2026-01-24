@@ -1,0 +1,12 @@
+<agent-task mode="planning">
+	<objective>
+		# Cereal header-only serialization framework을 Google Protobuf 3으로 대체한다 
+		
+		- 안타깝게도, Celeal은 메인터넌스가 거의 중단되다시피 한 상태입니다. 최신 구성의 OS/컴파일러에서는 빌드 오류가 납니다.
+		- 현재 Ultraverse의 Cereal 기반 시리얼라이제이션을 Google Protobuf 3으로 이행합니다.
+
+		## USE Protobuf3 AS 'CONTAINER'
+		- C++ struct/class와 Protobuf 3 메시지를 이중으로 정의하게 됩니다.
+		- 어느 한쪽으로 통일하려 하지 마시고, Protobuf 3 메시지는 '시리얼라이즈 된 데이터의 컨테이너'로써 사용하십시오. (fromProtobuf / toProtobuf ...)
+	</objective>
+</agent-task>

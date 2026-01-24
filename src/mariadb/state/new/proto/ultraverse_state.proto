@@ -1,0 +1,170 @@
+syntax = "proto3";
+
+package ultraverse.state.v2.proto;
+
+message StateData {
+  bool is_subselect = 1;
+  bool is_equal = 2;
+  uint32 type = 3;
+  uint64 hash = 4;
+  oneof value {
+    int64 int_value = 5;
+    uint64 uint_value = 6;
+    double double_value = 7;
+    bytes string_value = 8;
+  }
+}
+
+message StateRangeInterval {
+  StateData begin = 1;
+  StateData end = 2;
+}
+
+message StateRange {
+  repeated StateRangeInterval range = 1;
+  uint64 hash = 2;
+}
+
+message StateItem {
+  uint32 condition_type = 1;
+  uint32 function_type = 2;
+  string name = 3;
+  repeated StateItem arg_list = 4;
+  repeated StateData data_list = 5;
+  repeated StateItem sub_query_list = 6;
+  StateRange range_cache = 7;
+  bool is_range_cache_built = 8;
+}
+
+message RowAlias {
+  StateItem alias = 1;
+  StateItem real = 2;
+}
+
+message RowClusterRangeEntry {
+  StateRange range = 1;
+  repeated uint64 gids = 2;
+}
+
+message RowClusterRanges {
+  repeated RowClusterRangeEntry entries = 1;
+}
+
+message RowClusterAliasEntry {
+  string column = 1;
+  StateData key = 2;
+  RowAlias alias = 3;
+}
+
+message RowCluster {
+  map<string, RowClusterRanges> cluster_map = 1;
+  repeated RowClusterAliasEntry aliases = 2;
+}
+
+message StateHash {
+  repeated bytes modulo = 1;
+  repeated bytes hash = 2;
+}
+
+message QueryUserVar {
+  string name = 1;
+  uint32 type = 2;
+  bool is_null = 3;
+  bool is_unsigned = 4;
+  uint32 charset = 5;
+  string value = 6;
+}
+
+message QueryStatementContext {
+  bool has_last_insert_id = 1;
+  uint64 last_insert_id = 2;
+  bool has_insert_id = 3;
+  uint64 insert_id = 4;
+  bool has_rand_seed = 5;
+  uint64 rand_seed1 = 6;
+  uint64 rand_seed2 = 7;
+  repeated QueryUserVar user_vars = 8;
+}
+
+message Query {
+  uint32 type = 1;
+  uint64 timestamp = 2;
+  string database = 3;
+  string statement = 4;
+  uint32 flags = 5;
+  map<string, StateHash> before_hash = 6;
+  map<string, StateHash> after_hash = 7;
+  repeated StateItem read_set = 8;
+  repeated StateItem write_set = 9;
+  repeated StateItem var_map = 10;
+  repeated string read_columns = 11;
+  repeated string write_columns = 12;
+  uint32 affected_rows = 13;
+  QueryStatementContext statement_context = 14;
+}
+
+message Transaction {
+  uint64 timestamp = 1;
+  uint64 gid = 2;
+  uint64 xid = 3;
+  bool is_successful = 4;
+  uint32 flags = 5;
+  uint64 next_pos = 6;
+  repeated uint64 dependencies = 7;
+  repeated Query queries = 8;
+}
+
+message ColumnDependencyNode {
+  repeated string column_set = 1;
+  uint32 access_type = 2;
+  uint64 hash = 3;
+}
+
+message ColumnDependencyGraphEntry {
+  int64 node_index = 1;
+  ColumnDependencyNode node = 2;
+  repeated int64 adjacent = 3;
+}
+
+message ColumnDependencyGraph {
+  repeated ColumnDependencyGraphEntry entries = 1;
+}
+
+message TableDependencyGraphEntry {
+  string table = 1;
+  repeated string related_tables = 2;
+}
+
+message TableDependencyGraph {
+  repeated TableDependencyGraphEntry entries = 1;
+}
+
+message StateClusterRangeEntry {
+  StateRange range = 1;
+  repeated uint64 gids = 2;
+}
+
+message StateClusterCluster {
+  repeated StateClusterRangeEntry read = 1;
+  repeated StateClusterRangeEntry write = 2;
+}
+
+message StateCluster {
+  map<string, StateClusterCluster> clusters = 1;
+}
+
+message ProcCall {
+  uint64 call_id = 1;
+  string proc_name = 2;
+  string call_info = 3;
+  map<string, StateData> args = 4;
+  map<string, StateData> vars = 5;
+  repeated string statements = 6;
+}
+
+message StateChangeReplayPlan {
+  repeated uint64 gids = 1;
+  map<uint64, Transaction> user_queries = 2;
+  repeated uint64 rollback_gids = 3;
+  repeated string replace_queries = 4;
+}
