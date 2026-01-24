@@ -5,6 +5,8 @@
 #include "utils/StringUtil.hpp"
 #include "TableDependencyGraph.hpp"
 
+#include "ultraverse_state.pb.h"
+
 
 namespace ultraverse::state::v2 {
     TableDependencyGraph::TableDependencyGraph():
@@ -145,5 +147,42 @@ namespace ultraverse::state::v2 {
         }
         
         return false;
+    }
+
+    void TableDependencyGraph::toProtobuf(ultraverse::state::v2::proto::TableDependencyGraph *out) const {
+        if (out == nullptr) {
+            return;
+        }
+
+        out->Clear();
+        for (const auto &pair : _nodeMap) {
+            const auto &table = pair.first;
+            const auto nodeIdx = pair.second;
+
+            auto *entry = out->add_entries();
+            entry->set_table(table);
+
+            boost::graph_traits<Graph>::out_edge_iterator oi, oiEnd, next;
+            boost::tie(oi, oiEnd) = boost::out_edges(nodeIdx, _graph);
+            for (next = oi; oi != oiEnd; oi = next) {
+                next++;
+                entry->add_related_tables(_graph[oi->m_target]);
+            }
+        }
+    }
+
+    void TableDependencyGraph::fromProtobuf(const ultraverse::state::v2::proto::TableDependencyGraph &msg) {
+        _graph.clear();
+        _nodeMap.clear();
+
+        for (const auto &entry : msg.entries()) {
+            addTable(entry.table());
+        }
+
+        for (const auto &entry : msg.entries()) {
+            for (const auto &related : entry.related_tables()) {
+                addRelationship(entry.table(), related);
+            }
+        }
     }
 }

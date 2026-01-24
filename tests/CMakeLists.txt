@@ -4,11 +4,11 @@ include(FetchContent)
 find_package(Boost REQUIRED)
 
 include_directories(../dependencies/nlohmann-json/include)
-include_directories(../dependencies/cereal/include)
 include_directories(${Boost_INCLUDE_DIRS})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../parserlib/cpp_autogen)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp)
+include_directories(${CMAKE_BINARY_DIR}/src/proto_autogen)
 
 include_directories(../src)
 

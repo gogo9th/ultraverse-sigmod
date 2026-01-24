@@ -17,6 +17,7 @@
 #include <openssl/sha.h>
 #include <openssl/md5.h>
 
+#include "mariadb/state/new/proto/ultraverse_state_fwd.hpp"
 
 namespace ultraverse::state {
     class StateHash {
@@ -75,6 +76,9 @@ namespace ultraverse::state {
     
         template <typename Archive>
         void load(Archive &archive);
+
+        void toProtobuf(ultraverse::state::v2::proto::StateHash *out) const;
+        void fromProtobuf(const ultraverse::state::v2::proto::StateHash &msg);
         
     private:
         static std::vector<BigNumPtr> allocateHashList(int count);
@@ -91,7 +95,5 @@ namespace ultraverse::state {
     };
 }
 
-
-#include "StateHash.cereal.cpp"
 
 #endif //ULTRAVERSE_STATEHASH_HPP

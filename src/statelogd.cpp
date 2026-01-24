@@ -1,8 +1,3 @@
-#include <cereal/types/unordered_map.hpp>
-#include <cereal/types/memory.hpp>
-#include <cereal/archives/binary.hpp>
-#include <cereal/types/utility.hpp>
-
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -223,18 +218,10 @@ public:
         if (!_checkpointPath.empty()) {
             _stateLogWriter->open(std::ios::out | std::ios::binary | std::ios::app);
             _logger->info("ultraverse state loaded: {}", _checkpointPath);
-            int pos;
+            int pos = 0;
             std::ifstream is(_checkpointPath, std::ios::binary);
             if (is) {
-                cereal::BinaryInputArchive archive(is);
-                /*
-                archive(_gid);
-                archive(pos);
-                archive(_tableMap);
-                archive(_stateHashMap);
-                archive(_pendingTxn);
-                archive(_pendingQuery);
-                 */
+                _logger->warn("checkpoint restore is not supported with protobuf-based logs yet");
 
                 _logger->info("gid: {}", _gid);
             } else {
@@ -890,8 +877,7 @@ public:
         _logger->info("ultraverse state saved: {}", checkpointPath);
         std::ofstream os(checkpointPath, std::ios::binary);
         if (os.is_open()) {
-            cereal::BinaryOutputArchive archive(os);
-            // archive(_gid, pos, _tableMap, _stateHashMap, _pendingTxn, _pendingQuery);
+            _logger->warn("checkpoint save is not supported with protobuf-based logs yet");
             os.close();
         }
 

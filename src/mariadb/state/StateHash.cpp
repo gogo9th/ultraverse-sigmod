@@ -8,6 +8,8 @@
 
 #include <openssl/evp.h>
 
+#include "ultraverse_state.pb.h"
+
 #include "StateHash.hpp"
 
 
@@ -209,5 +211,65 @@ namespace ultraverse::state {
     bool StateHash::operator==(const StateHash &other) const {
         return compareHashList(this->_hashList, other._hashList) &&
                compareHashList(this->_moduloList, other._moduloList);
+    }
+
+    void StateHash::toProtobuf(ultraverse::state::v2::proto::StateHash *out) const {
+        if (out == nullptr) {
+            return;
+        }
+
+        out->Clear();
+        for (const auto &modulo : _moduloList) {
+            if (!modulo) {
+                out->add_modulo("");
+                continue;
+            }
+            const int size = BN_num_bytes(modulo.get());
+            std::string buffer(static_cast<size_t>(size), '\0');
+            if (size > 0) {
+                BN_bn2bin(modulo.get(), reinterpret_cast<unsigned char *>(buffer.data()));
+            }
+            out->add_modulo(buffer);
+        }
+
+        for (const auto &hash : _hashList) {
+            if (!hash) {
+                out->add_hash("");
+                continue;
+            }
+            const int size = BN_num_bytes(hash.get());
+            std::string buffer(static_cast<size_t>(size), '\0');
+            if (size > 0) {
+                BN_bn2bin(hash.get(), reinterpret_cast<unsigned char *>(buffer.data()));
+            }
+            out->add_hash(buffer);
+        }
+    }
+
+    void StateHash::fromProtobuf(const ultraverse::state::v2::proto::StateHash &msg) {
+        _moduloList.clear();
+        _hashList.clear();
+
+        _moduloList.reserve(static_cast<size_t>(msg.modulo_size()));
+        for (const auto &payload : msg.modulo()) {
+            BigNumPtr bn(BN_new(), BN_free);
+            if (!payload.empty()) {
+                BN_bin2bn(reinterpret_cast<const unsigned char *>(payload.data()),
+                          static_cast<int>(payload.size()),
+                          bn.get());
+            }
+            _moduloList.push_back(std::move(bn));
+        }
+
+        _hashList.reserve(static_cast<size_t>(msg.hash_size()));
+        for (const auto &payload : msg.hash()) {
+            BigNumPtr bn(BN_new(), BN_free);
+            if (!payload.empty()) {
+                BN_bin2bn(reinterpret_cast<const unsigned char *>(payload.data()),
+                          static_cast<int>(payload.size()),
+                          bn.get());
+            }
+            _hashList.push_back(std::move(bn));
+        }
     }
 }

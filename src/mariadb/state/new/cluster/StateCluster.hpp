@@ -12,6 +12,8 @@
 #include <mutex>
 #include <shared_mutex>
 
+#include "mariadb/state/new/proto/ultraverse_state_fwd.hpp"
+
 #include "../../StateItem.h"
 #include "../Transaction.hpp"
 #include "../CombinedIterator.hpp"
@@ -61,7 +63,7 @@ namespace ultraverse::state::v2 {
             using ClusterMap = std::unordered_map<StateRange, std::unordered_set<gid_t>>;
             using PendingClusterMap = std::vector<std::pair<StateRange, std::unordered_set<gid_t>>>;
             
-            // for cereal
+            // for protobuf
             Cluster();
             Cluster(const Cluster &other);
             Cluster(Cluster &&other) noexcept = delete;
@@ -77,6 +79,9 @@ namespace ultraverse::state::v2 {
             
             template <typename Archive>
             void serialize(Archive &archive);
+
+            void toProtobuf(ultraverse::state::v2::proto::StateClusterCluster *out) const;
+            void fromProtobuf(const ultraverse::state::v2::proto::StateClusterCluster &msg);
             
             decltype(read.begin()) findByRange(ClusterType type, const StateRange &range);
             decltype(pendingRead.begin()) pending_findByRange(ClusterType type, const StateRange &range);
@@ -143,6 +148,9 @@ namespace ultraverse::state::v2 {
         
         template <typename Archive>
         void serialize(Archive &archive);
+
+        void toProtobuf(ultraverse::state::v2::proto::StateCluster *out) const;
+        void fromProtobuf(const ultraverse::state::v2::proto::StateCluster &msg);
         
     private:
         /**
@@ -215,7 +223,5 @@ namespace ultraverse::state::v2 {
 
     };
 }
-
-#include "StateCluster.cereal.cpp"
 
 #endif //ULTRAVERSE_STATECLUSTER_HPP

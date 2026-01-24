@@ -6,8 +6,6 @@
 #include <sstream>
 #include <utility>
 
-#include <cereal/types/vector.hpp>
-#include <cereal/types/unordered_map.hpp>
 #include <iomanip>
 
 #include "DBEvent.hpp"

@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include <cereal/access.hpp>
+#include "mariadb/state/new/proto/ultraverse_state_fwd.hpp"
 
 #include "mariadb/state/StateHash.hpp"
 #include "mariadb/state/StateItem.h"
@@ -61,10 +61,8 @@ namespace ultraverse::state::v2 {
             uint32_t charset = 0;
             std::string value;
 
-            template <typename Archive>
-            void serialize(Archive &archive) {
-                archive(name, type, isNull, isUnsigned, charset, value);
-            }
+            void toProtobuf(ultraverse::state::v2::proto::QueryUserVar *out) const;
+            void fromProtobuf(const ultraverse::state::v2::proto::QueryUserVar &msg);
         };
 
         struct StatementContext {
@@ -85,19 +83,8 @@ namespace ultraverse::state::v2 {
                 *this = StatementContext();
             }
 
-            template <typename Archive>
-            void serialize(Archive &archive) {
-                archive(
-                    hasLastInsertId,
-                    lastInsertId,
-                    hasInsertId,
-                    insertId,
-                    hasRandSeed,
-                    randSeed1,
-                    randSeed2,
-                    userVars
-                );
-            }
+            void toProtobuf(ultraverse::state::v2::proto::QueryStatementContext *out) const;
+            void fromProtobuf(const ultraverse::state::v2::proto::QueryStatementContext &msg);
         };
 
         Query();
@@ -153,8 +140,8 @@ namespace ultraverse::state::v2 {
 
         std::string varMappedStatement(const std::vector<StateItem> &variableSet) const;
 
-        template <typename Archive>
-        void serialize(Archive &archive);
+        void toProtobuf(ultraverse::state::v2::proto::Query *out) const;
+        void fromProtobuf(const ultraverse::state::v2::proto::Query &msg);
     private:
         QueryType _type;
         uint64_t _timestamp;
@@ -181,7 +168,6 @@ namespace ultraverse::state::v2 {
 }
 
 
-#include "Query.cereal.cpp"
 #include "ColumnSet.template.cpp"
 
 #endif //ULTRAVERSE_STATE_QUERY_HPP

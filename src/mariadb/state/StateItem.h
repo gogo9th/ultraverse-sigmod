@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <memory>
 
+#include "mariadb/state/new/proto/ultraverse_state_fwd.hpp"
+
 #include "state_log_hdr.h"
 
 enum EN_CONDITION_TYPE
@@ -82,6 +84,9 @@ public:
   
   template <typename Archive>
   void load(Archive &archive);
+
+  void toProtobuf(ultraverse::state::v2::proto::StateData *out) const;
+  void fromProtobuf(const ultraverse::state::v2::proto::StateData &msg);
   
   template <typename T>
   T getAs() const {
@@ -283,6 +288,9 @@ public:
     
     template <typename Archive>
     void serialize(Archive &archive);
+
+    void toProtobuf(ultraverse::state::v2::proto::StateRangeInterval *out) const;
+    void fromProtobuf(const ultraverse::state::v2::proto::StateRangeInterval &msg);
   };
 
   StateRange();
@@ -326,6 +334,9 @@ public:
 
   template <typename Archive>
   void serialize(Archive &archive);
+
+  void toProtobuf(ultraverse::state::v2::proto::StateRange *out) const;
+  void fromProtobuf(const ultraverse::state::v2::proto::StateRange &msg);
 
   void arrangeSelf();
   
@@ -389,6 +400,9 @@ public:
   
   template <typename Archive>
   void serialize(Archive &archive);
+
+  void toProtobuf(ultraverse::state::v2::proto::StateItem *out) const;
+  void fromProtobuf(const ultraverse::state::v2::proto::StateItem &msg);
 private:
   static bool is_data_ok(const StateItem &item);
 
@@ -406,7 +420,6 @@ public:
   mutable bool _isRangeCacheBuilt;
 };
 
-#include "StateItem.cereal.cpp"
 #include "StateItem.template.cpp"
 
 #endif /* STATE_ITEM_INCLUDED */

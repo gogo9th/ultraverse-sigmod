@@ -4,7 +4,7 @@
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
-#include <cereal/archives/binary.hpp>
+#include "ultraverse_state.pb.h"
 
 #include "mariadb/state/new/Query.hpp"
 #include "mariadb/state/new/Transaction.hpp"
@@ -158,26 +158,24 @@ StateItem buildStateItem() {
 }
 } // namespace
 
-TEST_CASE("Query cereal round-trip preserves fields", "[query][cereal]") {
+TEST_CASE("Query protobuf round-trip preserves fields", "[query][protobuf]") {
     Query original = buildQuery("testdb", "UPDATE users SET name='alice' WHERE id=42", 123456, 3);
 
-    std::stringstream buffer(std::ios_base::in | std::ios_base::out | std::ios_base::binary);
-    {
-        cereal::BinaryOutputArchive outputArchive(buffer);
-        outputArchive(original);
-    }
+    ultraverse::state::v2::proto::Query protoQuery;
+    original.toProtobuf(&protoQuery);
+    std::string payload;
+    REQUIRE(protoQuery.SerializeToString(&payload));
+
+    ultraverse::state::v2::proto::Query restoredProto;
+    REQUIRE(restoredProto.ParseFromString(payload));
 
     Query restored;
-    buffer.seekg(0, std::ios::beg);
-    {
-        cereal::BinaryInputArchive inputArchive(buffer);
-        inputArchive(restored);
-    }
+    restored.fromProtobuf(restoredProto);
 
     requireQueryEqual(original, restored);
 }
 
-TEST_CASE("Transaction cereal round-trip preserves header and queries", "[transaction][cereal]") {
+TEST_CASE("Transaction protobuf round-trip preserves header and queries", "[transaction][protobuf]") {
     TransactionHeader header{};
     header.timestamp = 987654;
     header.gid = 42;
@@ -194,18 +192,16 @@ TEST_CASE("Transaction cereal round-trip preserves header and queries", "[transa
     txn << q1;
     txn << q2;
 
-    std::stringstream buffer;
-    {
-        cereal::BinaryOutputArchive outputArchive(buffer);
-        outputArchive(txn);
-    }
+    ultraverse::state::v2::proto::Transaction protoTxn;
+    txn.toProtobuf(&protoTxn);
+    std::string payload;
+    REQUIRE(protoTxn.SerializeToString(&payload));
+
+    ultraverse::state::v2::proto::Transaction restoredProto;
+    REQUIRE(restoredProto.ParseFromString(payload));
 
     Transaction restored;
-    buffer.seekg(0, std::ios::beg);
-    {
-        cereal::BinaryInputArchive inputArchive(buffer);
-        inputArchive(restored);
-    }
+    restored.fromProtobuf(restoredProto);
 
     auto restoredHeader = restored.header();
     REQUIRE(restoredHeader.timestamp == header.timestamp);
@@ -222,21 +218,19 @@ TEST_CASE("Transaction cereal round-trip preserves header and queries", "[transa
     requireQueryEqual(*q2, *restoredQueries[1]);
 }
 
-TEST_CASE("StateItem cereal round-trip preserves fields", "[stateitem][cereal]") {
+TEST_CASE("StateItem protobuf round-trip preserves fields", "[stateitem][protobuf]") {
     StateItem original = buildStateItem();
 
-    std::stringstream buffer(std::ios_base::in | std::ios_base::out | std::ios_base::binary);
-    {
-        cereal::BinaryOutputArchive outputArchive(buffer);
-        outputArchive(original);
-    }
+    ultraverse::state::v2::proto::StateItem protoItem;
+    original.toProtobuf(&protoItem);
+    std::string payload;
+    REQUIRE(protoItem.SerializeToString(&payload));
+
+    ultraverse::state::v2::proto::StateItem restoredProto;
+    REQUIRE(restoredProto.ParseFromString(payload));
 
     StateItem restored;
-    buffer.seekg(0, std::ios::beg);
-    {
-        cereal::BinaryInputArchive inputArchive(buffer);
-        inputArchive(restored);
-    }
+    restored.fromProtobuf(restoredProto);
 
     requireStateItemEqual(original, restored);
 }

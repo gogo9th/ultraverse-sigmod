@@ -8,6 +8,8 @@
 #include <memory>
 #include <unordered_map>
 
+#include "mariadb/state/new/proto/ultraverse_state_fwd.hpp"
+
 #include "CombinedIterator.hpp"
 
 #include "mariadb/state/StateHash.hpp"
@@ -124,8 +126,8 @@ namespace ultraverse::state::v2 {
         
         Transaction &operator+=(TransactionHeader &header);
         
-        template <typename Archive>
-        void serialize(Archive &archive);
+        void toProtobuf(ultraverse::state::v2::proto::Transaction *out) const;
+        void fromProtobuf(const ultraverse::state::v2::proto::Transaction &msg);
     private:
         friend class StateLogReader;
         
@@ -144,7 +146,5 @@ namespace ultraverse::state::v2 {
         std::vector<std::shared_ptr<Query>> _queries;
     };
 }
-
-#include "Transaction.cereal.cpp"
 
 #endif //ULTRAVERSE_STATE_TRANSACTION_HPP

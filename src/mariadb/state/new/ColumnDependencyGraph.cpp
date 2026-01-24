@@ -4,8 +4,13 @@
 
 #include "ColumnDependencyGraph.hpp"
 
+#include <algorithm>
+#include <cassert>
+
 #include "cluster/RowCluster.hpp"
 #include "utils/StringUtil.hpp"
+
+#include "ultraverse_state.pb.h"
 
 
 namespace ultraverse::state::v2 {
@@ -128,5 +133,78 @@ namespace ultraverse::state::v2 {
         }
         
         return false;
+    }
+
+    void ColumnDependencyNode::toProtobuf(ultraverse::state::v2::proto::ColumnDependencyNode *out) const {
+        if (out == nullptr) {
+            return;
+        }
+
+        out->Clear();
+        out->set_access_type(static_cast<uint32_t>(accessType));
+        out->set_hash(static_cast<uint64_t>(hash));
+        for (const auto &column : columnSet) {
+            out->add_column_set(column);
+        }
+    }
+
+    void ColumnDependencyNode::fromProtobuf(const ultraverse::state::v2::proto::ColumnDependencyNode &msg) {
+        columnSet.clear();
+        for (const auto &column : msg.column_set()) {
+            columnSet.insert(column);
+        }
+        accessType = static_cast<ColumnAccessType>(msg.access_type());
+        hash = static_cast<size_t>(msg.hash());
+    }
+
+    void ColumnDependencyGraph::toProtobuf(ultraverse::state::v2::proto::ColumnDependencyGraph *out) const {
+        if (out == nullptr) {
+            return;
+        }
+
+        out->Clear();
+        for (const auto &pair : _nodeMap) {
+            const auto nodeIdx = pair.second;
+            const auto &node = _graph[nodeIdx];
+            auto *entry = out->add_entries();
+            entry->set_node_index(static_cast<int64_t>(nodeIdx));
+            node->toProtobuf(entry->mutable_node());
+
+            boost::graph_traits<Graph>::adjacency_iterator ai, aiEnd, next;
+            boost::tie(ai, aiEnd) = boost::adjacent_vertices(nodeIdx, _graph);
+            for (next = ai; ai != aiEnd; ai = next) {
+                next++;
+                entry->add_adjacent(static_cast<int64_t>(*ai));
+            }
+        }
+    }
+
+    void ColumnDependencyGraph::fromProtobuf(const ultraverse::state::v2::proto::ColumnDependencyGraph &msg) {
+        _graph.clear();
+        _nodeMap.clear();
+
+        std::vector<const ultraverse::state::v2::proto::ColumnDependencyGraphEntry *> entries;
+        entries.reserve(static_cast<size_t>(msg.entries_size()));
+        for (const auto &entry : msg.entries()) {
+            entries.push_back(&entry);
+        }
+
+        std::sort(entries.begin(), entries.end(),
+                  [](const auto *a, const auto *b) { return a->node_index() < b->node_index(); });
+
+        for (const auto *entry : entries) {
+            auto node = std::make_shared<ColumnDependencyNode>();
+            node->fromProtobuf(entry->node());
+            auto newIdx = add_vertex(node, _graph);
+            assert(entry->node_index() == static_cast<int64_t>(newIdx));
+            _nodeMap.insert({ node->hash, static_cast<int>(newIdx) });
+        }
+
+        for (const auto *entry : entries) {
+            const auto nodeIdx = static_cast<int>(entry->node_index());
+            for (const auto adj : entry->adjacent()) {
+                add_edge(nodeIdx, static_cast<int>(adj), _graph);
+            }
+        }
     }
 }
