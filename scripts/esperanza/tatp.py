@@ -7,6 +7,7 @@ from esperanza.utils.state_change_report import read_state_change_report
 
 KEY_COLUMNS = [
     'subscriber.s_id',
+    'access_info.s_id',
     'call_forwarding.s_id',
     'special_facility.s_id',
 ]

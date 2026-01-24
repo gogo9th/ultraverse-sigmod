@@ -10,6 +10,7 @@ KEY_COLUMNS = [
     'useracct.u_id',
     'review.u_id+review.i_id',
     'trust.source_u_id+trust.target_u_id',
+    'review_rating.u_id',
 ]
 BACKUP_FILE = "dbdump.sql"
 COLUMN_ALIASES: dict[str, list[str]] = {}
