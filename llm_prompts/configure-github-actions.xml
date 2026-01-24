@@ -1,0 +1,53 @@
+<agent-task mode="planning">
+    <objective>
+        # GitHub Actions 워크플로우 파일을 구성한다
+
+        - 프로젝트에 대해 GitHub Actions 워크플로우 파일을 작성하여 CI 파이프라인을 설정합니다.
+        - 하기 code#expected-workflow pseudo code를 참고하여, 다음 요구사항을 충족하는 워크플로우를 작성하십시오.
+    </objective>
+    <code id="expected-workflow" lang="text/x-pseudocode; variant=swift">
+        import GitHubWorkflow
+
+        @WorkflowEntrypoint(
+            run_when: (
+                // TODO: limit to .push(.branch("main"))
+                .push(.branch("*")),
+                .pullRequest(.branch("main"), onlyMainContributors: true),
+            ),
+            runs_on: "ubuntu-latest"
+        )
+        func ultraverse_test(
+            @ActionUse("actions/checkout@v4") checkout: CheckoutAction,
+            @ActionUse("actions/cache@v4") cache: CacheAction
+        ) throws {
+            try checkout()
+            actionsTaskEval { shell in
+                shell("sudo apt install build-essential cmake ...")
+            }
+
+            do {
+                try cache.load(path: "mysql-server", key: "\(runner.os)-mysql-server-9.6")
+            } catch CacheActionError.noCache {
+                try checkout("https://github.com/mysql/mysql-server", tag: "mysql-9.6.0")
+                try actionsTaskEval("clone MySQL Server (9.6.0)") { shell in
+                    shell("cd mysql-server")
+                    shell("mkdir build")
+                    shell("cd build")
+                    shell("cmake ..")
+
+                    shell("cp includes/my_config.h includes/mysql_version.h ../includes")
+                    shell("cd ../../")
+                }
+            }
+
+            try actionsTaskEval("build & run tests") { shell in
+                shell("mkdir build")
+                shell("cd build")
+                shell("cmake .. && make -j${nproc} allTests")
+            }
+
+
+            try cache.save(path: "mysql-server", key: "\(runner.os)-mysql-server-9.6")
+        }
+    </code>
+</agent-task>
