@@ -11,6 +11,12 @@ type textInsertion struct {
 	Seq    int
 }
 
+type textDeletion struct {
+	Offset int
+	Length int
+	Seq    int
+}
+
 func applyInsertions(sql string, insertions []textInsertion) string {
 	if len(insertions) == 0 {
 		return sql
@@ -31,6 +37,35 @@ func applyInsertions(sql string, insertions []textInsertion) string {
 		prefix := append([]byte{}, buf[:ins.Offset]...)
 		suffix := buf[ins.Offset:]
 		buf = append(prefix, append([]byte(ins.Text), suffix...)...)
+	}
+
+	return string(buf)
+}
+
+func applyDeletions(sql string, deletions []textDeletion) string {
+	if len(deletions) == 0 {
+		return sql
+	}
+
+	sort.Slice(deletions, func(i, j int) bool {
+		if deletions[i].Offset != deletions[j].Offset {
+			return deletions[i].Offset > deletions[j].Offset
+		}
+		return deletions[i].Seq > deletions[j].Seq
+	})
+
+	buf := []byte(sql)
+	for _, del := range deletions {
+		if del.Offset < 0 || del.Length <= 0 || del.Offset > len(buf) {
+			continue
+		}
+		end := del.Offset + del.Length
+		if end > len(buf) {
+			end = len(buf)
+		}
+		prefix := append([]byte{}, buf[:del.Offset]...)
+		suffix := buf[end:]
+		buf = append(prefix, suffix...)
 	}
 
 	return string(buf)

@@ -39,10 +39,23 @@ go run ./procpatcher <input.sql>
 
 # Write patched SQL to a file
 go run ./procpatcher <input.sql> <output.sql>
+
+# Remove hint inserts (depatch) and print to stdout
+go run ./procpatcher --depatch <input.sql>
+
+# Remove hint inserts (depatch) and write to a file
+go run ./procpatcher --depatch <input.sql> <output.sql>
+
+# Repatch legacy hints (depatch + patch) and print to stdout
+go run ./procpatcher --repatch <input.sql>
+
+# Repatch legacy hints (depatch + patch) and write to a file
+go run ./procpatcher --repatch <input.sql> <output.sql>
 ```
 
 - If an output path is provided, `__ultraverse__helper.sql` is created in the **same directory** as the output file.
 - If no output path is provided (stdout), `__ultraverse__helper.sql` is created in the **current working directory**.
+  - In `--depatch` mode, helper SQL is **not** generated. `--repatch` follows patch behavior.
 
 ### Example
 
@@ -54,6 +67,19 @@ go run ./procpatcher ./procpatcher/test-cases/lucky_chance.sql /tmp/lucky_patche
 
 If a procedure already contains `__ULTRAVERSE_PROCEDURE_HINT`, `procpatcher` skips patching that procedure and prints a
 warning to stderr.
+
+## Depatch behavior
+
+- Removes `INSERT INTO __ULTRAVERSE_PROCEDURE_HINT ...` statements added by `procpatcher`.
+- Removes legacy `callinfo`-based hints:
+  - `DECLARE __ultraverse_callinfo ...;`
+  - `INSERT INTO __ULTRAVERSE_PROCEDURE_HINT (callinfo) VALUES (__ultraverse_callinfo);`
+- Leaves commented-out `--INSERT ...` lines intact.
+
+## Repatch behavior
+
+- Runs depatch first, then applies the latest patch format.
+- Useful for migrating legacy `callinfo` hints to `callid/procname/args/vars`.
 
 ## Notes / Limitations
 
