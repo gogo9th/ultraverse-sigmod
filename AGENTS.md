@@ -394,7 +394,7 @@ python scripts/esperanza/minishop.py
 - C++20-capable compiler
 - Go (for building parserlib)
 - MySQL source (for libbinlogevents; default `./mysql-server`)
-- Dependencies: Boost, OpenSSL, protobuf, graphviz (libgvc), zstd, tbb, libmysqlclient (or libmariadb)
+- Dependencies: Boost, OpenSSL, protobuf, zstd, tbb, libmysqlclient (or libmariadb)
 
 </section>
 

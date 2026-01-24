@@ -182,7 +182,7 @@ namespace ultraverse::state::v2 {
         void gc();
         
         /**
-         * @brief 현재 그래프를 graphviz dot 형식으로 출력한다.
+         * @brief 현재 그래프를 디버그용으로 출력한다.
          */
         void dump();
         

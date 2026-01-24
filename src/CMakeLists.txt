@@ -24,7 +24,6 @@ find_package(OpenSSL REQUIRED)
 find_package(Boost REQUIRED)
 
 # pkg_check_modules(JEMALLOC REQUIRED jemalloc)
-pkg_check_modules(GRAPHVIZ REQUIRED libgvc)
 pkg_check_modules(PROTOBUF REQUIRED protobuf)
 
 pkg_check_modules(MARIADB mysqlclient)
@@ -52,7 +51,6 @@ set(ULTRAVERSE_DEPENDENCIES
     ${MARIADB_LIBRARIES}
     fmt::fmt spdlog::spdlog
     ${Boost_LIBRARIES}
-    ${GRAPHVIZ_LIBRARIES}
     
     ${PROTOBUF_LIBRARIES}
     
