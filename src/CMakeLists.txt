@@ -60,9 +60,13 @@ set(ULTRAVERSE_DEPENDENCIES
     
     tbb
     mysql_binlog_event_standalone
+)
 
+set(ULTPARSERLIB_SO_PATH
     ${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp/libultparser/libultparser.so
 )
+
+list(APPEND ULTRAVERSE_DEPENDENCIES ${ULTPARSERLIB_SO_PATH})
 
 set(LIBULTRAVERSE_BASE_SRCS
     
@@ -175,6 +179,43 @@ include_directories(${PYTHON3_INCLUDE_DIRS})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
+if (APPLE)
+    set(ULTRAVERSE_RPATH_ORIGIN "@loader_path")
+else()
+    set(ULTRAVERSE_RPATH_ORIGIN "$ORIGIN")
+endif()
+
+function(ultraverse_set_rpath target_name)
+    if (NOT WIN32)
+        set_property(TARGET ${target_name} APPEND PROPERTY
+            BUILD_RPATH "${ULTRAVERSE_RPATH_ORIGIN}"
+        )
+        set_property(TARGET ${target_name} APPEND PROPERTY
+            INSTALL_RPATH "${ULTRAVERSE_RPATH_ORIGIN}"
+        )
+    endif()
+endfunction()
+
+function(ultraverse_copy_ultparser target_name)
+    add_custom_command(
+        TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ULTPARSERLIB_SO_PATH}"
+            "$<TARGET_FILE_DIR:${target_name}>/libultparser.so"
+        COMMENT "Copying libultparser.so next to ${target_name}"
+    )
+endfunction()
+
+function(ultraverse_fix_ultparser_load target_name)
+    if (APPLE)
+        add_custom_command(
+            TARGET ${target_name} POST_BUILD
+            COMMAND install_name_tool -change "libultparser.so" "@rpath/libultparser.so" "$<TARGET_FILE:${target_name}>"
+            COMMENT "Fixing libultparser load path for ${target_name}"
+        )
+    endif()
+endfunction()
+
 add_library(ultraverse SHARED ${LIBULTRAVERSE_SRCS})
 add_dependencies(ultraverse ultparserlib)
 
@@ -204,6 +245,19 @@ set(DB_STATE_CHANGE_SRCS
 add_executable(state_log_viewer ${STATE_LOG_VIEWER_SRCS})
 add_executable(statelogd ${STATELOGD_SRCS})
 add_executable(db_state_change ${DB_STATE_CHANGE_SRCS})
+
+set(ULTRAVERSE_RUNTIME_TARGETS
+    ultraverse
+    state_log_viewer
+    statelogd
+    db_state_change
+)
+
+foreach(ultrav_target IN LISTS ULTRAVERSE_RUNTIME_TARGETS)
+    ultraverse_set_rpath(${ultrav_target})
+    ultraverse_copy_ultparser(${ultrav_target})
+    ultraverse_fix_ultparser_load(${ultrav_target})
+endforeach()
 
 if (APPLE)
     target_link_options(ultraverse PRIVATE -fexperimental-library "-L/opt/homebrew/lib" -fstandalone-debug)

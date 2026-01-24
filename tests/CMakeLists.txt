@@ -20,6 +20,37 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp)
 
 include_directories(../src)
 
+if (APPLE)
+    set(ULTRAVERSE_RPATH_ORIGIN "@loader_path")
+else()
+    set(ULTRAVERSE_RPATH_ORIGIN "$ORIGIN")
+endif()
+
+set(ULTPARSERLIB_SO_PATH
+    ${CMAKE_CURRENT_BINARY_DIR}/../parserlib/cpp/libultparser/libultparser.so
+)
+
+function(ultraverse_set_rpath target_name)
+    if (NOT WIN32)
+        set_property(TARGET ${target_name} APPEND PROPERTY
+            BUILD_RPATH "${ULTRAVERSE_RPATH_ORIGIN}"
+        )
+        set_property(TARGET ${target_name} APPEND PROPERTY
+            INSTALL_RPATH "${ULTRAVERSE_RPATH_ORIGIN}"
+        )
+    endif()
+endfunction()
+
+function(ultraverse_copy_ultparser target_name)
+    add_custom_command(
+        TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ULTPARSERLIB_SO_PATH}"
+            "$<TARGET_FILE_DIR:${target_name}>/libultparser.so"
+        COMMENT "Copying libultparser.so next to ${target_name}"
+    )
+endfunction()
+
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
@@ -97,6 +128,30 @@ add_executable(statechanger-test
 target_link_libraries(statechanger-test ultraverse Catch2::Catch2WithMain tbb)
 
 add_dependencies(sqlparser-test ultparserlib)
+
+set(ULTRAVERSE_TEST_TARGETS
+    statecluster-test
+    rowgraph-test
+    relationship-resolver-test
+    statehash-test
+    ultraverseconfig-test
+    keycolumnparser-test
+    stateitem-test
+    query-transaction-serialization-test
+    sqlparser-test
+    tabledependencygraph-test
+    naminghistory-test
+    rowcluster-test
+    taintanalyzer-test
+    queryeventbase-rwset-test
+    procmatcher-trace-test
+    statechanger-test
+)
+
+foreach(ultrav_target IN LISTS ULTRAVERSE_TEST_TARGETS)
+    ultraverse_set_rpath(${ultrav_target})
+    ultraverse_copy_ultparser(${ultrav_target})
+endforeach()
 
 if (APPLE)
     target_link_options(statecluster-test PRIVATE "-L/opt/homebrew/lib")

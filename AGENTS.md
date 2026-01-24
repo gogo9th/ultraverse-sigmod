@@ -338,6 +338,10 @@ cmake --build build --target statelogd
 cmake --build build --target db_state_change
 cmake --build build --target state_log_viewer
 ```
+Notes:
+- CMake copies `libultparser.so` next to `ultraverse`, `statelogd`, `db_state_change`, and `state_log_viewer`, and sets RPATH to `$ORIGIN` (or `@loader_path` on macOS) so the binaries can resolve the parser library from their own directory.
+- The same RPATH + copy rule applies to unit test executables so `ctest` can locate `libultparser.so`.
+- On macOS, `libultparser.so` install_name is set to `@rpath/libultparser.so`, and runtime targets patch their load command to use `@rpath` (fixes dyld lookup when running outside the build directory).
 
 ## Test
 ```bash
