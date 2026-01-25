@@ -103,8 +103,17 @@ def insert_call_forwarding(
         s_id = row[0]
 
         cursor.execute(
+            "SELECT sf_type FROM special_facility WHERE s_id = %s",
+            (s_id,),
+        )
+        sf_types = [r[0] for r in cursor.fetchall()]
+        if not sf_types:
+            return
+        chosen_sf = sf_type if sf_type in sf_types else random.choice(sf_types)
+
+        cursor.execute(
             "SELECT start_time FROM call_forwarding WHERE s_id = %s AND sf_type = %s",
-            (s_id, sf_type),
+            (s_id, chosen_sf),
         )
         used_times = {r[0] for r in cursor.fetchall()}
         available_times = [t for t in START_TIME_SLOTS if t not in used_times]
@@ -120,7 +129,7 @@ def insert_call_forwarding(
     execute_procedure(
         conn,
         "CALL InsertCallForwarding(%s, %s, %s, %s, %s)",
-        (sub_nbr, sf_type, chosen_start, chosen_end, numberx),
+        (sub_nbr, chosen_sf, chosen_start, chosen_end, numberx),
     )
 
 

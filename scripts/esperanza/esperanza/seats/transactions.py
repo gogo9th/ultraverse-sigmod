@@ -19,6 +19,14 @@ def execute_transaction(cursor, fn: Callable[[], T]) -> T:
 
 
 def _drain_results(cursor) -> None:
+    # For mysql.connector, use stored_results() for stored procedures
+    stored_results = getattr(cursor, "stored_results", None)
+    if callable(stored_results):
+        for result in stored_results():
+            result.fetchall()
+        return
+
+    # Fallback for other drivers
     if getattr(cursor, "with_rows", False):
         cursor.fetchall()
     nextset = getattr(cursor, "nextset", None)
