@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import random
 import string
+import sys
 from datetime import datetime
 from decimal import Decimal
 from typing import Iterable
+
+try:
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover - optional dependency for progress UI
+    tqdm = None
 
 from .constants import (
     C_LAST_LOAD,
@@ -25,15 +31,45 @@ class TPCCDataGenerator:
 
     def generate_all(self) -> None:
         """Generate all TPC-C initial data."""
-        self.generate_items()
-        for w_id in range(1, self.scale_factor + 1):
-            self.generate_warehouse(w_id)
-            self.generate_stock(w_id)
-            self.generate_districts(w_id)
-            self.generate_customers(w_id)
-            self.generate_orders(w_id)
+        items_bar = self._new_progress(ITEMS_COUNT, "items")
+        try:
+            self.generate_items(items_bar)
+        finally:
+            self._close_progress(items_bar)
 
-    def generate_items(self) -> None:
+        warehouse_bar = self._new_progress(self.scale_factor, "warehouse")
+        stock_bar = self._new_progress(ITEMS_COUNT * self.scale_factor, "stock")
+        district_bar = self._new_progress(
+            DISTRICTS_PER_WAREHOUSE * self.scale_factor,
+            "district",
+        )
+        customer_total = CUSTOMERS_PER_DISTRICT * DISTRICTS_PER_WAREHOUSE * self.scale_factor
+        customer_bar = self._new_progress(customer_total, "customer")
+        history_bar = self._new_progress(customer_total, "history")
+        order_total = CUSTOMERS_PER_DISTRICT * DISTRICTS_PER_WAREHOUSE * self.scale_factor
+        order_bar = self._new_progress(order_total, "order")
+        new_order_total = NEW_ORDERS_PER_DISTRICT * DISTRICTS_PER_WAREHOUSE * self.scale_factor
+        new_order_bar = self._new_progress(new_order_total, "new_order")
+        order_line_bar = self._new_progress(None, "order_line")
+
+        try:
+            for w_id in range(1, self.scale_factor + 1):
+                self.generate_warehouse(w_id, warehouse_bar)
+                self.generate_stock(w_id, stock_bar)
+                self.generate_districts(w_id, district_bar)
+                self.generate_customers(w_id, customer_bar, history_bar)
+                self.generate_orders(w_id, order_bar, new_order_bar, order_line_bar)
+        finally:
+            self._close_progress(warehouse_bar)
+            self._close_progress(stock_bar)
+            self._close_progress(district_bar)
+            self._close_progress(customer_bar)
+            self._close_progress(history_bar)
+            self._close_progress(order_bar)
+            self._close_progress(new_order_bar)
+            self._close_progress(order_line_bar)
+
+    def generate_items(self, progress: object | None = None) -> None:
         """Generate 100,000 item rows."""
         sql = (
             "INSERT INTO item (i_id, i_name, i_price, i_data, i_im_id) "
@@ -48,9 +84,9 @@ class TPCCDataGenerator:
                 i_im_id = random.randint(1, 10000)
                 yield (i_id, i_name, i_price, i_data, i_im_id)
 
-        self._execute_batches(sql, rows())
+        self._execute_batches(sql, rows(), progress=progress)
 
-    def generate_warehouse(self, w_id: int) -> None:
+    def generate_warehouse(self, w_id: int, progress: object | None = None) -> None:
         """Generate a single warehouse row."""
         sql = (
             "INSERT INTO warehouse "
@@ -68,9 +104,9 @@ class TPCCDataGenerator:
             self._random_state(),
             self._random_zip(),
         )
-        self._execute_batches(sql, [row])
+        self._execute_batches(sql, [row], progress=progress)
 
-    def generate_stock(self, w_id: int) -> None:
+    def generate_stock(self, w_id: int, progress: object | None = None) -> None:
         """Generate stock rows for a warehouse."""
         sql = (
             "INSERT INTO stock "
@@ -96,9 +132,9 @@ class TPCCDataGenerator:
                     *s_dist,
                 )
 
-        self._execute_batches(sql, rows())
+        self._execute_batches(sql, rows(), progress=progress)
 
-    def generate_districts(self, w_id: int) -> None:
+    def generate_districts(self, w_id: int, progress: object | None = None) -> None:
         """Generate 10 districts for a warehouse."""
         sql = (
             "INSERT INTO district "
@@ -123,9 +159,14 @@ class TPCCDataGenerator:
                     self._random_zip(),
                 )
             )
-        self._execute_batches(sql, rows)
+        self._execute_batches(sql, rows, progress=progress)
 
-    def generate_customers(self, w_id: int) -> None:
+    def generate_customers(
+        self,
+        w_id: int,
+        customer_progress: object | None = None,
+        history_progress: object | None = None,
+    ) -> None:
         """Generate customers and history rows for each district."""
         customer_sql = (
             "INSERT INTO customer "
@@ -190,10 +231,16 @@ class TPCCDataGenerator:
                     )
                 )
 
-            self._execute_batches(customer_sql, customers)
-            self._execute_batches(history_sql, histories)
+            self._execute_batches(customer_sql, customers, progress=customer_progress)
+            self._execute_batches(history_sql, histories, progress=history_progress)
 
-    def generate_orders(self, w_id: int) -> None:
+    def generate_orders(
+        self,
+        w_id: int,
+        order_progress: object | None = None,
+        new_order_progress: object | None = None,
+        order_line_progress: object | None = None,
+    ) -> None:
         """Generate orders, order lines, and new orders for each district."""
         order_sql = (
             "INSERT INTO oorder "
@@ -252,12 +299,17 @@ class TPCCDataGenerator:
                         )
                     )
 
-            self._execute_batches(order_sql, orders)
+            self._execute_batches(order_sql, orders, progress=order_progress)
             if new_orders:
-                self._execute_batches(new_order_sql, new_orders)
-            self._execute_batches(order_line_sql, order_lines)
+                self._execute_batches(new_order_sql, new_orders, progress=new_order_progress)
+            self._execute_batches(order_line_sql, order_lines, progress=order_line_progress)
 
-    def _execute_batches(self, sql: str, rows: Iterable[tuple]) -> None:
+    def _execute_batches(
+        self,
+        sql: str,
+        rows: Iterable[tuple],
+        progress: object | None = None,
+    ) -> None:
         cursor = self.conn.cursor()
         batch = []
         for row in rows:
@@ -265,11 +317,32 @@ class TPCCDataGenerator:
             if len(batch) >= self.batch_size:
                 cursor.executemany(sql, batch)
                 self.conn.commit()
+                if progress is not None:
+                    progress.update(len(batch))
                 batch.clear()
         if batch:
             cursor.executemany(sql, batch)
             self.conn.commit()
+            if progress is not None:
+                progress.update(len(batch))
         cursor.close()
+
+    def _new_progress(self, total: int | None, desc: str) -> object | None:
+        if tqdm is None:
+            return None
+        return tqdm(
+            total=total,
+            desc=desc,
+            unit="rows",
+            ascii=True,
+            dynamic_ncols=True,
+            mininterval=0.5,
+            disable=not sys.stderr.isatty(),
+        )
+
+    def _close_progress(self, progress: object | None) -> None:
+        if progress is not None:
+            progress.close()
 
     def _random_tax(self) -> Decimal:
         return Decimal(random.randint(0, 2000)) / Decimal("10000")

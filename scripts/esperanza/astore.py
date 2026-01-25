@@ -4,7 +4,7 @@ import sys
 import time
 
 from esperanza.benchbase.benchmark_session import BenchmarkSession
-from esperanza.utils.download_mysql import download_mysql
+from esperanza.utils.download_mysql import download_mysql, get_mysql_bin_path
 from esperanza.utils.state_change_report import read_state_change_report
 
 KEY_COLUMNS = [
@@ -194,6 +194,8 @@ if __name__ == "__main__":
     if not download_mysql():
         print("MySQL distribution is not available")
         exit(1)
+
+    os.environ["MYSQL_BIN_PATH"] = get_mysql_bin_path()
 
     os.putenv("DB_HOST", "127.0.0.1")
     os.putenv("DB_PORT", "3306")

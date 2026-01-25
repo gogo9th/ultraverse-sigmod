@@ -47,4 +47,6 @@
 ## Configuration & Runtime Notes
 - `envfile` is a path template; adjust it for your local environment, but it is recommended not to commit personal paths.
 - `download_mysql()` downloads a platform-specific MySQL distribution into `cache/`. It requires network access, and skips re-downloading if the cache exists.
+- 벤치마크 스크립트는 `download_mysql()`이 확인한 MySQL 배포판의 `bin` 경로를 `MYSQL_BIN_PATH`에 자동 설정한다.
 - `MySQLDaemon.start()` returns a context manager; use `with session.mysqld.start():` so the daemon always stops on scope exit (including exceptions).
+- `esperanza/tpcc/data_generator.py` shows tqdm progress bars during data load when tqdm is installed (disabled if stderr is not a TTY).

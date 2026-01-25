@@ -44,6 +44,13 @@ def get_mysql_distribution() -> dict | None:
     return arch_map[machine]
 
 
+def get_mysql_bin_path() -> str:
+    dist = get_mysql_distribution()
+    if dist is None:
+        raise RuntimeError("Unsupported platform for MySQL distribution")
+    return f"{os.getcwd()}/cache/mysql/{dist['name']}/bin"
+
+
 def download_mysql() -> bool:
     logger = get_logger("download_mysql")
 
@@ -83,4 +90,3 @@ def download_mysql() -> bool:
 
     logger.info(f"MySQL distribution is ready: using cache/mysql/{name}")
     return True
-
