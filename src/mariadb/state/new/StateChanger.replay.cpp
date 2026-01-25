@@ -444,7 +444,7 @@ namespace ultraverse::state::v2 {
                             
                             applyStatementContext(handle, *query);
 
-                            logger->info("[#{}] executing query: {}", transaction->gid(), query->statement());
+                            // logger->debug("[#{}] executing query: {}", transaction->gid(), query->statement());
                             if (handle.executeQuery(query->statement()) != 0) {
                                 logger->error("query execution failed: {} / {}", handle.lastError(), query->statement());
                             }
