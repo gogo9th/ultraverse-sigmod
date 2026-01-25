@@ -6,6 +6,7 @@
 #define ULTRAVERSE_MARIADB_DBEVENT_HPP
 
 #include <mysql/mysql.h>
+#include <field_types.h>
 
 #include <cstdint>
 #include <memory>
@@ -149,6 +150,8 @@ namespace ultraverse::mariadb {
             std::vector<std::pair<column_type::Value, int>> columns,
             std::vector<std::string> columnNames,
             std::vector<uint8_t> unsignedFlags,
+            std::vector<enum_field_types> mysqlTypes,
+            std::vector<uint16_t> mysqlMetadata,
             uint64_t timestamp
         );
         TableMapEvent() : _timestamp(0), _tableId(0) {};
@@ -170,6 +173,8 @@ namespace ultraverse::mariadb {
         int sizeOf(int columnIndex) const;
         std::string nameOf(int columnIndex) const;
         bool isUnsigned(int columnIndex) const;
+        enum_field_types mysqlTypeOf(int columnIndex) const;
+        uint16_t mysqlMetadataOf(int columnIndex) const;
 
         // Serialization removed: protobuf-based serialization is handled by state log types.
         
@@ -182,6 +187,8 @@ namespace ultraverse::mariadb {
         std::vector<std::pair<column_type::Value, int>> _columns;
         std::vector<std::string> _columnNames;
         std::vector<uint8_t> _unsignedFlags;
+        std::vector<enum_field_types> _mysqlTypes;
+        std::vector<uint16_t> _mysqlMetadata;
     };
     
     class RowEvent: public base::DBEvent {

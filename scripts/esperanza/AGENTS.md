@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Entry scripts: `tpcc.py`, `tatp.py`, `seats.py`, `epinions.py`, `astore.py`, `updateonly.py`, `minishop.py`, `minishop_prepend.py`, `tpcc_standalone.py` run each workload and perform the prepare/execute (or scenario execution), statelog generation, and rollback/replay flow end-to-end.
+- Entry scripts: `tpcc.py`, `tatp.py`, `seats.py`, `epinions.py`, `astore.py`, `updateonly.py`, `minishop.py`, `minishop_prepend.py`, `tpcc_standalone.py`, `epinions_standalone.py` run each workload and perform the prepare/execute (or scenario execution), statelog generation, and rollback/replay flow end-to-end.
 - `minishop_prepend.py` validates a rollback + prepend (partial refund correction) case based on the Minishop scenario.
 - `minishop.py` patches procedure definitions via `procpatcher` and applies them to MySQL; it also generates `procpatcher/__ultraverse__helper.sql` under the session path.
 - `procpatcher` has its own `go.mod` under `procpatcher/`, so run it from that directory with `go run .`.
@@ -10,9 +10,15 @@
 - `esperanza/mysql/`: local MySQL daemon control utilities (`mysqld.py`).
 - `esperanza/utils/`: shared helpers (MySQL downloads, logs, report parsing, etc.).
 - `esperanza/tpcc/`: standalone TPC-C helpers (constants, random utilities, and initial data generator).
+- `esperanza/epinions/`: Epinions helpers (constants, Zipfian generators, random utilities).
+- `esperanza/epinions/data_generator.py`: Epinions initial data generator (users/items/reviews/trusts) using Zipfian distributions.
+- `epinions_sql/`: Epinions DDL copies used for local schema loading.
 - `esperanza/tpcc/session.py`: standalone TPC-C session runner (MySQL lifecycle, DDL/data load, workload execution, and Ultraverse CLI orchestration without BenchBase).
+- `esperanza/epinions/session.py`: standalone Epinions session runner (MySQL lifecycle, DDL/data load, workload execution, and Ultraverse CLI orchestration without BenchBase).
 - `esperanza/tpcc/transactions.py`: TPC-C stored-procedure transaction wrappers (explicit START TRANSACTION/CALL/COMMIT).
 - `esperanza/tpcc/workload.py`: query-count-based TPC-C workload executor with weighted transaction selection and per-transaction warehouse choice.
+- `esperanza/tpcc/constants.py`: standalone TPC-C weights are `NEW_ORDER=45`, `PAYMENT=43`, `DELIVERY=4`, with `ORDER_STATUS`/`STOCK_LEVEL` disabled (0).
+- `esperanza/tpcc/transactions.py`: per-transaction warehouse behavior is simplified — NewOrder uses a 1% remote supply warehouse (if scale_factor > 1), Payment uses a ~15% remote customer warehouse, Delivery is local-only; Order-Status/Stock-Level are stubs.
 - `procdefs/<bench>/`: procedure definition files (copied to `runs/.../procdef` at runtime).
 - `mysql_conf/my.cnf`: MySQL configuration template.
 - Artifacts: `runs/<bench>-<amount>-<timestamp>/` (logs, `*.report.json`, `dbdump*.sql`) and `cache/` (MySQL distribution cache).
