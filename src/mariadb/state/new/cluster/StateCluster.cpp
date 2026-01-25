@@ -250,18 +250,12 @@ namespace ultraverse::state::v2 {
                     // Q: 왜?
                     // A: std::move 는 rvalue 로 바꿔주는거야. 그래서 이동 생성자를 호출하거든.
                     
-                    // WRITE가 FK에 대해 직접 write하는 경우는 없으므로 chain resolve는 READ에 대해서만 수행한다.
-    
-                    const auto &real = (type == READ) ?
-                        resolver.resolveRowChain(item) :
-                        resolver.resolveRowAlias(item);
+                    const auto &real = resolver.resolveRowChain(item);
                     
                     if (real != nullptr) {
                         return real->name == columnName && StateRange::isIntersects(real->MakeRange2(), range);
                     } else {
-                        const auto &realColumn = (type == READ) ?
-                                                 resolver.resolveChain(item.name) :
-                                                 resolver.resolveColumnAlias(item.name);
+                        const auto &realColumn = resolver.resolveChain(item.name);
                         
                         if (!realColumn.empty()) {
                             return realColumn == columnName && StateRange::isIntersects(item.MakeRange2(), range);
@@ -280,18 +274,12 @@ namespace ultraverse::state::v2 {
                 // Q: 왜?
                 // A: std::move 는 rvalue 로 바꿔주는거야. 그래서 이동 생성자를 호출하거든.
                 
-                // WRITE가 FK에 대해 직접 write하는 경우는 없으므로 chain resolve는 READ에 대해서만 수행한다.
-
-                const auto &real = (type == READ) ?
-                    resolver.resolveRowChain(item) :
-                    resolver.resolveRowAlias(item);
+                const auto &real = resolver.resolveRowChain(item);
                 
                 if (real != nullptr) {
                     return real->name == columnName && StateRange::isIntersects(real->MakeRange2(), range);
                 } else {
-                    const auto &realColumn = (type == READ) ?
-                                             resolver.resolveChain(item.name) :
-                                             resolver.resolveColumnAlias(item.name);
+                    const auto &realColumn = resolver.resolveChain(item.name);
                     
                     if (!realColumn.empty()) {
                         return realColumn == columnName && StateRange::isIntersects(item.MakeRange2(), range);

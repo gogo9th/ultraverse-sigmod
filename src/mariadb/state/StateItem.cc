@@ -1404,7 +1404,7 @@ void StateRange::ensureUniqueRange() {
     return;
   }
 
-  if (!range.unique()) {
+  if (range.use_count() == 1) {
     range = std::make_shared<std::vector<ST_RANGE>>(*range);
   }
 }
