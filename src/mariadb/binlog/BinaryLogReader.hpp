@@ -19,6 +19,7 @@ namespace ultraverse::mariadb {
     class BinaryLogReaderBase {
     public:
         BinaryLogReaderBase(const std::string &filename);
+        virtual ~BinaryLogReaderBase() = default;
         
         virtual void open() = 0;
         virtual void close() = 0;
