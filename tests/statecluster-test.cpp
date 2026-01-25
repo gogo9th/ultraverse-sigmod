@@ -247,7 +247,7 @@ TEST_CASE("StateCluster shouldReplay normalizes foreign key columns") {
     StateCluster cluster({"review.u_id"});
     cluster.normalizeWithResolver(resolver);
 
-    auto rollbackTxn = makeTxn(1, "test", {}, {makeEq("review.u_id", 587)});
+    auto rollbackTxn = makeTxn(0, "test", {}, {makeEq("review.u_id", 587)});
     auto dependentTxn = makeTxn(2, "test", {}, {makeEq("useracct.u_id", 587)});
 
     cluster.insert(rollbackTxn, resolver);

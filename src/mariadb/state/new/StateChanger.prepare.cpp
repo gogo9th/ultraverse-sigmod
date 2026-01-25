@@ -91,21 +91,20 @@ namespace {
 }
 
 namespace ultraverse::state::v2 {
-    
+
     void StateChanger::makeCluster() {
         StateChangeReport report(StateChangeReport::MAKE_CLUSTER, _plan);
-        
+
         StateCluster rowCluster(_plan.keyColumns(), _plan.keyColumnGroups());
 
         _columnGraph = std::make_unique<ColumnDependencyGraph>();
         _tableGraph = std::make_unique<TableDependencyGraph>();
-        
+
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
-        rowCluster.normalizeWithResolver(relationshipResolver);
-        
+
         GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
-        
+
         std::mutex graphLock;
 
         createIntermediateDB();
@@ -113,12 +112,12 @@ namespace ultraverse::state::v2 {
         if (!_plan.dbDumpPath().empty()) {
             auto load_backup_start = std::chrono::steady_clock::now();
             loadBackup(_intermediateDBName, _plan.dbDumpPath());
-            
+
             auto dbHandle = _dbHandlePool.take();
             updatePrimaryKeys(dbHandle->get(), 0);
             updateForeignKeys(dbHandle->get(), 0);
             auto load_backup_end = std::chrono::steady_clock::now();
-            
+
             std::chrono::duration<double> time = load_backup_end - load_backup_start;
             _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
         } else {
@@ -128,12 +127,13 @@ namespace ultraverse::state::v2 {
         }
 
         _tableGraph->addRelationship(_context->foreignKeys);
-        
+        rowCluster.normalizeWithResolver(relationshipResolver);
+
         _reader->open();
-        
+
         auto phase_main_start = std::chrono::steady_clock::now();
         _logger->info("makeCluster(): building cluster");
-        
+
         const bool useRowAlias = !_plan.columnAliases().empty();
         if (useRowAlias) {
             _logger->info("makeCluster(): row-alias enabled; processing sequentially");
@@ -263,17 +263,17 @@ namespace ultraverse::state::v2 {
 
             taskExecutor.shutdown();
         }
-        
+
         rowCluster.merge();
-        
+
         {
             auto phase_main_end = std::chrono::steady_clock::now();
             std::chrono::duration<double> time = phase_main_end - phase_main_start;
             _phase2Time = time.count();
         }
-        
+
         _logger->info("make_cluster(): main phase {}s", _phase2Time);
-        
+
         _logger->info("make_cluster(): saving cluster..");
         _clusterStore->save(rowCluster);
 
@@ -282,11 +282,11 @@ namespace ultraverse::state::v2 {
             graphWriter << *_columnGraph;
             graphWriter << *_tableGraph;
         }
-        
+
         if (_plan.dropIntermediateDB()) {
             dropIntermediateDB();
         }
-        
+
         if (!_plan.reportPath().empty()) {
             report.writeToJSON(_plan.reportPath());
         }
@@ -325,6 +325,7 @@ namespace ultraverse::state::v2 {
         };
 
         size_t candidateIndex = 0;
+        bool pendingTargetCacheRefresh = false;
 
         while (_reader->nextHeader()) {
             auto header = _reader->txnHeader();
@@ -358,6 +359,9 @@ namespace ultraverse::state::v2 {
                 if (rollbackTarget) {
                     rowCluster.addRollbackTarget(transaction, cachedResolver, shouldRevalidateTarget(gid));
                     columnTaint.insert(txnColumns.write.begin(), txnColumns.write.end());
+                    if (!shouldRevalidateTarget(gid)) {
+                        pendingTargetCacheRefresh = true;
+                    }
                 }
 
                 if (userQueryOpt.has_value()) {
@@ -394,6 +398,11 @@ namespace ultraverse::state::v2 {
                 }
 
                 continue;
+            }
+
+            if (pendingTargetCacheRefresh) {
+                rowCluster.refreshTargetCache(cachedResolver);
+                pendingTargetCacheRefresh = false;
             }
 
             bool isColumnDependent = analysis::TaintAnalyzer::columnSetsRelated(columnTaint, txnAccess, _context->foreignKeys);
@@ -452,10 +461,10 @@ namespace ultraverse::state::v2 {
 
         return result;
     }
-    
+
     void StateChanger::bench_prepareRollback() {
         StateChangeReport report(StateChangeReport::PREPARE_AUTO, _plan);
-        
+
         StateCluster rowCluster(_plan.keyColumns(), _plan.keyColumnGroups());
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
@@ -465,13 +474,13 @@ namespace ultraverse::state::v2 {
             _clusterStore->load(rowCluster);
             _logger->info("prepare(): loading cluster end");
         }
-        rowCluster.normalizeWithResolver(relationshipResolver);
 
         {
             auto dbHandle = _dbHandlePool.take();
             updatePrimaryKeys(dbHandle->get(), 0, _plan.dbName());
             updateForeignKeys(dbHandle->get(), 0, _plan.dbName());
         }
+        rowCluster.normalizeWithResolver(relationshipResolver);
 
         std::unordered_set<gid_t> skipGids(_plan.skipGids().begin(), _plan.skipGids().end());
 
@@ -558,7 +567,7 @@ namespace ultraverse::state::v2 {
             report.writeToJSON(_plan.reportPath());
         }
     }
-    
+
     void StateChanger::prepare() {
         StateChangeReport report(StateChangeReport::PREPARE, _plan);
 

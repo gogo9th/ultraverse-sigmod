@@ -772,6 +772,11 @@ namespace ultraverse::state::v2 {
         rebuildTargets(_rollbackTargets);
         rebuildTargets(_prependTargets);
     }
+
+    void StateCluster::refreshTargetCache(const RelationshipResolver &resolver) {
+        std::unique_lock<std::shared_mutex> lock(_targetCacheLock);
+        invalidateTargetCache(resolver);
+    }
     
     bool StateCluster::shouldReplay(gid_t gid) {
         std::shared_lock<std::shared_mutex> lock(_targetCacheLock);

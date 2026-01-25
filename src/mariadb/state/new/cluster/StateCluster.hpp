@@ -153,7 +153,9 @@ namespace ultraverse::state::v2 {
 
         void toProtobuf(ultraverse::state::v2::proto::StateCluster *out) const;
         void fromProtobuf(const ultraverse::state::v2::proto::StateCluster &msg);
-        
+
+        void refreshTargetCache(const RelationshipResolver &resolver);
+
     private:
         /**
          * @brief rollback / append 대상 트랜잭션 관련 데이터를 캐싱하기 위한 클래스

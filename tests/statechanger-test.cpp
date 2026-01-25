@@ -693,6 +693,55 @@ TEST_CASE("StateChanger auto-rollback respects gid-range and skip-gids", "[state
     REQUIRE(report.at("totalCount").get<size_t>() == 4);
 }
 
+TEST_CASE("StateChanger prepare refreshes target cache after skipped rollback revalidation", "[statechanger][prepare]") {
+    auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
+
+    auto plan = makePlan(1);
+    plan.rollbackGids().push_back(1);
+    plan.rollbackGids().push_back(2);
+    plan.skipGids().push_back(2);
+
+    StateItem key = StateItem::EQ("items.id", StateData(static_cast<int64_t>(1)));
+    auto txn1 = makeTransaction(1, plan.dbName(), "/*TXN:1*/", {}, {key});
+    auto txn2 = makeTransaction(2, plan.dbName(), "/*TXN:2*/", {}, {key});
+    auto txn3 = makeTransaction(3, plan.dbName(), "/*TXN:3*/", {key}, {});
+
+    StateCluster cluster(plan.keyColumns());
+    ultraverse::state::v2::StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+    CachedRelationshipResolver cachedResolver(resolver, 1000);
+
+    cluster.insert(txn1, cachedResolver);
+    cluster.insert(txn2, cachedResolver);
+    cluster.insert(txn3, cachedResolver);
+    cluster.merge();
+
+    auto clusterStore = std::make_unique<MockedStateClusterStore>();
+    clusterStore->save(cluster);
+
+    auto logReader = std::make_unique<MockedStateLogReader>();
+    logReader->addTransaction(txn1, 1);
+    logReader->addTransaction(txn2, 2);
+    logReader->addTransaction(txn3, 3);
+
+    MockedDBHandlePool pool(1, sharedState);
+
+    StateChangerIO io;
+    io.stateLogReader = std::move(logReader);
+    io.clusterStore = std::move(clusterStore);
+    io.backupLoader = std::make_unique<NoopBackupLoader>();
+    io.closeStandardFds = false;
+
+    StateChanger changer(pool, plan, std::move(io));
+
+    changer.prepare();
+
+    auto gids = loadReplayPlanGids(plan);
+    REQUIRE(gids.size() == 1);
+    REQUIRE(gids[0] == 3);
+}
+
 TEST_CASE("StateChanger replay respects dependency order within chains", "[statechanger][replay]") {
     auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
     seedEmptyInfoSchemaResults(sharedState);
