@@ -75,6 +75,23 @@ class BenchmarkSession:
         password = os.environ.get("DB_PASS", "password")
         return [f"-h{host}", f"--port={port}", f"-u{user}", f"-p{password}", "--protocol=tcp"]
 
+    @staticmethod
+    def _env_truthy(name: str, default: bool = False) -> bool:
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        return value.strip().lower() in ("1", "true", "yes", "y", "on")
+
+    @staticmethod
+    def _env_int(name: str, default: int) -> int:
+        value = os.environ.get(name)
+        if value is None or value.strip() == "":
+            return default
+        try:
+            return int(value)
+        except ValueError:
+            return default
+
     def _reset_database(self, db_name: str) -> None:
         sql = f"DROP DATABASE IF EXISTS {db_name}; CREATE DATABASE {db_name};"
         cmd = [self._mysql_bin()] + self._mysql_admin_args() + ["-B", "--silent", "--raw"]
@@ -435,6 +452,8 @@ class BenchmarkSession:
         self.logger.info(f"comparing tables '{table1}' and '{table2}'...")
 
         join_pred = " AND ".join([f"t1.`{c}` <=> t2.`{c}`" for c in columns])
+        show_details = self._env_truthy("ESPERANZA_TABLEDIFF_DETAILS", default=False)
+        detail_limit = max(0, self._env_int("ESPERANZA_TABLEDIFF_LIMIT", 20))
 
         base_sql = (f"SELECT '{table1}' as `set`, t1.*"
                     f"    FROM {table1} t1"
@@ -470,6 +489,32 @@ class BenchmarkSession:
 
         if retval != 0:
             raise Exception("failed to compare tables")
+
+        if show_details and detail_limit > 0:
+            self.logger.info(
+                f"showing up to {detail_limit} diff rows for '{table1}' vs '{table2}'..."
+            )
+            detail_sql = f"SELECT * FROM ({base_sql}) d LIMIT {detail_limit}"
+            handle = subprocess.Popen([
+                'mysql',
+                '-h127.0.0.1',
+                '-uroot',
+                '-ppassword',
+                '--table',
+            ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+            handle.stdin.write(detail_sql.encode('utf-8'))
+            handle.stdin.close()
+
+            stdout = handle.stdout.read()
+
+            if stdout:
+                print(stdout.decode('utf-8').strip())
+
+            retval = handle.wait()
+
+            if retval != 0:
+                raise Exception("failed to print table differences")
 
     def load_dump(self, db_name: str, sqlfile: str):
         """
