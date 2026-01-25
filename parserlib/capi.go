@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/gogo/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 
 	"parserlib/parser"
 )
@@ -33,7 +33,7 @@ func protobufToCStr(message proto.Message) (*C.char, int64) {
 	if err != nil {
 		return nil, 0
 	}
-	return C.CString(string(data)), int64(len(data))
+	return (*C.char)(C.CBytes(data)), int64(len(data))
 }
 
 // ==================== NEW INSTANCE-BASED API ====================

@@ -65,8 +65,15 @@ namespace ultraverse::base {
             }
         }
         
-        assert(parseResult.statements().size() == 1);
-        auto &statement = parseResult.statements()[0];
+        const int statementCount = parseResult.statements_size();
+        if (statementCount == 0) {
+            _logger->error("parser returned no statements for SQL: {}", statement());
+            return false;
+        }
+        if (statementCount != 1) {
+            _logger->warn("parser returned {} statements; using the first for SQL: {}", statementCount, statement());
+        }
+        const auto &statement = parseResult.statements(0);
         
         if (statement.has_ddl()) {
             return processDDL(statement.ddl());

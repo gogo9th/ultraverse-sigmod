@@ -568,6 +568,7 @@ public:
         }
         
         std::shared_ptr<state::v2::Query> firstQuery;
+        std::shared_ptr<state::v2::Query> firstContextQuery;
         
         while (!queries.empty()) {
             auto pendingQuery = std::move(queries.front());
@@ -583,6 +584,9 @@ public:
             
             if (firstQuery == nullptr) {
                 firstQuery = pendingQuery;
+            }
+            if (firstContextQuery == nullptr && pendingQuery->hasStatementContext()) {
+                firstContextQuery = pendingQuery;
             }
             
             if (pendingQuery->flags() & state::v2::Query::FLAG_IS_DDL) {
@@ -611,6 +615,9 @@ public:
             if (firstQuery != nullptr) {
                 procCallQuery->setDatabase(firstQuery->database());
                 procCallQuery->setTimestamp(firstQuery->timestamp());
+            }
+            if (firstContextQuery != nullptr && firstContextQuery->hasStatementContext()) {
+                procCallQuery->setStatementContext(firstContextQuery->statementContext());
             }
             procCallQuery->setFlags(state::v2::Query::FLAG_IS_PROCCALL_QUERY);
             if (!inoutVars.empty()) {
