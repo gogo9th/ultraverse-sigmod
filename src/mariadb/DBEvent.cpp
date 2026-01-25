@@ -6,7 +6,8 @@
 #include <sstream>
 #include <utility>
 
-#include <iomanip>
+#include <my_byteorder.h>
+#include <sql-common/my_decimal.h>
 
 #include "DBEvent.hpp"
 
@@ -160,15 +161,24 @@ namespace ultraverse::mariadb {
         return _value;
     }
     
-    TableMapEvent::TableMapEvent(uint64_t tableId, std::string database, std::string table, std::vector<std::pair<column_type::Value, int>> columns, std::vector<std::string> columnNames, uint64_t timestamp):
+    TableMapEvent::TableMapEvent(uint64_t tableId,
+                                 std::string database,
+                                 std::string table,
+                                 std::vector<std::pair<column_type::Value, int>> columns,
+                                 std::vector<std::string> columnNames,
+                                 std::vector<uint8_t> unsignedFlags,
+                                 uint64_t timestamp):
         _timestamp(timestamp),
         _tableId(tableId),
-        _database(database),
-        _table(table),
-        _columns(columns),
-        _columnNames(columnNames)
+        _database(std::move(database)),
+        _table(std::move(table)),
+        _columns(std::move(columns)),
+        _columnNames(std::move(columnNames)),
+        _unsignedFlags(std::move(unsignedFlags))
     {
-    
+        if (_unsignedFlags.size() != _columns.size()) {
+            _unsignedFlags.resize(_columns.size(), 0);
+        }
     }
     
     uint64_t TableMapEvent::timestamp() {
@@ -201,6 +211,13 @@ namespace ultraverse::mariadb {
     
     std::string TableMapEvent::nameOf(int columnIndex) const {
         return _columnNames[columnIndex];
+    }
+
+    bool TableMapEvent::isUnsigned(int columnIndex) const {
+        if (columnIndex < 0 || static_cast<size_t>(columnIndex) >= _unsignedFlags.size()) {
+            return false;
+        }
+        return _unsignedFlags[columnIndex] != 0;
     }
     
     RowQueryEvent::RowQueryEvent(const std::string &statement, uint64_t timestamp):
@@ -397,22 +414,21 @@ namespace ultraverse::mariadb {
             if (columnType == column_type::STRING) {
                 uint64_t strLength = 0;
                 size_t strLengthSize = 1;
+                const uchar *raw = reinterpret_cast<const uchar *>(_rowData.get() + offset);
 
                 if (columnSize == -1) {
-                    strLength = (_rowData.get()[offset]);
+                    strLength = raw[0];
                 } else if (columnSize == -2) {
-                    strLength = static_cast<uint64_t>(readValue<uint16_t>(offset));
+                    strLength = static_cast<uint64_t>(uint2korr(raw));
                     strLengthSize = 2;
                 } else if (columnSize == -3) {
-                    strLength = static_cast<uint64_t>(_rowData.get()[offset]) |
-                                (static_cast<uint64_t>(_rowData.get()[offset + 1]) << 8) |
-                                (static_cast<uint64_t>(_rowData.get()[offset + 2]) << 16);
+                    strLength = static_cast<uint64_t>(uint3korr(raw));
                     strLengthSize = 3;
                 } else if (columnSize == -4) {
-                    strLength = static_cast<uint64_t>(readValue<uint32_t>(offset));
+                    strLength = static_cast<uint64_t>(uint4korr(raw));
                     strLengthSize = 4;
                 } else if (columnSize == -8) {
-                    strLength = readValue<uint64_t>(offset);
+                    strLength = static_cast<uint64_t>(uint8korr(raw));
                     strLengthSize = 8;
                 } else {
                     strLength = columnSize;
@@ -470,48 +486,12 @@ namespace ultraverse::mariadb {
                 StateItem candidateItem;
                 StateData data;
 
-                uint8_t precision = columnSize & 0xff;
-                uint8_t scale     = columnSize >> 8;
+                uint8_t precision = static_cast<uint8_t>(columnSize & 0xff);
+                uint8_t scale = static_cast<uint8_t>((columnSize >> 8) & 0xff);
 
-                uint8_t size = (precision + 1) / 2;
-
-                std::unique_ptr<uint8_t> rawValue(new uint8_t[size]);
-                memcpy(rawValue.get(), _rowData.get() + offset, size);
-
-                bool sign = false;
-                uint64_t high = 0;
-                uint64_t low = 0;
-
-                int i = 0;
-                while (i < size) {
-                    uint8_t value = rawValue.get()[i];
-
-                    if (i == 0) {
-                        sign = value & 0x80;
-                        value = value ^ 0x80;
-                    }
-
-                    if (i < ((precision - scale) + 1) / 2) {
-                        high = (high << 8) + value;
-                    } else {
-                        low = (low << 8) + value;
-                    }
-
-                    i++;
-                }
-
-                std::stringstream replStream;
-
-                if (!sign) {
-                    replStream << '-';
-                }
-
-                replStream << high << "."
-                           << std::setfill('0') << std::setw(scale) << low;
-
-                std::string replVal = replStream.str();
-
-                data.SetDecimal(replVal.c_str(), replVal.size());
+                int size = my_decimal_get_binary_size(precision, scale);
+                const uint8_t *raw = _rowData.get() + offset;
+                data.SetDecimal(reinterpret_cast<const char *>(raw), static_cast<size_t>(size));
 
                 candidateItem.data_list.emplace_back(std::move(data));
                 candidateItem.function_type = FUNCTION_EQ;
@@ -523,7 +503,15 @@ namespace ultraverse::mariadb {
                     _itemSet.emplace_back(std::move(candidateItem));
                 }
 
-                sstream << columnName << "=" << replVal;
+                std::string hex;
+                hex.reserve(static_cast<size_t>(size) * 2);
+                static const char kHex[] = "0123456789ABCDEF";
+                for (int i = 0; i < size; i++) {
+                    uint8_t value = raw[i];
+                    hex.push_back(kHex[(value >> 4) & 0x0F]);
+                    hex.push_back(kHex[value & 0x0F]);
+                }
+                sstream << columnName << "=X'" << hex << "'";
 
                 rowSize += size;
             } else {
@@ -531,46 +519,70 @@ namespace ultraverse::mariadb {
                 StateData data;
 
                 if (columnType == column_type::INTEGER) {
-                    int64_t value;
-                    switch (columnSize) {
-                        case 8:
-                            value = readValue<int64_t>(offset);
-                            sstream << columnName << "=" << "I64!" << value;
-                            break;
-                        case 4:
-                            value = readValue<int32_t>(offset);
-                            sstream << columnName << "=" << "I32!" << value;
-                            break;
-                        case 3:
-                            value =
-                                static_cast<int32_t>(_rowData.get()[offset]) |
-                                (static_cast<int32_t>(_rowData.get()[offset + 1]) << 8) |
-                                (static_cast<int32_t>(_rowData.get()[offset + 2]) << 16);
-                            if (value & 0x800000) {
-                                value |= 0xff000000;
-                            }
-                            sstream << columnName << "=" << "I24!" << value;
-                            break;
-                        case 2:
-                            value = readValue<int16_t>(offset);
-                            sstream << columnName << "=" << "I16!" << value;
-                            break;
-                        case 1:
-                            value = readValue<int8_t>(offset);
-                            sstream << columnName << "=" << "I8!" << value;
-                            break;
-                    }
+                    const bool isUnsigned = tableMapEvent.isUnsigned(i);
+                    const uchar *raw = reinterpret_cast<const uchar *>(_rowData.get() + offset);
+                    if (isUnsigned) {
+                        uint64_t value = 0;
+                        switch (columnSize) {
+                            case 8:
+                                value = static_cast<uint64_t>(uint8korr(raw));
+                                sstream << columnName << "=" << "U64!" << value;
+                                break;
+                            case 4:
+                                value = static_cast<uint64_t>(uint4korr(raw));
+                                sstream << columnName << "=" << "U32!" << value;
+                                break;
+                            case 3:
+                                value = static_cast<uint64_t>(uint3korr(raw));
+                                sstream << columnName << "=" << "U24!" << value;
+                                break;
+                            case 2:
+                                value = static_cast<uint64_t>(uint2korr(raw));
+                                sstream << columnName << "=" << "U16!" << value;
+                                break;
+                            case 1:
+                                value = static_cast<uint64_t>(raw[0]);
+                                sstream << columnName << "=" << "U8!" << value;
+                                break;
+                        }
+                        data.Set(value);
+                    } else {
+                        int64_t value = 0;
+                        switch (columnSize) {
+                            case 8:
+                                value = static_cast<int64_t>(sint8korr(raw));
+                                sstream << columnName << "=" << "I64!" << value;
+                                break;
+                            case 4:
+                                value = static_cast<int64_t>(sint4korr(raw));
+                                sstream << columnName << "=" << "I32!" << value;
+                                break;
+                            case 3:
+                                value = static_cast<int64_t>(sint3korr(raw));
+                                sstream << columnName << "=" << "I24!" << value;
+                                break;
+                            case 2:
+                                value = static_cast<int64_t>(sint2korr(raw));
+                                sstream << columnName << "=" << "I16!" << value;
+                                break;
+                            case 1:
+                                value = static_cast<int64_t>(static_cast<int8_t>(raw[0]));
+                                sstream << columnName << "=" << "I8!" << value;
+                                break;
+                        }
 
-                    data.Set(value);
+                        data.Set(value);
+                    }
                 } else if (columnType == column_type::FLOAT) {
+                    const uchar *raw = reinterpret_cast<const uchar *>(_rowData.get() + offset);
                     double value;
                     switch (columnSize) {
                         case 8:
-                            value = readValue<double>(offset);
+                            value = float8get(raw);
                             sstream << columnName << "=" << "F64!" << value;
                             break;
                         case 4:
-                            value = readValue<float>(offset);
+                            value = float4get(raw);
                             sstream << columnName << "=" << "F32!" << value;
                             break;
                     }

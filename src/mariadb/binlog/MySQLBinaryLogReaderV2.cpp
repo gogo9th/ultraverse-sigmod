@@ -68,6 +68,24 @@ namespace ultraverse::mariadb {
             }
         }
 
+        bool hasSignednessInfo(enum_field_types type) {
+            switch (type) {
+                case MYSQL_TYPE_TINY:
+                case MYSQL_TYPE_SHORT:
+                case MYSQL_TYPE_INT24:
+                case MYSQL_TYPE_LONG:
+                case MYSQL_TYPE_LONGLONG:
+                case MYSQL_TYPE_YEAR:
+                case MYSQL_TYPE_FLOAT:
+                case MYSQL_TYPE_DOUBLE:
+                case MYSQL_TYPE_DECIMAL:
+                case MYSQL_TYPE_NEWDECIMAL:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         bool readNetFieldLength(const unsigned char *&ptr, const unsigned char *end, uint64_t &out) {
             if (ptr >= end) {
                 return false;
@@ -436,6 +454,7 @@ namespace ultraverse::mariadb {
         }
 
         std::vector<std::string> columnNames;
+        std::vector<bool> signednessBits;
         if (event.m_optional_metadata_len > 0) {
             mysql::binlog::event::Table_map_event::Optional_metadata_fields metadata(
                 event.m_optional_metadata,
@@ -446,6 +465,7 @@ namespace ultraverse::mariadb {
                 return nullptr;
             }
             columnNames = metadata.m_column_name;
+            signednessBits = metadata.m_signedness;
         }
 
         if (columnNames.size() != event.m_colcnt) {
@@ -456,6 +476,9 @@ namespace ultraverse::mariadb {
 
         std::vector<std::pair<column_type::Value, int>> columnDefs;
         columnDefs.reserve(event.m_colcnt);
+        std::vector<uint8_t> unsignedFlags;
+        unsignedFlags.reserve(event.m_colcnt);
+        size_t numericIndex = 0;
 
         const unsigned char *metadata = event.m_field_metadata;
         size_t metadataSize = event.m_field_metadata_size;
@@ -463,6 +486,14 @@ namespace ultraverse::mariadb {
 
         for (unsigned long i = 0; i < event.m_colcnt; i++) {
             auto binlogType = static_cast<enum_field_types>(event.m_coltype[i]);
+            bool isUnsigned = false;
+            if (hasSignednessInfo(binlogType)) {
+                if (numericIndex < signednessBits.size()) {
+                    isUnsigned = signednessBits[numericIndex];
+                }
+                numericIndex++;
+            }
+            unsignedFlags.push_back(isUnsigned ? 1 : 0);
 
             auto requireMetadata = [&](size_t need) -> bool {
                 if (metadataPos + need > metadataSize) {
@@ -640,6 +671,17 @@ namespace ultraverse::mariadb {
             }
         }
 
+        if (!signednessBits.empty()) {
+            size_t expectedBits = ((numericIndex + 7) / 8) * 8;
+            if (signednessBits.size() < numericIndex) {
+                _logger->warn("signedness metadata shorter than numeric columns (numeric {}, bits {})",
+                              numericIndex, signednessBits.size());
+            } else if (signednessBits.size() != expectedBits) {
+                _logger->warn("signedness metadata length mismatch (numeric {}, bits {}, expected {})",
+                              numericIndex, signednessBits.size(), expectedBits);
+            }
+        }
+
         auto timestamp = event.header()->when.tv_sec;
         return std::make_shared<TableMapEvent>(
             event.get_table_id(),
@@ -647,6 +689,7 @@ namespace ultraverse::mariadb {
             event.get_table_name(),
             columnDefs,
             columnNames,
+            unsignedFlags,
             timestamp
         );
     }

@@ -3,10 +3,13 @@
 #include <cctype>
 #include <condition_variable>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <fstream>
+#include <limits>
 #include <optional>
+#include <sstream>
 #include <pthread.h>
 #include <signal.h>
 
@@ -1103,7 +1106,9 @@ public:
             case en_column_data_double: {
                 double value = 0.0;
                 data.Get(value);
-                return std::to_string(value);
+                std::ostringstream out;
+                out << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+                return out.str();
             }
             case en_column_data_decimal: {
                 std::string value;

@@ -14,6 +14,7 @@ namespace ultraverse::state {
 
 struct WhereClauseOptions {
     std::string primaryTable;
+    std::vector<std::string> tableNames;
     LoggerPtr logger;
 
     std::function<void(const std::string&)> onReadColumn;
@@ -21,6 +22,9 @@ struct WhereClauseOptions {
     std::function<bool(const std::string&,
                        const std::string&,
                        std::vector<StateData>&)> resolveIdentifier;
+    std::function<bool(const std::string&,
+                       const std::string&,
+                       std::vector<std::string>&)> resolveColumnIdentifier;
     std::function<void(const std::string&, const std::string&)> onUnresolvedIdentifier;
 };
 

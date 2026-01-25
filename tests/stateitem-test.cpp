@@ -92,6 +92,12 @@ TEST_CASE("StateRange builds simple where clauses", "[stateitem]") {
     eq.SetValue(StateData { (int64_t) 1 }, true);
     REQUIRE(eq.MakeWhereQuery("id") == "id=1");
 
+    StateData text;
+    text.Set("hello", 5);
+    StateRange eqText;
+    eqText.SetValue(text, true);
+    REQUIRE(eqText.MakeWhereQuery("name") == "name=X'68656C6C6F'");
+
     StateRange ne;
     ne.SetValue(StateData { (int64_t) 1 }, false);
     REQUIRE(ne.MakeWhereQuery("id") == "id<1 OR id>1");

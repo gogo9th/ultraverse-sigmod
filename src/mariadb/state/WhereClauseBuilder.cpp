@@ -1,5 +1,6 @@
 #include "mariadb/state/WhereClauseBuilder.hpp"
 
+#include <iterator>
 #include <stdexcept>
 
 #include "utils/StringUtil.hpp"
@@ -10,7 +11,8 @@ namespace {
 
 void processRValue(StateItem& item,
                    const ultparser::DMLQueryExpr& right,
-                   const WhereClauseOptions& options) {
+                   const WhereClauseOptions& options,
+                   std::vector<StateItem>& extraItems) {
     if (right.value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
         const std::string& identifierName = right.identifier();
         std::vector<StateData> values;
@@ -18,11 +20,25 @@ void processRValue(StateItem& item,
             options.resolveIdentifier(item.name, identifierName, values)) {
             item.data_list.insert(item.data_list.end(), values.begin(), values.end());
         } else {
-            if (options.logger) {
-                options.logger->warn("cannot map value for {}", item.name);
-            }
-            if (options.onUnresolvedIdentifier) {
-                options.onUnresolvedIdentifier(identifierName, item.name);
+            std::vector<std::string> columns;
+            if (options.resolveColumnIdentifier &&
+                options.resolveColumnIdentifier(item.name, identifierName, columns) &&
+                !columns.empty()) {
+                item.function_type = FUNCTION_WILDCARD;
+                item.data_list.clear();
+                for (const auto &column : columns) {
+                    if (options.onReadColumn) {
+                        options.onReadColumn(column);
+                    }
+                    extraItems.emplace_back(StateItem::Wildcard(column));
+                }
+            } else {
+                if (options.logger) {
+                    options.logger->warn("cannot map value for {}", item.name);
+                }
+                if (options.onUnresolvedIdentifier) {
+                    options.onUnresolvedIdentifier(identifierName, item.name);
+                }
             }
         }
         return;
@@ -64,7 +80,7 @@ void processRValue(StateItem& item,
         } break;
         case ultparser::DMLQueryExpr::LIST: {
             for (const auto& child : right.value_list()) {
-                processRValue(item, child, options);
+                processRValue(item, child, options, extraItems);
             }
         } break;
         case ultparser::DMLQueryExpr::FUNCTION: {
@@ -101,9 +117,10 @@ void processRValue(StateItem& item,
 std::vector<StateItem> buildWhereItems(const ultparser::DMLQueryExpr& expr,
                                        const WhereClauseOptions& options) {
     std::vector<StateItem> items;
+    std::vector<StateItem> extraItems;
 
     std::function<void(const ultparser::DMLQueryExpr&, StateItem&)> visitNode;
-    visitNode = [&options, &visitNode](const ultparser::DMLQueryExpr& node, StateItem& parent) {
+    visitNode = [&options, &visitNode, &extraItems](const ultparser::DMLQueryExpr& node, StateItem& parent) {
         if (node.value_type() == ultparser::DMLQueryExpr::SUBQUERY) {
             if (options.logger) {
                 options.logger->debug("where clause contains subquery expression");
@@ -194,7 +211,7 @@ std::vector<StateItem> buildWhereItems(const ultparser::DMLQueryExpr& expr,
         }
 
         if (node.has_right()) {
-            processRValue(parent, node.right(), options);
+            processRValue(parent, node.right(), options, extraItems);
         }
 
         if (options.onReadColumn) {
@@ -217,6 +234,12 @@ std::vector<StateItem> buildWhereItems(const ultparser::DMLQueryExpr& expr,
     StateItem rootItem;
     visitNode(expr, rootItem);
     flatInsertNode(rootItem);
+
+    if (!extraItems.empty()) {
+        items.insert(items.end(),
+                     std::make_move_iterator(extraItems.begin()),
+                     std::make_move_iterator(extraItems.end()));
+    }
 
     return items;
 }

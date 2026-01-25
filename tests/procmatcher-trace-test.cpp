@@ -59,6 +59,16 @@ static bool hasOpItemWithValues(const std::vector<StateItem> &items,
     return false;
 }
 
+static bool hasWildcardItem(const std::vector<StateItem> &items,
+                            const std::string &name) {
+    for (const auto &item : items) {
+        if (item.name == name && item.function_type == FUNCTION_WILDCARD) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static const char *BASIC_PROC = R"SQL(
 CREATE PROCEDURE test_basic()
 BEGIN
@@ -265,6 +275,14 @@ BEGIN
 
     INSERT INTO refunds(order_id, amount)
     VALUES (p_order_id, v_amount);
+END
+)SQL";
+
+static const char *COLUMN_COMPARE_PROC = R"SQL(
+CREATE PROCEDURE test_column_compare()
+BEGIN
+    SELECT * FROM customer2, frequent_flyer
+    WHERE frequent_flyer.ff_c_id = customer2.c_id;
 END
 )SQL";
 
@@ -526,4 +544,16 @@ TEST_CASE("ProcMatcher trace - BETWEEN operator (statelogd semantics)", "[procma
                                 {StateData(int64_t{10})}));
     REQUIRE(hasOpItemWithValues(result.readSet, "logs.id", FUNCTION_LE,
                                 {StateData(int64_t{20})}));
+}
+
+TEST_CASE("ProcMatcher trace - column-column comparison", "[procmatcher][trace]") {
+    ProcMatcher matcher(COLUMN_COMPARE_PROC);
+
+    std::map<std::string, StateData> vars;
+    std::vector<std::string> keyColumns = {"customer2.c_id", "frequent_flyer.ff_c_id"};
+    auto result = matcher.trace(vars, keyColumns);
+
+    REQUIRE(result.unresolvedVars.empty());
+    REQUIRE(hasWildcardItem(result.readSet, "customer2.c_id"));
+    REQUIRE(hasWildcardItem(result.readSet, "frequent_flyer.ff_c_id"));
 }

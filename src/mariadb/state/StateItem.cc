@@ -2,8 +2,10 @@
 
 #include <cctype>
 #include <cstdlib>
-#include <sstream>
 #include <execution>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 
 #include <boost/tuple/tuple.hpp>
 
@@ -16,6 +18,64 @@ struct DecimalParts {
   std::string intPart;
   std::string fracPart;
 };
+
+std::string toHexLiteral(const std::string &input) {
+  static const char *hex = "0123456789ABCDEF";
+  std::string out;
+  out.reserve(2 + input.size() * 2 + 1);
+  out.push_back('X');
+  out.push_back('\'');
+  for (unsigned char ch : input) {
+    out.push_back(hex[(ch >> 4) & 0x0F]);
+    out.push_back(hex[ch & 0x0F]);
+  }
+  out.push_back('\'');
+  return out;
+}
+
+std::string formatStateDataForWhere(const StateData &data) {
+  switch (data.Type()) {
+    case en_column_data_int: {
+      int64_t value = 0;
+      if (data.Get(value)) {
+        return std::to_string(value);
+      }
+      return "NULL";
+    }
+    case en_column_data_uint: {
+      uint64_t value = 0;
+      if (data.Get(value)) {
+        return std::to_string(value);
+      }
+      return "NULL";
+    }
+    case en_column_data_double: {
+      double value = 0.0;
+      if (data.Get(value)) {
+        std::ostringstream out;
+        out << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+        return out.str();
+      }
+      return "NULL";
+    }
+    case en_column_data_decimal: {
+      std::string value;
+      if (data.Get(value)) {
+        return toHexLiteral(value);
+      }
+      return "NULL";
+    }
+    case en_column_data_string: {
+      std::string value;
+      if (data.Get(value)) {
+        return toHexLiteral(value);
+      }
+      return "NULL";
+    }
+    default:
+      return "NULL";
+  }
+}
 
 bool parseDecimalString(const std::string &input, DecimalParts *out) {
   if (out == nullptr) {
@@ -296,6 +356,11 @@ bool StateData::ConvertData(en_state_log_column_data_type _type)
     return true;
   }
 
+  if (type == en_column_data_decimal || _type == en_column_data_decimal)
+  {
+    return false;
+  }
+
   switch (_type)
   {
   case en_column_data_int:
@@ -343,15 +408,7 @@ bool StateData::ConvertData(en_state_log_column_data_type _type)
     return true;
   }
   case en_column_data_decimal:
-  {
-    std::string value;
-    if (false == Get(value))
-    {
-      return false;
-    }
-    SetDecimal(value);
-    return true;
-  }
+    return false;
 
   default:
     return false;
@@ -437,17 +494,11 @@ void StateData::SetDecimal(const char *val, size_t length)
 {
   Clear();
 
-  bool normalizedOk = false;
-  std::string normalized = normalizeDecimalString(std::string(val, length), &normalizedOk);
-  if (!normalizedOk) {
-    normalized.assign(val, length);
-  }
-
   type = en_column_data_decimal;
-  d.str = (char *)malloc(normalized.size() + 1);
-  memcpy(d.str, normalized.data(), normalized.size());
-  d.str[normalized.size()] = 0;
-  str_len = normalized.size();
+  d.str = (char *)malloc(length + 1);
+  memcpy(d.str, val, length);
+  d.str[length] = 0;
+  str_len = length;
 
   calculateHash();
 }
@@ -466,9 +517,7 @@ bool StateData::Get(int64_t &val) const
     val = std::strtol(d.str, &end, 10);
     return true;
   case en_column_data_decimal:
-    char *endDec;
-    val = std::strtoll(d.str, &endDec, 10);
-    return true;
+    return false;
 
   case en_column_data_double:
   default:
@@ -490,9 +539,7 @@ bool StateData::Get(uint64_t &val) const
     val = std::strtoul(d.str, &end, 10);
     return true;
   case en_column_data_decimal:
-    char *endDec;
-    val = std::strtoull(d.str, &endDec, 10);
-    return true;
+    return false;
 
   case en_column_data_double:
   default:
@@ -513,9 +560,7 @@ bool StateData::Get(double &val) const
     val = std::strtold(d.str, &end);
     return true;
   case en_column_data_decimal:
-    char *endDec;
-    val = std::strtold(d.str, &endDec);
-    return true;
+    return false;
 
   case en_column_data_int:
   case en_column_data_uint:
@@ -545,7 +590,7 @@ bool StateData::Get(std::string &val) const
     val = std::string(d.str);
     return true;
   case en_column_data_decimal:
-    val = std::string(d.str);
+    val = std::string(d.str, str_len);
     return true;
 
   default:
@@ -580,7 +625,7 @@ bool StateData::operator==(const StateData &c) const
   case en_column_data_string:
     return str_len == c.str_len && memcmp(d.str, c.d.str, str_len) == 0;
   case en_column_data_decimal:
-    return compareDecimalStrings(d.str, c.d.str) == 0;
+    return str_len == c.str_len && memcmp(d.str, c.d.str, str_len) == 0;
 
   case en_column_data_null:
     return true;
@@ -598,8 +643,10 @@ bool StateData::operator!=(const StateData &c) const
 #ifdef __amd64__
   static_assert(sizeof(UNION_RAW_DATA) == 8, "the size of UNION_RAW_DATA must be 8");
   
-  if (type == en_column_data_string || type == en_column_data_decimal)
+  if (type == en_column_data_string)
       return str_len != c.str_len || strcmp(d.str, c.d.str) != 0;
+  if (type == en_column_data_decimal)
+      return str_len != c.str_len || memcmp(d.str, c.d.str, str_len) != 0;
   
   return d.ival == c.d.ival;
 #else
@@ -617,7 +664,7 @@ bool StateData::operator!=(const StateData &c) const
   case en_column_data_string:
     return str_len != c.str_len || strcmp(d.str, c.d.str) != 0;
   case en_column_data_decimal:
-    return compareDecimalStrings(d.str, c.d.str) != 0;
+    return str_len != c.str_len || memcmp(d.str, c.d.str, str_len) != 0;
 
   case en_column_data_null:
     return false;
@@ -646,7 +693,7 @@ bool StateData::operator>(const StateData &c) const
   case en_column_data_string:
     return strcmp(d.str, c.d.str) > 0;
   case en_column_data_decimal:
-    return compareDecimalStrings(d.str, c.d.str) > 0;
+    return false;
 
   default:
     return false;
@@ -671,7 +718,7 @@ bool StateData::operator>=(const StateData &c) const
   case en_column_data_string:
       return strcmp(d.str, c.d.str) >= 0;
   case en_column_data_decimal:
-      return compareDecimalStrings(d.str, c.d.str) >= 0;
+      return false;
 
 
   default:
@@ -697,7 +744,7 @@ bool StateData::operator<(const StateData &c) const
   case en_column_data_string:
       return strcmp(d.str, c.d.str) < 0;
   case en_column_data_decimal:
-      return compareDecimalStrings(d.str, c.d.str) < 0;
+      return false;
 
 
   default:
@@ -723,7 +770,7 @@ bool StateData::operator<=(const StateData &c) const
   case en_column_data_string:
       return strcmp(d.str, c.d.str) <= 0;
   case en_column_data_decimal:
-      return compareDecimalStrings(d.str, c.d.str) <= 0;
+      return false;
 
   default:
     return false;
@@ -977,7 +1024,7 @@ std::string StateRange::MakeWhereQuery(std::string columnName) const
       }
       else if (i.begin.IsNone() && !i.end.IsNone())
       {
-        i.end.Get(val1);
+        val1 = formatStateDataForWhere(i.end);
         if (i.end.IsEqual())
         {
           ss << key_name << "<=" << val1 << " OR ";
@@ -989,7 +1036,7 @@ std::string StateRange::MakeWhereQuery(std::string columnName) const
       }
       else if (!i.begin.IsNone() && i.end.IsNone())
       {
-        i.begin.Get(val1);
+        val1 = formatStateDataForWhere(i.begin);
         if (i.begin.IsEqual())
         {
           ss << key_name << ">=" << val1 << " OR ";
@@ -1001,8 +1048,8 @@ std::string StateRange::MakeWhereQuery(std::string columnName) const
       }
       else //(!i.begin.IsNone() && !i.end.IsNone())
       {
-        i.begin.Get(val1);
-        i.end.Get(val2);
+        val1 = formatStateDataForWhere(i.begin);
+        val2 = formatStateDataForWhere(i.end);
 
         if (val1 == val2)
         {

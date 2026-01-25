@@ -148,6 +148,7 @@ namespace ultraverse::mariadb {
             std::string table,
             std::vector<std::pair<column_type::Value, int>> columns,
             std::vector<std::string> columnNames,
+            std::vector<uint8_t> unsignedFlags,
             uint64_t timestamp
         );
         TableMapEvent() : _timestamp(0), _tableId(0) {};
@@ -168,6 +169,7 @@ namespace ultraverse::mariadb {
         column_type::Value typeOf(int columnIndex) const;
         int sizeOf(int columnIndex) const;
         std::string nameOf(int columnIndex) const;
+        bool isUnsigned(int columnIndex) const;
 
         // Serialization removed: protobuf-based serialization is handled by state log types.
         
@@ -179,6 +181,7 @@ namespace ultraverse::mariadb {
         std::string _table;
         std::vector<std::pair<column_type::Value, int>> _columns;
         std::vector<std::string> _columnNames;
+        std::vector<uint8_t> _unsignedFlags;
     };
     
     class RowEvent: public base::DBEvent {
