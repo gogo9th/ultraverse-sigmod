@@ -406,16 +406,34 @@ namespace ultraverse::state::v2 {
             }
 
             bool isColumnDependent = analysis::TaintAnalyzer::columnSetsRelated(columnTaint, txnAccess, _context->foreignKeys);
+            bool hasKeyColumns = analysis::TaintAnalyzer::hasKeyColumnItems(*transaction, rowCluster, cachedResolver);
+
             if (isColumnDependent) {
                 columnTaint.insert(txnColumns.write.begin(), txnColumns.write.end());
             }
 
-            if (!isColumnDependent) {
+            if (!isColumnDependent && !hasKeyColumns) {
                 continue;
             }
 
-            bool hasKeyColumns = analysis::TaintAnalyzer::hasKeyColumnItems(*transaction, rowCluster, cachedResolver);
             if (!hasKeyColumns) {
+                std::promise<gid_t> immediate;
+                auto future = immediate.get_future();
+                immediate.set_value(gid);
+                replayTasks.emplace_back(std::move(future));
+                if (replayTasks.size() >= kReplayFutureFlushSize) {
+                    flushReplayTasks();
+                }
+                continue;
+            }
+
+            if (!isColumnDependent) {
+                if (!rowCluster.shouldReplay(gid)) {
+                    continue;
+                }
+
+                columnTaint.insert(txnColumns.write.begin(), txnColumns.write.end());
+
                 std::promise<gid_t> immediate;
                 auto future = immediate.get_future();
                 immediate.set_value(gid);

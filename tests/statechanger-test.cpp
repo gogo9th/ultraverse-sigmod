@@ -529,6 +529,56 @@ TEST_CASE("StateChanger prepare includes column-wise dependent queries without k
     REQUIRE(gids[0] == 2);
 }
 
+TEST_CASE("StateChanger prepare falls back to row-wise when column-wise unrelated", "[statechanger][prepare][columnwise]") {
+    auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
+
+    auto plan = makePlan(1);
+    plan.rollbackGids().push_back(1);
+
+    StateCluster cluster(plan.keyColumns());
+    ultraverse::state::v2::StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+    CachedRelationshipResolver cachedResolver(resolver, 1000);
+
+    StateItem key = StateItem::EQ("items.id", StateData(static_cast<int64_t>(1)));
+    StateItem nonKeyWrite = StateItem::EQ("items.price", StateData(static_cast<int64_t>(100)));
+
+    auto txn1 = makeTransaction(1, plan.dbName(), "/*TXN:1*/",
+                                {key},
+                                {nonKeyWrite});
+    auto txn2 = makeTransaction(2, plan.dbName(), "/*TXN:2*/",
+                                {key},
+                                {});
+
+    cluster.insert(txn1, cachedResolver);
+    cluster.insert(txn2, cachedResolver);
+    cluster.merge();
+
+    auto clusterStore = std::make_unique<MockedStateClusterStore>();
+    clusterStore->save(cluster);
+
+    auto logReader = std::make_unique<MockedStateLogReader>();
+    logReader->addTransaction(txn1, 1);
+    logReader->addTransaction(txn2, 2);
+
+    MockedDBHandlePool pool(1, sharedState);
+
+    StateChangerIO io;
+    io.stateLogReader = std::move(logReader);
+    io.clusterStore = std::move(clusterStore);
+    io.backupLoader = std::make_unique<NoopBackupLoader>();
+    io.closeStandardFds = false;
+
+    StateChanger changer(pool, plan, std::move(io));
+
+    changer.prepare();
+
+    auto gids = loadReplayPlanGids(plan);
+    REQUIRE(gids.size() == 1);
+    REQUIRE(gids[0] == 2);
+}
+
 /**
  * Ensures column-wise dependency propagation is transitive: if a dependent
  * transaction writes a new column, later reads of that column are replayed.
