@@ -70,7 +70,6 @@ add_custom_target(ultraverse_state_proto
 # add_compile_options(-march=native -O2)
 
 # add_link_options(-fsanitize=leak)
-add_link_options(--whole-archive)
 
 set(ULTRAVERSE_DEPENDENCIES
     ${BOOST_LIBRARIES}
@@ -84,7 +83,6 @@ set(ULTRAVERSE_DEPENDENCIES
     
     tbb
     mysql_binlog_event_standalone
-    backward
 )
 
 set(ULTPARSERLIB_SO_PATH
