@@ -86,6 +86,7 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
     rollback_action = f"rollback={','.join(map(str, rollback_gids))}"
     session.run_db_state_change(
         rollback_action,
+        replay_from=0,
         stdout_name=rollback_stdout_name,
         stderr_name=rollback_stderr_name,
     )
@@ -95,6 +96,7 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
     # REPLAY 실행한다.
     session.run_db_state_change(
         "replay",
+        replay_from=0,
         stdout_name=replay_stdout_name,
         stderr_name=replay_stderr_name,
     )
@@ -127,19 +129,9 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int], do
 
     if do_extra_replay_st and do_table_diff:
         # 테이블 비교를 한다.
-        tmp_db_name = f"{replay_report['intermediateDBName']}_tmp"
-
-        session.load_dump(tmp_db_name, f"{session.session_path}/dbdump_st_latest.sql")
-
-        replace_query = rollback_report['replaceQuery'] \
-            .replace('__INTERMEDIATE_DB__', replay_report['intermediateDBName']) \
-            .replace('benchbase', tmp_db_name)
-
-        session.eval(replace_query)
-
         for (table, cols) in DB_TABLE_DIFF_OPTIONS.items():
             session.tablediff(
-                f"{tmp_db_name}.{table}",
+                f"benchbase.{table}",
                 f"{replay_st_report['intermediateDBName']}.{table}",
                 cols
             )

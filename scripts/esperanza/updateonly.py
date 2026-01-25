@@ -48,6 +48,7 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int]):
     rollback_action = f"rollback={','.join(map(str, rollback_gids))}"
     session.run_db_state_change(
         rollback_action,
+        replay_from=0,
         stdout_name=rollback_stdout_name,
         stderr_name=rollback_stderr_name,
     )
@@ -56,6 +57,7 @@ def perform_state_change(session: BenchmarkSession, rollback_gids: list[int]):
 
     session.run_db_state_change(
         "replay",
+        replay_from=0,
         stdout_name=replay_stdout_name,
         stderr_name=replay_stderr_name,
     )
