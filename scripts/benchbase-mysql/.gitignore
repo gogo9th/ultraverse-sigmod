@@ -1,4 +1,0 @@
-runs/*
-!runs/DUMMY
-
-!mysql.cnf.d

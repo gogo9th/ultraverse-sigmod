@@ -1,7 +1,0 @@
-export ULTRAVERSE_HOME=$HOME/works/ultraverse/cmake-build-debug/src
-
-export DB_HOST=127.0.0.1
-export DB_PORT=3306
-export DB_USER=root
-export DB_PASS=password
-
