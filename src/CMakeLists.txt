@@ -15,16 +15,8 @@ FetchContent_Declare(
         GIT_TAG        v1.16.0
 )
 
-FetchContent_Declare(
-        backward
-        GIT_REPOSITORY https://github.com/bombela/backward-cpp.git
-        GIT_TAG        v1.6
-        SYSTEM
-)
-
 FetchContent_MakeAvailable(fmt)
 FetchContent_MakeAvailable(spdlog)
-FetchContent_MakeAvailable(backward)
 
 find_package(PkgConfig REQUIRED)
 find_package(OpenSSL REQUIRED)

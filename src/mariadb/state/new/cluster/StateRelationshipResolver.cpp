@@ -207,18 +207,18 @@ namespace ultraverse::state::v2 {
             std::shared_lock<std::shared_mutex> _lock(_cacheLock);
             auto it = _aliasCache.find(columnExpr);
             if (it != _aliasCache.end()) {
-                return std::move(it->second);
+                return it->second;
             }
         }
         
-        auto retval = std::move(_resolver.resolveColumnAlias(columnExpr));
+        auto retval = _resolver.resolveColumnAlias(columnExpr);
         
         {
             std::unique_lock<std::shared_mutex> _lock(_cacheLock);
             _aliasCache.emplace(columnExpr, retval);
         }
         
-        return std::move(retval);
+        return retval;
     }
     
     std::string CachedRelationshipResolver::resolveForeignKey(const std::string &columnExpr) const {
@@ -230,41 +230,51 @@ namespace ultraverse::state::v2 {
             std::shared_lock<std::shared_mutex> _lock(_cacheLock);
             auto it = _chainCache.find(columnExpr);
             if (it != _chainCache.end()) {
-                return std::move(it->second);
+                return it->second;
             }
         }
         
-        auto retval = std::move(_resolver.resolveChain(columnExpr));
+        auto retval = _resolver.resolveChain(columnExpr);
         
         {
             std::unique_lock<std::shared_mutex> _lock(_cacheLock);
             _chainCache.emplace(columnExpr, retval);
         }
         
-        return std::move(retval);
+        return retval;
     }
     
     std::shared_ptr<StateItem> CachedRelationshipResolver::resolveRowAlias(const StateItem &item) const {
         size_t hash = item.MakeRange2().hash();
-        auto &cacheMap = _rowChainCache[item.name];
         
         {
             std::shared_lock<std::shared_mutex> _lock(_cacheLock);
-            auto it = cacheMap.find(hash);
-            
-            if (it == cacheMap.end()) {
-                goto NOT_FOUND;
+            auto outerIt = _rowAliasCache.find(item.name);
+            if (outerIt != _rowAliasCache.end()) {
+                auto it = outerIt->second.find(hash);
+                if (it != outerIt->second.end()) {
+                    auto cached = it->second.second;
+                    _lock.unlock();
+                    {
+                        std::unique_lock<std::shared_mutex> _writeLock(_cacheLock);
+                        auto outerIt2 = _rowAliasCache.find(item.name);
+                        if (outerIt2 != _rowAliasCache.end()) {
+                            auto it2 = outerIt2->second.find(hash);
+                            if (it2 != outerIt2->second.end()) {
+                                it2->second.first++;
+                            }
+                        }
+                    }
+                    return cached;
+                }
             }
-            
-            it->second.first++;
-            return it->second.second;
         }
         
-        NOT_FOUND:
-        auto retval = std::move(_resolver.resolveRowAlias(item));
+        auto retval = _resolver.resolveRowAlias(item);
         
         {
             std::unique_lock<std::shared_mutex> _lock(_cacheLock);
+            auto &cacheMap = _rowAliasCache[item.name];
             
             if (isGCRequired(cacheMap)) {
                 gc(cacheMap);
@@ -273,30 +283,40 @@ namespace ultraverse::state::v2 {
             cacheMap.emplace(hash, std::make_pair(1, retval));
         }
         
-        return std::move(retval);
+        return retval;
     }
     
     std::shared_ptr<StateItem> CachedRelationshipResolver::resolveRowChain(const StateItem &item) const {
         size_t hash = item.MakeRange2().hash();
-        auto &cacheMap = _rowAliasCache[item.name];
         
         {
             std::shared_lock<std::shared_mutex> _lock(_cacheLock);
-            auto it = cacheMap.find(hash);
-            
-            if (it == cacheMap.end()) {
-                goto NOT_FOUND;
+            auto outerIt = _rowChainCache.find(item.name);
+            if (outerIt != _rowChainCache.end()) {
+                auto it = outerIt->second.find(hash);
+                if (it != outerIt->second.end()) {
+                    auto cached = it->second.second;
+                    _lock.unlock();
+                    {
+                        std::unique_lock<std::shared_mutex> _writeLock(_cacheLock);
+                        auto outerIt2 = _rowChainCache.find(item.name);
+                        if (outerIt2 != _rowChainCache.end()) {
+                            auto it2 = outerIt2->second.find(hash);
+                            if (it2 != outerIt2->second.end()) {
+                                it2->second.first++;
+                            }
+                        }
+                    }
+                    return cached;
+                }
             }
-            
-            it->second.first++;
-            return it->second.second;
         }
         
-        NOT_FOUND:
-        auto retval = std::move(_resolver.resolveRowChain(item));
+        auto retval = _resolver.resolveRowChain(item);
         
         {
             std::unique_lock<std::shared_mutex> _lock(_cacheLock);
+            auto &cacheMap = _rowChainCache[item.name];
             
             if (isGCRequired(cacheMap)) {
                 gc(cacheMap);
@@ -305,7 +325,7 @@ namespace ultraverse::state::v2 {
             cacheMap.emplace(hash, std::make_pair(1, retval));
         }
         
-        return std::move(retval);
+        return retval;
     }
     
     void CachedRelationshipResolver::clearCache() {
