@@ -12,10 +12,6 @@ if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/pb)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pb)
 endif()
 
-if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cpp_autogen/ultparser_query.pb.cc)
-    file(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/cpp_autogen/ultparser_query.pb.cc "/* dummy file */")
-endif()
-
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/ULTPARSERLIB_DEP_INSTALLED
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/go.mod ${CMAKE_CURRENT_SOURCE_DIR}/go.sum
@@ -47,6 +43,11 @@ set(ULTPARSERLIB_PROTOBUF_GO_AUTOGEN_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/pb/ultparser_query.pb.go
 )
 
+set_source_files_properties(
+    ${ULTPARSERLIB_PROTOBUF_CPP_AUTOGEN_SRCS}
+    PROPERTIES GENERATED TRUE
+)
+
 set(ULTPARSERLIB_SONAME ${CMAKE_CURRENT_BINARY_DIR}/cpp/libultparser/libultparser.so)
 
 set(ULTPARSERLIB_POST_BUILD_COMMANDS)
@@ -57,12 +58,19 @@ if (APPLE)
 endif()
 
 add_custom_command(
-    OUTPUT ${ULTPARSERLIB_PROTOBUF_CPP_AUTOGEN_SRCS} ${ULTPARSERLIB_PROTOBUF_GO_AUTOGEN_SRCS}
+    OUTPUT ${ULTPARSERLIB_PROTOBUF_CPP_AUTOGEN_SRCS}
     DEPENDS ${ULTPARSERLIB_PROTOBUF_SRCS}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMAND protoc --experimental_allow_proto3_optional --cpp_out=cpp_autogen ultparser_query.proto
+    COMMENT "Generating protobuf C++ autogen files"
+)
+
+add_custom_command(
+    OUTPUT ${ULTPARSERLIB_PROTOBUF_GO_AUTOGEN_SRCS}
+    DEPENDS ${ULTPARSERLIB_PROTOBUF_SRCS}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMAND protoc --plugin=${PROTOC_GEN_GO_BIN} --experimental_allow_proto3_optional --go_out=pb ultparser_query.proto
-    COMMENT "Generating protobuf autogen files for go/cpp"
+    COMMENT "Generating protobuf Go autogen files"
 )
 
 add_custom_command(
