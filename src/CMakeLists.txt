@@ -1,4 +1,5 @@
 set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "Use external fmt library" FORCE)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
 Include(FetchContent)
 
@@ -14,8 +15,16 @@ FetchContent_Declare(
         GIT_TAG        v1.16.0
 )
 
+FetchContent_Declare(
+        backward
+        GIT_REPOSITORY https://github.com/bombela/backward-cpp.git
+        GIT_TAG        v1.6
+        SYSTEM
+)
+
 FetchContent_MakeAvailable(fmt)
 FetchContent_MakeAvailable(spdlog)
+FetchContent_MakeAvailable(backward)
 
 find_package(PkgConfig REQUIRED)
 find_package(OpenSSL REQUIRED)
@@ -70,6 +79,8 @@ add_custom_target(ultraverse_state_proto
 
 # add_link_options(-fsanitize=leak)
 
+add_link_options(-Wl)
+
 set(ULTRAVERSE_DEPENDENCIES
     ${BOOST_LIBRARIES}
     ${MYSQL_LIBRARIES}
@@ -82,6 +93,7 @@ set(ULTRAVERSE_DEPENDENCIES
     
     tbb
     mysql_binlog_event_standalone
+    backward
 )
 
 set(ULTPARSERLIB_SO_PATH
