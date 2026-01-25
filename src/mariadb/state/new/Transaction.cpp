@@ -109,7 +109,7 @@ namespace ultraverse::state::v2 {
         return writeSet_begin().end();
     }
     
-    bool Transaction::isRelatedToDatabase(const std::string database) {
+    bool Transaction::isRelatedToDatabase(const std::string database) const {
         return std::any_of(_queries.begin(), _queries.end(), [&database](auto &query) {
             return query->database() == database;
         });

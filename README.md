@@ -352,7 +352,11 @@ Options:
 | `prepend=gid,sqlfile` | Prepend SQL before GID |
 | `replay` | Execute replay plan |
 | `full-replay` | Sequential replay (skip rollback GIDs) |
-| `auto-rollback=ratio` | Auto-select rollback targets by ratio |
+| `auto-rollback=ratio` | Auto-select rollback targets by ratio (fraction of in-scope GIDs) |
+
+Notes:
+- `auto-rollback` runs analysis only (no intermediate DB); it reports selected `rollbackGids` for later `rollback=...`.
+- In-scope GIDs are filtered by database match, `--gid-range`, and `--skip-gids`.
 
 
 ### Understanding `--replay-from`

@@ -35,6 +35,7 @@ namespace ultraverse::state::v2 {
         
         gid_t endGid() const;
         void setEndGid(gid_t endGid);
+        bool hasGidRange() const;
 
         gid_t replayFromGid() const;
         void setReplayFromGid(gid_t replayFromGid);
@@ -116,6 +117,7 @@ namespace ultraverse::state::v2 {
         
         gid_t _startGid;
         gid_t _endGid;
+        bool _hasGidRange;
         gid_t _replayFromGid;
         bool _hasReplayFromGid;
         

@@ -4,9 +4,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <future>
+#include <set>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <execution>
 
@@ -24,6 +28,67 @@
 #include "StateChangeReport.hpp"
 #include "StateChangeReplayPlan.hpp"
 
+
+namespace {
+    bool isTransactionInScope(const ultraverse::state::v2::StateChangePlan &plan,
+                              const std::unordered_set<ultraverse::state::v2::gid_t> &skipGids,
+                              ultraverse::state::v2::gid_t gid,
+                              const ultraverse::state::v2::Transaction &transaction) {
+        if (!transaction.isRelatedToDatabase(plan.dbName())) {
+            return false;
+        }
+        if (plan.hasGidRange()) {
+            if (gid < plan.startGid() || gid > plan.endGid()) {
+                return false;
+            }
+        }
+        if (!skipGids.empty() && skipGids.find(gid) != skipGids.end()) {
+            return false;
+        }
+        return true;
+    }
+
+    std::vector<size_t> buildAutoRollbackIndices(size_t totalCount, double ratio) {
+        std::vector<size_t> indices;
+        if (totalCount == 0) {
+            return indices;
+        }
+
+        if (ratio < 0.0) {
+            ratio = 0.0;
+        } else if (ratio > 1.0) {
+            ratio = 1.0;
+        }
+
+        if (ratio == 0.0) {
+            return indices;
+        }
+
+        auto targetCount = static_cast<size_t>(std::llround(static_cast<double>(totalCount) * ratio));
+        if (targetCount == 0) {
+            targetCount = 1;
+        }
+        if (targetCount > totalCount) {
+            targetCount = totalCount;
+        }
+
+        indices.reserve(targetCount);
+        for (size_t k = 0; k < targetCount; k++) {
+            double centered = (static_cast<double>(k) + 0.5) * static_cast<double>(totalCount) /
+                              static_cast<double>(targetCount);
+            size_t idx = static_cast<size_t>(std::floor(centered));
+            if (!indices.empty() && idx <= indices.back()) {
+                idx = indices.back() + 1;
+            }
+            if (idx >= totalCount) {
+                idx = totalCount - 1;
+            }
+            indices.push_back(idx);
+        }
+
+        return indices;
+    }
+}
 
 namespace ultraverse::state::v2 {
     
@@ -225,225 +290,56 @@ namespace ultraverse::state::v2 {
             report.writeToJSON(_plan.reportPath());
         }
     }
-    
-    void StateChanger::bench_prepareRollback() {
-        StateChangeReport report(StateChangeReport::PREPARE_AUTO, _plan);
-        
-        StateCluster rowCluster(_plan.keyColumns(), _plan.keyColumnGroups());
-        
-        std::mutex gidListMutex;
-        
-        std::atomic<size_t> replayGidCount{0};
-        size_t totalCount = 0;
-        
-        size_t totalQueryCount = 0;
-        size_t replayQueryCount = 0;
-        
-        std::map<gid_t, size_t> queryCounts;
-        
-        std::set<gid_t> selectedGids;
-        std::set<gid_t> replayGids;
-        
-        
-        {
-            _logger->info("prepare(): loading cluster");
-            _clusterStore->load(rowCluster);
-            _logger->info("prepare(): loading cluster end");
-        }
-        
-        /* PHASE 0: walk state log */
-        
-        _reader->open();
-        _reader->seek(0);
-        
-        while (_reader->nextHeader()) {
-            const auto &header = _reader->txnHeader();
-            
-            _reader->nextTransaction();
-            const auto &body = _reader->txnBody();
-            
-            if (!body->isRelatedToDatabase(_plan.dbName())) {
-                continue;
-            }
-            
-            size_t queryCount = body->queries().size();
-            totalQueryCount += queryCount;
 
-            auto gid = header->gid;
-            
-            queryCounts.emplace(gid, queryCount);
-            
-            totalCount++;
-        }
-        
-        const auto calculateReplayQueryCount = [&]() {
-            size_t count = 0;
-
-            for (const auto &pair: queryCounts) {
-                if (replayGids.find(pair.first) != replayGids.end()) {
-                    continue;
-                }
-
-                count += pair.second;
-            }
-
-            return count;
-        };
-        
-        gid_t i = 0;
-        while (i < totalCount) {
-            selectedGids.emplace(i);
-            
-            for (const auto &cluster: rowCluster.clusters()) {
-                if (_plan.keyColumns().find(utility::toLower(cluster.first)) == _plan.keyColumns().end()) {
-                    continue;
-                }
-                
-                std::for_each(std::execution::par_unseq, cluster.second.write.begin(), cluster.second.write.end(), [&](const auto &writePair) {
-                    const auto &range = writePair.first;
-                    const auto &gids = writePair.second;
-                    
-                    if (gids.find(i) == gids.end()) {
-                        return;
-                    }
-                    
-                    
-                    const auto &depRangeIt = std::find_if(std::execution::par_unseq, cluster.second.read.begin(), cluster.second.read.end(), [&range](const auto &pair) {
-                        return pair.first == range || StateRange::isIntersects(pair.first, range);
-                    });
-                    
-                    if (depRangeIt == cluster.second.read.end()) {
-                        return;
-                    }
-                    
-                    {
-                        std::scoped_lock<std::mutex> _lock(gidListMutex);
-                        replayGids.insert(
-                            depRangeIt->second.begin(), depRangeIt->second.end()
-                        );
-                    }
-                });
-            }
-            
-            replayGids.erase(i);
-            
-            replayQueryCount = calculateReplayQueryCount();
-
-            // _logger->trace("bench_prepareRollback(): #{}: {} / {} transactions will be replayed ({}%)", i, replayGids.size(), totalCount, ((double) replayGids.size() / totalCount) * 100);
-            
-            if (i % 8 == 0) {
-                _logger->trace("bench_prepareRollback(): #{}: {} / {} queries will be replayed ({}%)", i, replayQueryCount, totalQueryCount, ((double) replayQueryCount / totalQueryCount) * 100);
-            }
-            
-            
-            if (replayQueryCount < (size_t) (totalQueryCount * (1.0 - _plan.autoRollbackRatio()))) {
-                break;
-            }
-            
-            i++;
-        }
-        
-
-        
-        replayGidCount = selectedGids.size();
-        
-        
-        report.bench_setRollbackGids(selectedGids);
-        report.setReplayGidCount(replayGidCount);
-        report.setTotalCount(totalCount);
-        report.setExecutionTime(_phase2Time);
-        
-        report.bench_setReplayQueryCount(replayQueryCount);
-        report.bench_setTotalQueryCount(totalQueryCount);
-        
-        _logger->info("benchAutoRollback(): {} / {} transactions will be replayed ({}%)", replayGidCount.load(), totalCount, ((double) replayGidCount / totalCount) * 100);
-        _logger->info("benchAutoRollback(): {} / {} queries will be replayed ({}%)", replayQueryCount, totalQueryCount, ((double) replayQueryCount / totalQueryCount) * 100);
-        // rowCluster.describe();
-        
-        if (!_plan.reportPath().empty()) {
-            report.writeToJSON(_plan.reportPath());
-        }
-    }
-    
-    void StateChanger::prepare() {
-        StateChangeReport report(StateChangeReport::PREPARE, _plan);
-        
+    StateChanger::ReplayAnalysisResult StateChanger::analyzeReplayPlan(
+        StateCluster &rowCluster,
+        StateRelationshipResolver &relationshipResolver,
+        CachedRelationshipResolver &cachedResolver,
+        StateChangeReplayPlan *replayPlan,
+        const std::function<bool(gid_t, size_t)> &isRollbackTarget,
+        const std::function<std::optional<std::string>(gid_t)> &userQueryPath,
+        const std::function<bool(gid_t)> &shouldRevalidateTarget) {
         TaskExecutor taskExecutor(_plan.threadNum());
-        StateCluster rowCluster(_plan.keyColumns(), _plan.keyColumnGroups());
-        
-        StateRelationshipResolver relationshipResolver(_plan, *_context);
-        CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
-        
-        std::vector<gid_t> replayGids;
-        replayGids.reserve(1024);
-        StateChangeReplayPlan replayPlan;
-        size_t totalCount = 0;
-        
-        createIntermediateDB();
-        report.setIntermediateDBName(_intermediateDBName);
-        
-        
-        if (!_plan.dbDumpPath().empty()) {
-            auto load_backup_start = std::chrono::steady_clock::now();
-            loadBackup(_intermediateDBName, _plan.dbDumpPath());
-            
-            auto dbHandle = _dbHandlePool.take();
-            updatePrimaryKeys(dbHandle->get(), 0);
-            updateForeignKeys(dbHandle->get(), 0);
-            auto load_backup_end = std::chrono::steady_clock::now();
-            
-            std::chrono::duration<double> time = load_backup_end - load_backup_start;
-            _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
-            report.setSQLLoadTime(time.count());
-        } else {
-            auto dbHandle = _dbHandlePool.take();
-            updatePrimaryKeys(dbHandle->get(), 0, _plan.dbName());
-            updateForeignKeys(dbHandle->get(), 0, _plan.dbName());
-        }
-        
-        {
-            _logger->info("prepare(): loading cluster");
-            _clusterStore->load(rowCluster);
-            _logger->info("prepare(): loading cluster end");
-        }
-        
-        _reader->open();
-        _reader->seek(0);
-        
-        auto phase_main_start = std::chrono::steady_clock::now();
-        
         std::vector<std::future<gid_t>> replayTasks;
         replayTasks.reserve(1024);
         constexpr size_t kReplayFutureFlushSize = 10000;
 
+        ReplayAnalysisResult result;
+        std::unordered_map<gid_t, size_t> queryCounts;
+        std::unordered_set<gid_t> skipGids(_plan.skipGids().begin(), _plan.skipGids().end());
+
         ColumnSet columnTaint;
-        
-        auto flushReplayTasks = [&replayTasks, &replayGids]() {
+
+        _reader->open();
+        _reader->seek(0);
+
+        auto flushReplayTasks = [&replayTasks, &result]() {
             for (auto &future : replayTasks) {
                 gid_t gid = future.get();
                 if (gid != UINT64_MAX) {
-                    replayGids.push_back(gid);
+                    result.replayGids.push_back(gid);
                 }
             }
             replayTasks.clear();
         };
-        
+
+        size_t candidateIndex = 0;
+
         while (_reader->nextHeader()) {
             auto header = _reader->txnHeader();
             gid_t gid = header->gid;
-            
-            totalCount++;
-            
-            // _logger->info("read gid {}", gid);
 
             _reader->nextTransaction();
             auto transaction = _reader->txnBody();
 
-            if (!transaction->isRelatedToDatabase(_plan.dbName())) {
-                _logger->trace("skipping transaction #{} because it is not related to database {}",
-                               transaction->gid(), _plan.dbName());
+            if (!isTransactionInScope(_plan, skipGids, gid, *transaction)) {
                 continue;
             }
+
+            result.totalCount++;
+            size_t queryCount = transaction->queries().size();
+            result.totalQueryCount += queryCount;
+            queryCounts.emplace(gid, queryCount);
 
             if (relationshipResolver.addTransaction(*transaction)) {
                 cachedResolver.clearCache();
@@ -453,29 +349,31 @@ namespace ultraverse::state::v2 {
             ColumnSet txnAccess = txnColumns.read;
             txnAccess.insert(txnColumns.write.begin(), txnColumns.write.end());
 
-            if (_plan.isRollbackGid(gid) || _plan.hasUserQuery(gid)) {
-                auto nextGid = transaction->gid() + 1;
-                bool shouldRevalidate = !_plan.isRollbackGid(nextGid) && !_plan.hasUserQuery(nextGid);
+            bool rollbackTarget = isRollbackTarget(gid, candidateIndex);
+            auto userQueryOpt = userQueryPath ? userQueryPath(gid) : std::nullopt;
+            candidateIndex++;
 
-                if (_plan.isRollbackGid(transaction->gid())) {
-                    rowCluster.addRollbackTarget(transaction, cachedResolver, shouldRevalidate);
+            if (rollbackTarget || userQueryOpt.has_value()) {
+                if (rollbackTarget) {
+                    rowCluster.addRollbackTarget(transaction, cachedResolver, shouldRevalidateTarget(gid));
                     columnTaint.insert(txnColumns.write.begin(), txnColumns.write.end());
                 }
 
-                if (_plan.hasUserQuery(transaction->gid())) {
-                    const auto &userQueryPath = _plan.userQueries().at(transaction->gid());
-                    auto userQuery = loadUserQuery(userQueryPath);
+                if (userQueryOpt.has_value()) {
+                    auto userQuery = loadUserQuery(userQueryOpt.value());
                     if (!userQuery) {
                         std::ostringstream message;
-                        message << "failed to load user query for gid " << transaction->gid()
-                                << " from " << userQueryPath;
+                        message << "failed to load user query for gid " << gid
+                                << " from " << userQueryOpt.value();
                         _logger->error("{}", message.str());
                         throw std::runtime_error(message.str());
                     }
-                    userQuery->setGid(transaction->gid());
+                    userQuery->setGid(gid);
                     userQuery->setTimestamp(transaction->timestamp());
-                    rowCluster.addPrependTarget(transaction->gid(), userQuery, cachedResolver);
-                    replayPlan.userQueries.emplace(transaction->gid(), *userQuery);
+                    rowCluster.addPrependTarget(gid, userQuery, cachedResolver);
+                    if (replayPlan != nullptr) {
+                        replayPlan->userQueries.emplace(gid, *userQuery);
+                    }
 
                     auto prependColumns = analysis::TaintAnalyzer::collectColumnRW(*userQuery);
                     columnTaint.insert(prependColumns.write.begin(), prependColumns.write.end());
@@ -529,43 +427,231 @@ namespace ultraverse::state::v2 {
                 flushReplayTasks();
             }
         }
-        
-        
+
         if (!replayTasks.empty()) {
             flushReplayTasks();
         }
 
         taskExecutor.shutdown();
+
+        std::sort(result.replayGids.begin(), result.replayGids.end());
+        result.replayGids.erase(std::unique(result.replayGids.begin(), result.replayGids.end()),
+                                result.replayGids.end());
+
+        for (gid_t gid : result.replayGids) {
+            auto it = queryCounts.find(gid);
+            if (it != queryCounts.end()) {
+                result.replayQueryCount += it->second;
+            }
+        }
+
+        if (replayPlan != nullptr) {
+            replayPlan->gids = result.replayGids;
+        }
+
+        return result;
+    }
+    
+    void StateChanger::bench_prepareRollback() {
+        StateChangeReport report(StateChangeReport::PREPARE_AUTO, _plan);
         
-        
+        StateCluster rowCluster(_plan.keyColumns(), _plan.keyColumnGroups());
+        StateRelationshipResolver relationshipResolver(_plan, *_context);
+        CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
+
+        {
+            _logger->info("prepare(): loading cluster");
+            _clusterStore->load(rowCluster);
+            _logger->info("prepare(): loading cluster end");
+        }
+
+        {
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle->get(), 0, _plan.dbName());
+            updateForeignKeys(dbHandle->get(), 0, _plan.dbName());
+        }
+
+        std::unordered_set<gid_t> skipGids(_plan.skipGids().begin(), _plan.skipGids().end());
+
+        _reader->open();
+        _reader->seek(0);
+
+        size_t totalCount = 0;
+        while (_reader->nextHeader()) {
+            auto header = _reader->txnHeader();
+            gid_t gid = header->gid;
+            _reader->nextTransaction();
+            auto transaction = _reader->txnBody();
+
+            if (!isTransactionInScope(_plan, skipGids, gid, *transaction)) {
+                continue;
+            }
+
+            totalCount++;
+        }
+
+        auto rollbackIndices = buildAutoRollbackIndices(totalCount, _plan.autoRollbackRatio());
+        struct AutoRollbackSelector {
+            const std::vector<size_t> &indices;
+            size_t next = 0;
+            std::vector<gid_t> selected;
+
+            bool select(gid_t gid, size_t candidateIndex) {
+                if (next < indices.size() && candidateIndex == indices[next]) {
+                    selected.push_back(gid);
+                    next++;
+                    return true;
+                }
+                return false;
+            }
+        };
+
+        AutoRollbackSelector selector { rollbackIndices };
+        auto isRollbackTarget = [&selector](gid_t gid, size_t candidateIndex) {
+            return selector.select(gid, candidateIndex);
+        };
+        auto userQueryPath = [](gid_t) -> std::optional<std::string> {
+            return std::nullopt;
+        };
+        auto shouldRevalidate = [](gid_t) {
+            return true;
+        };
+
+        auto phase_main_start = std::chrono::steady_clock::now();
+        auto analysis = analyzeReplayPlan(
+            rowCluster,
+            relationshipResolver,
+            cachedResolver,
+            nullptr,
+            isRollbackTarget,
+            userQueryPath,
+            shouldRevalidate
+        );
+        auto phase_main_end = std::chrono::steady_clock::now();
+        std::chrono::duration<double> time = phase_main_end - phase_main_start;
+        _phase2Time = time.count();
+
+        report.bench_setRollbackGids(std::set<gid_t>(selector.selected.begin(), selector.selected.end()));
+        report.setReplayGidCount(analysis.replayGids.size());
+        report.setTotalCount(analysis.totalCount);
+        report.setExecutionTime(_phase2Time);
+
+        report.bench_setReplayQueryCount(analysis.replayQueryCount);
+        report.bench_setTotalQueryCount(analysis.totalQueryCount);
+
+        if (analysis.totalCount > 0) {
+            _logger->info("benchAutoRollback(): {} / {} transactions will be replayed ({}%)",
+                          analysis.replayGids.size(),
+                          analysis.totalCount,
+                          ((double) analysis.replayGids.size() / analysis.totalCount) * 100);
+        }
+        if (analysis.totalQueryCount > 0) {
+            _logger->info("benchAutoRollback(): {} / {} queries will be replayed ({}%)",
+                          analysis.replayQueryCount,
+                          analysis.totalQueryCount,
+                          ((double) analysis.replayQueryCount / analysis.totalQueryCount) * 100);
+        }
+
+        if (!_plan.reportPath().empty()) {
+            report.writeToJSON(_plan.reportPath());
+        }
+    }
+    
+    void StateChanger::prepare() {
+        StateChangeReport report(StateChangeReport::PREPARE, _plan);
+
+        StateCluster rowCluster(_plan.keyColumns(), _plan.keyColumnGroups());
+
+        StateRelationshipResolver relationshipResolver(_plan, *_context);
+        CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
+
+        StateChangeReplayPlan replayPlan;
+
+        createIntermediateDB();
+        report.setIntermediateDBName(_intermediateDBName);
+
+
+        if (!_plan.dbDumpPath().empty()) {
+            auto load_backup_start = std::chrono::steady_clock::now();
+            loadBackup(_intermediateDBName, _plan.dbDumpPath());
+
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle->get(), 0);
+            updateForeignKeys(dbHandle->get(), 0);
+            auto load_backup_end = std::chrono::steady_clock::now();
+
+            std::chrono::duration<double> time = load_backup_end - load_backup_start;
+            _logger->info("LOAD BACKUP END: {}s elapsed", time.count());
+            report.setSQLLoadTime(time.count());
+        } else {
+            auto dbHandle = _dbHandlePool.take();
+            updatePrimaryKeys(dbHandle->get(), 0, _plan.dbName());
+            updateForeignKeys(dbHandle->get(), 0, _plan.dbName());
+        }
+
+        {
+            _logger->info("prepare(): loading cluster");
+            _clusterStore->load(rowCluster);
+            _logger->info("prepare(): loading cluster end");
+        }
+
+        auto phase_main_start = std::chrono::steady_clock::now();
+
+        auto isRollbackTarget = [this](gid_t gid, size_t) {
+            return _plan.isRollbackGid(gid);
+        };
+        auto userQueryPath = [this](gid_t gid) -> std::optional<std::string> {
+            auto it = _plan.userQueries().find(gid);
+            if (it == _plan.userQueries().end()) {
+                return std::nullopt;
+            }
+            return it->second;
+        };
+        auto shouldRevalidate = [this](gid_t gid) {
+            gid_t nextGid = gid + 1;
+            return !_plan.isRollbackGid(nextGid) && !_plan.hasUserQuery(nextGid);
+        };
+
+        auto analysis = analyzeReplayPlan(
+            rowCluster,
+            relationshipResolver,
+            cachedResolver,
+            &replayPlan,
+            isRollbackTarget,
+            userQueryPath,
+            shouldRevalidate
+        );
+
         {
             auto phase_main_end = std::chrono::steady_clock::now();
             std::chrono::duration<double> time = phase_main_end - phase_main_start;
             _phase2Time = time.count();
         }
-        
-        std::sort(replayGids.begin(), replayGids.end());
-        replayGids.erase(std::unique(replayGids.begin(), replayGids.end()), replayGids.end());
-        replayPlan.gids = replayGids;
+
         replayPlan.rollbackGids = _plan.rollbackGids();
         std::sort(replayPlan.rollbackGids.begin(), replayPlan.rollbackGids.end());
         replayPlan.rollbackGids.erase(std::unique(replayPlan.rollbackGids.begin(), replayPlan.rollbackGids.end()),
                                       replayPlan.rollbackGids.end());
 
-        report.setReplayGidCount(replayGids.size());
-        report.setTotalCount(totalCount);
+        report.setReplayGidCount(analysis.replayGids.size());
+        report.setTotalCount(analysis.totalCount);
         report.setExecutionTime(_phase2Time);
-        
-        auto replayCountValue = replayGids.size();
-        _logger->info("prepare(): {} / {} transactions will be replayed ({}%)", replayCountValue, totalCount, ((double) replayCountValue / totalCount) * 100);
+
+        auto replayCountValue = analysis.replayGids.size();
+        if (analysis.totalCount > 0) {
+            _logger->info("prepare(): {} / {} transactions will be replayed ({}%)",
+                          replayCountValue,
+                          analysis.totalCount,
+                          ((double) replayCountValue / analysis.totalCount) * 100);
+        }
         // rowCluster.describe();
-        
+
         _logger->info("prepare(): main phase {}s", _phase2Time);
-        
+
         if (_plan.dropIntermediateDB()) {
             dropIntermediateDB();
         }
-        
+
         auto replaceQueries = rowCluster.generateReplaceQuery(
             _plan.dbName(),
             "__INTERMEDIATE_DB__",
@@ -594,10 +680,11 @@ namespace ultraverse::state::v2 {
             close(STDOUT_FILENO);
             close(STDERR_FILENO);
         }
-        
+
         if (!_plan.reportPath().empty()) {
             report.writeToJSON(_plan.reportPath());
         }
     }
+
 
 }

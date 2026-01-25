@@ -5,6 +5,8 @@
 #ifndef ULTRAVERSE_STATECHANGER_HPP
 #define ULTRAVERSE_STATECHANGER_HPP
 
+#include <functional>
+#include <optional>
 #include <string>
 
 #include "Transaction.hpp"
@@ -27,6 +29,11 @@
 
 
 namespace ultraverse::state::v2 {
+    class StateCluster;
+    class CachedRelationshipResolver;
+    class StateRelationshipResolver;
+    struct StateChangeReplayPlan;
+
     namespace OperationMode {
         enum Value {
             NORMAL,
@@ -61,6 +68,22 @@ namespace ultraverse::state::v2 {
         constexpr static int CLUSTER_EXPAND_FLAG_INCLUDE_FK  = 0b10;
         constexpr static int CLUSTER_EXPAND_FLAG_WILDCARD    = 0b100;
         constexpr static int CLUSTER_EXPAND_FLAG_DONT_EXPAND = 0b1000;
+
+        struct ReplayAnalysisResult {
+            std::vector<gid_t> replayGids;
+            size_t totalCount = 0;
+            size_t totalQueryCount = 0;
+            size_t replayQueryCount = 0;
+        };
+
+        ReplayAnalysisResult analyzeReplayPlan(
+            StateCluster &rowCluster,
+            StateRelationshipResolver &relationshipResolver,
+            CachedRelationshipResolver &cachedResolver,
+            StateChangeReplayPlan *replayPlan,
+            const std::function<bool(gid_t, size_t)> &isRollbackTarget,
+            const std::function<std::optional<std::string>(gid_t)> &userQueryPath,
+            const std::function<bool(gid_t)> &shouldRevalidateTarget);
         
         void replayThreadMain(int workerId,
                               RowGraph &rowGraph,

@@ -177,11 +177,13 @@ The agent should implement the following state machine:
 - Protobuf-based `.ult*` serialization is a breaking change; legacy cereal logs are not readable, and the cereal submodule/serialization sources have been removed.
 - `statelogd`'s `.ultchkpoint` serialization is commented out, so `-r` restore is limited.
 - `db_state_change` fixes `stateLogPath` to `.` (FIXME), and `BINLOG_PATH` is stored only in the plan and unused in the current path.
-- `db_state_change`'s `--gid-range` (`-s/-e`) and `-S` skip GID are parsed but not used in the v2 `StateChanger` path (currently no-op).
+- `db_state_change`'s `--gid-range` and `--skip-gids` now filter prepare/auto-rollback analysis (replay plan selection); make_cluster still scans all GIDs.
+- `auto-rollback` (StateChanger::bench_prepareRollback) is benchmark-only and now runs the same column-taint + row-wise analysis as prepare; it selects rollback targets by ratio over in-scope GIDs (range/skip applied) and reports accurate replay counts without creating an intermediate DB.
 - `statelogd` parses JSON `keyColumns` as groups, then flattens them for RW set computation to reflect `+` composite keys. It uses the same group parsing as `db_state_change`.
 - In make_cluster, using column alias (`-a`) switches to sequential processing.
 - `HashWatcher` exists only as a design and is not wired into the execution path.
 - Esperanza bench scripts pass rollback GID lists directly into the action and use `full-replay`, and they reflect `+` composite key groups.
+- Esperanza's BenchBase table diff uses `ROW(...) NOT IN (...)` over a manually listed column set, so it can miss mismatches when NULLs are present, when duplicate rows are possible, or when tables/columns are omitted from `DB_TABLE_DIFF_OPTIONS`.
 - `MySQLBackupLoader` checks mysql client paths in `MYSQL_BIN_PATH`/`MYSQL_BIN`/`MYSQL_PATH` first; if a directory is given, it appends `/mysql`; otherwise it uses `/usr/bin/mysql`.
 - When deserializing `StateData`, string memory must follow the `malloc/free` convention (`new/free` mixing can crash).
 - `ProcMatcher::trace()` interprets procedure parameters, `DECLARE` local variables, and `@var` as symbols. `SELECT ... INTO` defaults to UNKNOWN, but if a KNOWN value already exists (hints/initial vars), it is kept. Functions/complex expressions become UNKNOWN; if such a value is written to a key column, it remains a wildcard.
