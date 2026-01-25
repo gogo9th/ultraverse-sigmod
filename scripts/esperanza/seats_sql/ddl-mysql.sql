@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS __ULTRAVERSE_PROCEDURE_HINT (
 --
 CREATE TABLE config_profile (
     cfp_scale_factor        float                               NOT NULL,
-    cfp_aiport_max_customer text                                NOT NULL,
+    cfp_aiport_max_customer longtext                            NOT NULL,
     cfp_flight_start        timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
     cfp_flight_upcoming     timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
     cfp_flight_past_days    int                                 NOT NULL,
@@ -39,7 +39,7 @@ CREATE TABLE config_profile (
     cfp_flight_offset       int,
     cfp_reservation_offset  int,
     cfp_num_reservations    bigint                              NOT NULL,
-    cfp_code_ids_xrefs      text                                NOT NULL
+    cfp_code_ids_xrefs      longtext                            NOT NULL
 )  ;
 
 --

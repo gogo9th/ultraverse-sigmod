@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import random
+
+from .constants import START_TIME_SLOTS
+
 
 def execute_procedure(conn, proc_call: str, params: tuple) -> None:
     cursor = conn.cursor()
@@ -90,10 +94,33 @@ def insert_call_forwarding(
     end_time: int,
     numberx: str,
 ) -> None:
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT s_id FROM subscriber WHERE sub_nbr = %s", (sub_nbr,))
+        row = cursor.fetchone()
+        if not row:
+            return
+        s_id = row[0]
+
+        cursor.execute(
+            "SELECT start_time FROM call_forwarding WHERE s_id = %s AND sf_type = %s",
+            (s_id, sf_type),
+        )
+        used_times = {r[0] for r in cursor.fetchall()}
+        available_times = [t for t in START_TIME_SLOTS if t not in used_times]
+        if not available_times:
+            return
+
+        chosen_start = start_time if start_time in available_times else random.choice(available_times)
+        duration = max(1, end_time - start_time)
+        chosen_end = chosen_start + duration
+    finally:
+        cursor.close()
+
     execute_procedure(
         conn,
         "CALL InsertCallForwarding(%s, %s, %s, %s, %s)",
-        (sub_nbr, sf_type, start_time, end_time, numberx),
+        (sub_nbr, sf_type, chosen_start, chosen_end, numberx),
     )
 
 

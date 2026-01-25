@@ -428,9 +428,7 @@ class SeatsDataGenerator:
         sql = self._make_insert_sql("config_profile", columns)
         scale_factor = self.num_customers / float(DEFAULT_NUM_CUSTOMERS)
         airport_max_customer = {
-            str(airport_id): count
-            for airport_id, count in enumerate(self._airport_customer_counts)
-            if count > 0
+            str(airport_id): count for airport_id, count in enumerate(self._airport_customer_counts)
         }
         code_id_xrefs = {
             "co_id": self._country_code_to_id,

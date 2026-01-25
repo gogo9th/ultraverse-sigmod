@@ -188,7 +188,16 @@ if __name__ == "__main__":
     with session.mysqld.start():
         time.sleep(10)
 
+        logger.info("creating cluster...")
         session.run_db_state_change("make_cluster")
         perform_state_change(session, [0], do_extra_replay_st=True, do_table_diff=True)
+
+        rollback_gids = decide_rollback_gids(session, 0.01)
+        perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=True)
+
+        rollback_gids = decide_rollback_gids(session, 0.1)
+        perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=True)
+
+        perform_full_replay(session)
 
         logger.info("stopping mysqld...")
