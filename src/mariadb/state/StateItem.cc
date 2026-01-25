@@ -293,8 +293,14 @@ void StateData::Copy(const StateData &c)
   type = c.type;
   if (type == en_column_data_string || type == en_column_data_decimal)
   {
-    d.str = strdup(c.d.str);
     str_len = c.str_len;
+    if (c.d.str != nullptr && str_len > 0) {
+      d.str = static_cast<char *>(malloc(str_len + 1));
+      memcpy(d.str, c.d.str, str_len);
+      d.str[str_len] = 0;
+    } else {
+      d.str = nullptr;
+    }
   }
   else
   {
