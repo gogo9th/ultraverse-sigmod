@@ -11,6 +11,7 @@
 #include "DBEvent.hpp"
 
 #include "mariadb/state/StateItem.h"
+#include "utils/log.hpp"
 
 
 namespace ultraverse::mariadb {
@@ -426,6 +427,9 @@ namespace ultraverse::mariadb {
             }
         };
 
+        const size_t dataSize = static_cast<size_t>(_dataSize);
+        const size_t basePosSize = static_cast<size_t>(basePos);
+
         for (int i = 0; i < _columns; i++) {
             if (!isColumnUsed(i)) {
                 continue;
@@ -435,8 +439,14 @@ namespace ultraverse::mariadb {
             auto fullName = tableMapEvent.table() + "." + columnName;
             auto mysqlType = tableMapEvent.mysqlTypeOf(i);
             auto mysqlMeta = tableMapEvent.mysqlMetadataOf(i);
+            auto columnSize = tableMapEvent.sizeOf(i);
 
-            auto offset = basePos + nullFieldsSize + rowSize;
+            auto offset = static_cast<size_t>(basePos + nullFieldsSize + rowSize);
+            if (offset >= dataSize) {
+                warning("RowEvent: row offset out of range (offset=%zu, size=%zu)", offset, dataSize);
+                return std::make_pair(sstream.str(), static_cast<int>(dataSize - basePosSize));
+            }
+            size_t remaining = dataSize - offset;
             const uchar *raw = reinterpret_cast<const uchar *>(_rowData.get() + offset);
 
             if (!first) {
@@ -452,7 +462,8 @@ namespace ultraverse::mariadb {
             usedIndex++;
 
             uint32_t fieldLen = calc_field_size(static_cast<unsigned char>(mysqlType), raw, mysqlMeta);
-            if (fieldLen == UINT_MAX) {
+            bool fieldLenUnknown = (fieldLen == UINT_MAX);
+            if (fieldLenUnknown) {
                 fieldLen = 0;
             }
 
@@ -584,12 +595,16 @@ namespace ultraverse::mariadb {
                 size_t prefixLen = 0;
                 const uchar *dataPtr = raw;
                 bool treatAsInteger = false;
+                bool hasLengthPrefix = false;
                 switch (mysqlType) {
                     case MYSQL_TYPE_VARCHAR:
                     case MYSQL_TYPE_VAR_STRING:
-                        prefixLen = (mysqlMeta > 255) ? 2 : 1;
-                        dataLen = readLengthLE(raw, prefixLen);
-                        dataPtr = raw + prefixLen;
+                        if (mysqlMeta == 0 && columnSize < 0) {
+                            prefixLen = static_cast<size_t>(-columnSize);
+                        } else {
+                            prefixLen = (mysqlMeta > 255) ? 2 : 1;
+                        }
+                        hasLengthPrefix = true;
                         break;
                     case MYSQL_TYPE_STRING: {
                         uint8_t realType = static_cast<uint8_t>(mysqlMeta >> 8);
@@ -599,9 +614,12 @@ namespace ultraverse::mariadb {
                             dataLen = packLen;
                             dataPtr = raw;
                         } else {
-                            prefixLen = (max_display_length_for_field(MYSQL_TYPE_STRING, mysqlMeta) > 255) ? 2 : 1;
-                            dataLen = readLengthLE(raw, prefixLen);
-                            dataPtr = raw + prefixLen;
+                            if (mysqlMeta == 0 && columnSize < 0) {
+                                prefixLen = static_cast<size_t>(-columnSize);
+                            } else {
+                                prefixLen = (max_display_length_for_field(MYSQL_TYPE_STRING, mysqlMeta) > 255) ? 2 : 1;
+                            }
+                            hasLengthPrefix = true;
                         }
                     }
                         break;
@@ -611,9 +629,12 @@ namespace ultraverse::mariadb {
                     case MYSQL_TYPE_LONG_BLOB:
                     case MYSQL_TYPE_GEOMETRY:
                     case MYSQL_TYPE_JSON:
-                        prefixLen = mysqlMeta;
-                        dataLen = readLengthLE(raw, prefixLen);
-                        dataPtr = raw + prefixLen;
+                        if (mysqlMeta == 0 && columnSize < 0) {
+                            prefixLen = static_cast<size_t>(-columnSize);
+                        } else {
+                            prefixLen = mysqlMeta;
+                        }
+                        hasLengthPrefix = true;
                         break;
                     case MYSQL_TYPE_BIT:
                         dataLen = fieldLen;
@@ -635,7 +656,30 @@ namespace ultraverse::mariadb {
                         break;
                 }
 
-                if (fieldLen >= prefixLen && dataLen > (fieldLen - prefixLen)) {
+                if (hasLengthPrefix) {
+                    if (prefixLen > remaining) {
+                        warning("RowEvent: length prefix exceeds remaining bytes (prefix=%zu, remaining=%zu)",
+                                prefixLen, remaining);
+                        return std::make_pair(sstream.str(), static_cast<int>(dataSize - basePosSize));
+                    }
+                    dataLen = readLengthLE(raw, prefixLen);
+                    dataPtr = raw + prefixLen;
+                    size_t maxData = remaining - prefixLen;
+                    if (dataLen > maxData) {
+                        warning("RowEvent: data length exceeds remaining bytes (len=%u, remaining=%zu)",
+                                dataLen, remaining);
+                        dataLen = static_cast<uint32_t>(maxData);
+                    }
+                    fieldLen = static_cast<uint32_t>(prefixLen) + dataLen;
+                } else if (fieldLen == 0 && fieldLenUnknown && mysqlType != MYSQL_TYPE_NULL) {
+                    warning("RowEvent: unknown field length for type %u", static_cast<unsigned int>(mysqlType));
+                    return std::make_pair(sstream.str(), static_cast<int>(dataSize - basePosSize));
+                } else if (fieldLen > remaining) {
+                    warning("RowEvent: field length exceeds remaining bytes (len=%u, remaining=%zu)",
+                            fieldLen, remaining);
+                    fieldLen = static_cast<uint32_t>(remaining);
+                    dataLen = fieldLen;
+                } else if (fieldLen >= prefixLen && dataLen > (fieldLen - prefixLen)) {
                     dataLen = fieldLen - static_cast<uint32_t>(prefixLen);
                 }
 
