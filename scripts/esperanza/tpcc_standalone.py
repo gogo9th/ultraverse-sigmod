@@ -168,7 +168,7 @@ if __name__ == "__main__":
     os.putenv("DB_USER", "admin")
     os.putenv("DB_PASS", "password")
 
-    session = TPCCStandaloneSession("tpcc_standalone", "1m", scale_factor=10, query_count=920000)
+    session = TPCCStandaloneSession("tpcc_standalone", "1m", scale_factor=1, query_count=92000)
     logger = session.logger
 
     session.prepare()

@@ -170,19 +170,20 @@ SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;
 -- Utility transactions (procedures)
 DROP FUNCTION IF EXISTS RandomNumber;
 DELIMITER //
-CREATE FUNCTION RandomNumber(minval INT, maxval INT) RETURNS FLOAT
+CREATE FUNCTION RandomNumber(seed BIGINT, minval INT, maxval INT) RETURNS FLOAT
 BEGIN
+  SET seed := MOD(seed * 1103515245 + 12345, 2147483648);
+  SET @tpcc_seed := seed;
 
-  RETURN FLOOR(RAND()*(maxval - minval + 1)) + minval;
+  RETURN FLOOR((seed / 2147483648) * (maxval - minval + 1)) + minval;
 END//
 DELIMITER ;
 
 DROP FUNCTION IF EXISTS NonUniformRandom;
 DELIMITER //
-CREATE FUNCTION NonUniformRandom(a INT, c INT, minval INT, maxval INT) RETURNS FLOAT
+CREATE FUNCTION NonUniformRandom(seed BIGINT, a INT, c INT, minval INT, maxval INT) RETURNS FLOAT
 BEGIN
-
-  RETURN (((randomNumber(0, a) | randomNumber(minval, maxval)) + c) MOD (maxval - minval + 1)) + minval;
+  RETURN (((RandomNumber(seed, 0, a) | RandomNumber(@tpcc_seed, minval, maxval)) + c) MOD (maxval - minval + 1)) + minval;
 END//
 DELIMITER ;
 
@@ -208,7 +209,7 @@ NewOrder_Label:BEGIN
   DECLARE var_d_next_o_id INT DEFAULT -1;
   DECLARE var_i_price DECIMAL(5, 2);
 
-
+  SET @tpcc_seed := UNIX_TIMESTAMP(CURRENT_TIMESTAMP());
 
   -- INSERT INTO __ULTRAVERSE_PROCEDURE_HINT (procname) VALUES ('NewOrder');
 
@@ -239,8 +240,8 @@ NewOrder_Label:BEGIN
   INSERT INTO new_order (NO_O_ID, NO_D_ID, NO_W_ID) VALUES (var_d_next_o_id, var_d_id, var_w_id);
 
   Order_Loop:WHILE (var_loop_cnt < var_o_ol_cnt) DO
-    SET var_i_id = (NonUniformRandom(8191, 7911, 1, 100000));
-    SET var_ol_quantity = RandomNumber(1, 10);
+    SET var_i_id = (NonUniformRandom(@tpcc_seed, 8191, 7911, 1, 100000));
+    SET var_ol_quantity = RandomNumber(@tpcc_seed, 1, 10);
 
     SELECT  I_PRICE INTO var_i_price  FROM item WHERE I_ID = var_i_id;
     IF (var_ol_supply_w_id = var_w_id) THEN
@@ -372,11 +373,11 @@ Delivery_Label:BEGIN
   DECLARE var_o_carrier_id INT;
   DECLARE var_ol_total DECIMAL(8, 2);  
 
-
+  SET @tpcc_seed := UNIX_TIMESTAMP(CURRENT_TIMESTAMP());
 
   -- INSERT INTO __ULTRAVERSE_PROCEDURE_HINT (procname) VALUES ('Delivery');
 
-  SET var_o_carrier_id := RandomNumber(1, 10);
+  SET var_o_carrier_id := RandomNumber(@tpcc_seed, 1, 10);
   
   Delivery_Loop:WHILE (var_d_id < var_terminalDistrictUpperID) DO
     SET var_no_o_id := -1;
