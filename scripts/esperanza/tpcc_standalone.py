@@ -6,19 +6,14 @@ from esperanza.utils.download_mysql import download_mysql, get_mysql_bin_path
 from esperanza.utils.state_change_report import read_state_change_report
 
 KEY_COLUMNS = [
-    "warehouse.w_id",
-    "item.i_id",
-    "district.d_w_id+district.d_id",
-    "customer.c_w_id+customer.c_d_id+customer.c_id",
-    "stock.s_w_id+stock.s_i_id",
-    "oorder.o_w_id+oorder.o_d_id+oorder.o_id",
-    "oorder.o_w_id+oorder.o_d_id+oorder.o_c_id",
-    "new_order.no_w_id+new_order.no_d_id+new_order.no_o_id",
-    "order_line.ol_w_id+order_line.ol_d_id+order_line.ol_o_id+order_line.ol_number",
-    "order_line.ol_w_id+order_line.ol_d_id+order_line.ol_o_id",
-    "order_line.ol_supply_w_id+order_line.ol_i_id",
-    "history.h_c_w_id+history.h_c_d_id+history.h_c_id",
-    "history.h_w_id+history.h_d_id",
+    'warehouse.w_id',
+    'customer.c_w_id',
+    'stocks.s_w_id',
+    'order_line.ol_w_id',
+    'district.d_w_id',
+    'order.o_w_id',
+    'history.h_c_w_id',
+    'item.i_id'
 ]
 BACKUP_FILE = "dbdump.sql"
 COLUMN_ALIASES: dict[str, list[str]] = {}
