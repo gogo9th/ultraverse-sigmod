@@ -13,7 +13,7 @@ DECLARE __ultraverse_callinfo VARCHAR(512) DEFAULT JSON_ARRAY(
 
 DECLARE var_c_iattr00 BIGINT;
 DECLARE var_r_id BIGINT;
-DECLARE var_r_price FLOAT;
+DECLARE var_r_price DECIMAL(7,3);
 
 INSERT INTO __ULTRAVERSE_PROCEDURE_HINT (callinfo) VALUES (__ultraverse_callinfo);
 

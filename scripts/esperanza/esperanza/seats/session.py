@@ -172,6 +172,8 @@ class SeatsStandaloneSession:
         cwd = os.getcwd()
         os.chdir(self.session_path)
 
+        self._ensure_procdefs()
+
         config = self._generate_config(
             key_columns=key_columns,
             development_flags=development_flags,
@@ -302,10 +304,36 @@ class SeatsStandaloneSession:
         if retval != 0:
             raise Exception("failed to run db_state_change: process exited with non-zero code " + str(retval))
 
-    def tablediff(self, table1: str, table2: str, columns: list[str]) -> None:
+    def tablediff(
+        self,
+        table1: str,
+        table2: str,
+        columns: list[str],
+        float_columns: list[str] | None = None,
+        epsilon: float | None = None,
+    ) -> None:
         self.logger.info(f"comparing tables '{table1}' and '{table2}'...")
 
-        join_pred = " AND ".join([f"t1.`{c}` <=> t2.`{c}`" for c in columns])
+        float_columns_set = set(float_columns or [])
+        if epsilon is None:
+            epsilon = self._env_float("ESPERANZA_TABLEDIFF_EPS", default=1e-6)
+        if epsilon < 0:
+            epsilon = 0.0
+        eps_literal = f"{epsilon:.17g}"
+
+        if float_columns_set and epsilon > 0:
+            def _join_predicate(col: str) -> str:
+                if col in float_columns_set:
+                    return (
+                        f"((t1.`{col}` IS NULL AND t2.`{col}` IS NULL) OR "
+                        f"(t1.`{col}` IS NOT NULL AND t2.`{col}` IS NOT NULL "
+                        f"AND ABS(t1.`{col}` - t2.`{col}`) <= {eps_literal}))"
+                    )
+                return f"t1.`{col}` <=> t2.`{col}`"
+
+            join_pred = " AND ".join([_join_predicate(c) for c in columns])
+        else:
+            join_pred = " AND ".join([f"t1.`{c}` <=> t2.`{c}`" for c in columns])
         show_details = self._env_truthy("ESPERANZA_TABLEDIFF_DETAILS", default=False)
         detail_limit = max(0, self._env_int("ESPERANZA_TABLEDIFF_LIMIT", 20))
 
@@ -412,6 +440,7 @@ class SeatsStandaloneSession:
             "user": os.getenv("DB_USER", "admin"),
             "password": os.getenv("DB_PASS", "password"),
             "autocommit": False,
+            "consume_results": True,
         }
         if database is not None:
             kwargs["database"] = database
@@ -441,6 +470,16 @@ class SeatsStandaloneSession:
         except ValueError:
             return default
 
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        value = os.environ.get(name)
+        if value is None or value.strip() == "":
+            return default
+        try:
+            return float(value)
+        except ValueError:
+            return default
+
     def _move_binlogs(self) -> None:
         binlog_dir = Path(self.mysqld.data_path)
         if not binlog_dir.exists():
@@ -449,3 +488,22 @@ class SeatsStandaloneSession:
         for binlog_path in binlog_dir.glob("server-binlog.*"):
             dest = Path(self.session_path) / binlog_path.name
             shutil.move(str(binlog_path), str(dest))
+
+    def _ensure_procdefs(self) -> None:
+        src_dir = Path(__file__).parent.parent.parent / "procdefs" / "seats"
+        if not src_dir.exists():
+            self.logger.warning(f"procdefs not found: {src_dir}")
+            return
+
+        dst_dir = Path(self.session_path) / "procdef"
+        dst_dir.mkdir(parents=True, exist_ok=True)
+
+        copied = 0
+        for proc_path in src_dir.glob("*.sql"):
+            shutil.copy2(proc_path, dst_dir / proc_path.name)
+            copied += 1
+
+        if copied == 0:
+            self.logger.warning(f"no procdef files found in {src_dir}")
+        else:
+            self.logger.info(f"copied {copied} procdef files to {dst_dir}")

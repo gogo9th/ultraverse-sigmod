@@ -11,7 +11,7 @@ Payment_Label:BEGIN
   DECLARE var_d_name VARCHAR(10) DEFAULT NULL;
   DECLARE var_x INT;
   DECLARE var_c_balance DECIMAL(12,2);
-  DECLARE var_c_ytd_payment FLOAT;
+  DECLARE var_c_ytd_payment DECIMAL(12,4);
   DECLARE var_c_payment_cnt INT DEFAULT -1;
   DECLARE var_c_data VARCHAR(500);
   DECLARE var_c_credit VARCHAR(2);

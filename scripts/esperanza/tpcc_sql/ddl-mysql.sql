@@ -93,7 +93,7 @@ CREATE TABLE customer (
     c_first        varchar(16)    NOT NULL,
     c_credit_lim   decimal(12, 2) NOT NULL,
     c_balance      decimal(12, 2) NOT NULL,
-    c_ytd_payment  float          NOT NULL,
+    c_ytd_payment  decimal(12, 4) NOT NULL,
     c_payment_cnt  int            NOT NULL,
     c_delivery_cnt int            NOT NULL,
     c_street_1     varchar(20)    NOT NULL,
@@ -289,7 +289,7 @@ Payment_Label:BEGIN
   DECLARE var_d_name VARCHAR(10) DEFAULT NULL;
   DECLARE var_x INT;
   DECLARE var_c_balance DECIMAL(12,2);     
-  DECLARE var_c_ytd_payment FLOAT;
+  DECLARE var_c_ytd_payment DECIMAL(12,4);
   DECLARE var_c_payment_cnt INT DEFAULT -1;
   DECLARE var_c_data VARCHAR(500);
   DECLARE var_c_credit VARCHAR(2);

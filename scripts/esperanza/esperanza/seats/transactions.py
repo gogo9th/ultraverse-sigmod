@@ -1,38 +1,17 @@
 from __future__ import annotations
 
-from typing import Callable, TypeVar
-
 from .constants import FLIGHTS_NUM_SEATS
 
-T = TypeVar("T")
 
-
-def execute_transaction(cursor, fn: Callable[[], T]) -> T:
-    cursor.execute("START TRANSACTION")
-    try:
-        result = fn()
-        cursor.execute("COMMIT")
-        return result
-    except Exception as e:
-        cursor.execute("ROLLBACK")
-        raise e
-
-
-def _drain_results(cursor) -> None:
-    # For mysql.connector, use stored_results() for stored procedures
+def _drain_stored_results(cursor) -> None:
+    """Drain all result sets from stored procedure calls."""
     stored_results = getattr(cursor, "stored_results", None)
     if callable(stored_results):
         for result in stored_results():
-            result.fetchall()
-        return
-
-    # Fallback for other drivers
-    if getattr(cursor, "with_rows", False):
-        cursor.fetchall()
-    nextset = getattr(cursor, "nextset", None)
-    while callable(nextset) and nextset():
-        if getattr(cursor, "with_rows", False):
-            cursor.fetchall()
+            try:
+                result.fetchall()
+            except Exception:
+                pass
 
 
 def find_flights(
@@ -44,7 +23,7 @@ def find_flights(
     end_date,
     distance: float | None = None,
 ) -> list[tuple]:
-    def _run() -> list[tuple]:
+    try:
         if distance is None:
             cursor.execute(
                 "SELECT f_id, f_al_id, f_seats_left, f_depart_time, f_arrive_time, f_base_price "
@@ -87,21 +66,26 @@ def find_flights(
                     end_date,
                 ),
             )
-        return cursor.fetchall()
-
-    return execute_transaction(cursor, _run)
+        result = cursor.fetchall()
+        conn.commit()
+        return result
+    except Exception as e:
+        conn.rollback()
+        raise e
 
 
 def find_open_seats(conn, cursor, flight_id: str) -> list[int]:
-    def _run() -> list[int]:
+    try:
         cursor.execute(
             "SELECT r_seat FROM reservation WHERE r_f_id = %s",
             (flight_id,),
         )
         reserved = {row[0] for row in cursor.fetchall()}
+        conn.commit()
         return [seat for seat in range(FLIGHTS_NUM_SEATS) if seat not in reserved]
-
-    return execute_transaction(cursor, _run)
+    except Exception as e:
+        conn.rollback()
+        raise e
 
 
 def new_reservation(
@@ -122,29 +106,16 @@ def new_reservation(
     attr7: int,
     attr8: int,
 ) -> None:
-    def _run() -> None:
-        cursor.execute(
-            "CALL NewReservation(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (
-                r_id,
-                c_id,
-                f_id,
-                seatnum,
-                price,
-                attr0,
-                attr1,
-                attr2,
-                attr3,
-                attr4,
-                attr5,
-                attr6,
-                attr7,
-                attr8,
-            ),
+    try:
+        cursor.callproc(
+            "NewReservation",
+            (r_id, c_id, f_id, seatnum, price, attr0, attr1, attr2, attr3, attr4, attr5, attr6, attr7, attr8),
         )
-        _drain_results(cursor)
-
-    execute_transaction(cursor, _run)
+        _drain_stored_results(cursor)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
 
 
 def update_reservation(
@@ -157,14 +128,16 @@ def update_reservation(
     attr_idx: int,
     attr_val: int,
 ) -> None:
-    def _run() -> None:
-        cursor.execute(
-            "CALL UpdateReservation(%s, %s, %s, %s, %s, %s)",
+    try:
+        cursor.callproc(
+            "UpdateReservation",
             (r_id, f_id, c_id, seatnum, attr_idx, attr_val),
         )
-        _drain_results(cursor)
-
-    execute_transaction(cursor, _run)
+        _drain_stored_results(cursor)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
 
 
 def update_customer(
@@ -175,14 +148,16 @@ def update_customer(
     attr0: int,
     attr1: int,
 ) -> None:
-    def _run() -> None:
-        cursor.execute(
-            "CALL UpdateCustomer(%s, %s, %s, %s)",
+    try:
+        cursor.callproc(
+            "UpdateCustomer",
             (c_id, c_id_str, attr0, attr1),
         )
-        _drain_results(cursor)
-
-    execute_transaction(cursor, _run)
+        _drain_stored_results(cursor)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
 
 
 def delete_reservation(
@@ -194,11 +169,13 @@ def delete_reservation(
     ff_c_id_str: str | None,
     ff_al_id: int | None,
 ) -> None:
-    def _run() -> None:
-        cursor.execute(
-            "CALL DeleteReservation(%s, %s, %s, %s, %s)",
+    try:
+        cursor.callproc(
+            "DeleteReservation",
             (f_id, c_id, c_id_str, ff_c_id_str, ff_al_id),
         )
-        _drain_results(cursor)
-
-    execute_transaction(cursor, _run)
+        _drain_stored_results(cursor)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e

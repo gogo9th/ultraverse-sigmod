@@ -73,9 +73,9 @@ CREATE TABLE airport (
     ap_city        varchar(64)  NOT NULL,
     ap_postal_code varchar(12),
     ap_co_id       bigint       NOT NULL,
-    ap_longitude   float,
-    ap_latitude    float,
-    ap_gmt_offset  float,
+    ap_longitude   decimal(10,7),
+    ap_latitude    decimal(10,7),
+    ap_gmt_offset  decimal(6,2),
     ap_wac         bigint,
     ap_iattr00     bigint,
     ap_iattr01     bigint,
@@ -103,7 +103,7 @@ CREATE TABLE airport (
 CREATE TABLE airport_distance (
     d_ap_id0   bigint NOT NULL,
     d_ap_id1   bigint NOT NULL,
-    d_distance float  NOT NULL,
+    d_distance decimal(9,6)  NOT NULL,
     PRIMARY KEY (d_ap_id0, d_ap_id1),
     FOREIGN KEY (d_ap_id0) REFERENCES airport (ap_id),
     FOREIGN KEY (d_ap_id1) REFERENCES airport (ap_id)
@@ -146,7 +146,7 @@ CREATE TABLE customer2 (
     c_id         varchar(128)             NOT NULL,
     c_id_str     varchar(64) UNIQUE NOT NULL,
     c_base_ap_id bigint,
-    c_balance    float              NOT NULL,
+    c_balance    decimal(12,7)        NOT NULL,
     c_sattr00    varchar(32),
     c_sattr01    varchar(8),
     c_sattr02    varchar(8),
@@ -235,7 +235,7 @@ CREATE TABLE flight (
     f_arrive_ap_id bigint                              NOT NULL,
     f_arrive_time  timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL,
     f_status       bigint                              NOT NULL,
-    f_base_price   float                               NOT NULL,
+    f_base_price   decimal(7,3)                        NOT NULL,
     f_seats_total  bigint                              NOT NULL,
     f_seats_left   bigint                              NOT NULL,
     f_iattr00      bigint,
@@ -283,7 +283,7 @@ CREATE TABLE reservation (
     r_c_id    varchar(128) NOT NULL,
     r_f_id    varchar(128) NOT NULL,
     r_seat    bigint NOT NULL,
-    r_price   float  NOT NULL,
+    r_price   decimal(7,3)  NOT NULL,
     r_iattr00 bigint,
     r_iattr01 bigint,
     r_iattr02 bigint,
@@ -351,7 +351,7 @@ CREATE PROCEDURE NewReservation(IN var_r_id BIGINT,
                                 IN var_c_id VARCHAR(128), 
                                 IN var_f_id VARCHAR(128), 
                                 IN var_seatnum BIGINT,
-                                IN var_price FLOAT,
+                                IN var_price DECIMAL(7,3),
                                 IN var_attr0 BIGINT,
                                 IN var_attr1 BIGINT,                                
                                 IN var_attr2 BIGINT,                                
@@ -488,7 +488,7 @@ DeleteReservation_Label:BEGIN
 
 DECLARE var_c_iattr00 BIGINT;
 DECLARE var_r_id BIGINT;
-DECLARE var_r_price FLOAT;
+DECLARE var_r_price DECIMAL(7,3);
 
 IF (var_c_id_str IS NOT NULL AND LENGTH(var_c_id_str) > 0) THEN
   SELECT C_ID INTO var_c_id FROM customer2 WHERE C_ID_STR = var_c_id_str;

@@ -377,6 +377,7 @@ class TATPStandaloneSession:
             "user": os.getenv("DB_USER", "admin"),
             "password": os.getenv("DB_PASS", "password"),
             "autocommit": False,
+            "consume_results": True,
         }
         if database is not None:
             kwargs["database"] = database
