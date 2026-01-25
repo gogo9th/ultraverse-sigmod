@@ -810,6 +810,7 @@ StateRange::~StateRange()
 
 void StateRange::SetBegin(const StateData &_begin, bool _add_equal)
 {
+  ensureUniqueRange();
   range->emplace_back(ST_RANGE{_begin, StateData()});
   if (_add_equal)
     range->back().begin.SetEqual();
@@ -819,6 +820,7 @@ void StateRange::SetBegin(const StateData &_begin, bool _add_equal)
 
 void StateRange::SetEnd(const StateData &_end, bool _add_equal)
 {
+  ensureUniqueRange();
   range->emplace_back(ST_RANGE{StateData(), _end});
   if (_add_equal)
     range->back().end.SetEqual();
@@ -828,6 +830,7 @@ void StateRange::SetEnd(const StateData &_end, bool _add_equal)
 
 void StateRange::SetBetween(const StateData &_begin, const StateData &_end)
 {
+  ensureUniqueRange();
   if (_begin < _end)
     range->emplace_back(ST_RANGE{_begin, _end});
   else
@@ -841,6 +844,7 @@ void StateRange::SetBetween(const StateData &_begin, const StateData &_end)
 
 void StateRange::SetValue(const StateData &_value, bool _add_equal)
 {
+  ensureUniqueRange();
   if (_add_equal)
   {
     range->emplace_back(ST_RANGE{_value, _value});
@@ -1178,6 +1182,8 @@ void StateRange::OR_FAST(const StateRange &b, bool ignoreIntersect) {
         *this = b;
         return;
     }
+
+    ensureUniqueRange();
     
     auto &range1 = *range;
     const auto &range2 = *b.range;
@@ -1389,6 +1395,18 @@ void StateRange::arrangeSelf() {
     range = OR_ARRANGE2(range);
     
     calculateHash();
+}
+
+void StateRange::ensureUniqueRange() {
+  if (!range) {
+    range = std::make_shared<std::vector<ST_RANGE>>();
+    range->reserve(2);
+    return;
+  }
+
+  if (!range.unique()) {
+    range = std::make_shared<std::vector<ST_RANGE>>(*range);
+  }
 }
 
 void StateRange::calculateHash() {

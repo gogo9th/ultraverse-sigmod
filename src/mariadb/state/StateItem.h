@@ -361,6 +361,8 @@ private:
   static int Min(const StateData &a, const StateData &b);
   static int Max(const StateData &a, const StateData &b);
 
+  void ensureUniqueRange();
+
   std::shared_ptr<std::vector<ST_RANGE>> range;
   bool _wildcard;
   
