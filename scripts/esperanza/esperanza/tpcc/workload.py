@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import sys
 
 from .constants import (
     DEFAULT_QUERY_COUNT,
@@ -10,6 +11,11 @@ from .constants import (
     PAYMENT_WEIGHT,
 )
 from .transactions import delivery, new_order, payment
+
+try:
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover - optional dependency for progress UI
+    tqdm = None
 
 
 class TPCCWorkloadExecutor:
@@ -35,26 +41,45 @@ class TPCCWorkloadExecutor:
 
     def run(self) -> dict:
         stats = {"new_order": 0, "payment": 0, "delivery": 0, "errors": 0}
+        progress = self._new_progress(self.query_count, "workload")
 
-        for i in range(self.query_count):
-            w_id = random.randint(1, self.scale_factor)
-            tx_type = random.choice(self.tx_choices)
+        try:
+            for i in range(self.query_count):
+                w_id = random.randint(1, self.scale_factor)
+                tx_type = random.choice(self.tx_choices)
 
-            try:
-                if tx_type == "new_order":
-                    new_order(self.conn, w_id, self.scale_factor)
-                    stats["new_order"] += 1
-                elif tx_type == "payment":
-                    payment(self.conn, w_id, self.scale_factor)
-                    stats["payment"] += 1
-                elif tx_type == "delivery":
-                    delivery(self.conn, w_id)
-                    stats["delivery"] += 1
-            except Exception as exc:
-                stats["errors"] += 1
-                print(f"TPCC workload error: {tx_type} failed: {exc}")
+                try:
+                    if tx_type == "new_order":
+                        new_order(self.conn, w_id, self.scale_factor)
+                        stats["new_order"] += 1
+                    elif tx_type == "payment":
+                        payment(self.conn, w_id, self.scale_factor)
+                        stats["payment"] += 1
+                    elif tx_type == "delivery":
+                        delivery(self.conn, w_id)
+                        stats["delivery"] += 1
+                except Exception as exc:
+                    stats["errors"] += 1
+                    print(f"TPCC workload error: {tx_type} failed: {exc}")
 
-            if (i + 1) % 10000 == 0:
-                print(f"Progress: {i + 1}/{self.query_count}")
+                if progress is not None:
+                    progress.update(1)
+                elif (i + 1) % 10000 == 0:
+                    print(f"Progress: {i + 1}/{self.query_count}")
+        finally:
+            if progress is not None:
+                progress.close()
 
         return stats
+
+    def _new_progress(self, total: int, desc: str):
+        if tqdm is None or not sys.stderr.isatty():
+            return None
+        return tqdm(
+            total=total,
+            desc=desc,
+            unit="tx",
+            ascii=True,
+            dynamic_ncols=True,
+            mininterval=0.5,
+        )

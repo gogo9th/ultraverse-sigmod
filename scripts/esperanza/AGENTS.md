@@ -50,3 +50,4 @@
 - 벤치마크 스크립트는 `download_mysql()`이 확인한 MySQL 배포판의 `bin` 경로를 `MYSQL_BIN_PATH`에 자동 설정한다.
 - `MySQLDaemon.start()` returns a context manager; use `with session.mysqld.start():` so the daemon always stops on scope exit (including exceptions).
 - `esperanza/tpcc/data_generator.py` shows tqdm progress bars during data load when tqdm is installed (disabled if stderr is not a TTY).
+- `esperanza/tpcc/workload.py` shows a tqdm progress bar for workload execution when tqdm is installed (falls back to periodic prints if stderr is not a TTY).

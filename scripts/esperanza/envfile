@@ -1,5 +1,3 @@
-export MYSQL_BIN_PATH=/Users/cheesekun/works/ultraverse-sigmod/scripts/esperanza/cache/mysql/mysql-8.4.8-macos15-arm64/bin
-export ULTRAVERSE_HOME=/Users/cheesekun/works/ultraverse-sigmod/cmake-build-release/src  # The ultravere/build/src path for https://github.com/team-unstablers/ultraverse
-
+export ULTRAVERSE_HOME=/root/ultraverse-sigmod/build/src  # The ultravere/build/src path for https://github.com/team-unstablers/ultraverse
 export BENCHBASE_HOME=/root/ultraverse-benchbase   # The ultraverse-benchbase path for https://github.com/gogo9th/ultraverse-benchbase
 export BENCHBASE_NODE_HOME=/root/benchbase-nodejs  # The benchbase-nodejs path for https://github.com/gogo9th/benchbase-nodejs
