@@ -8,8 +8,6 @@
 #include <sstream>
 #include <thread>
 
-#include <backward.hpp>
-
 #include "Application.hpp"
 #include "config/UltraverseConfig.hpp"
 #include "db_state_change.hpp"
@@ -17,8 +15,6 @@
 
 using namespace ultraverse::mariadb;
 using namespace ultraverse::state;
-
-backward::SignalHandling sh;
 
 namespace ultraverse {
     using namespace ultraverse::state::v2;

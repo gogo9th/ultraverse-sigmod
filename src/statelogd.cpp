@@ -5,12 +5,9 @@
 #include <cstring>
 #include <iostream>
 #include <fstream>
-#include <memory>
 #include <optional>
 #include <pthread.h>
 #include <signal.h>
-
-#include <backward.hpp>
 
 #include <fmt/ranges.h>
 
@@ -38,7 +35,7 @@
 #include "utils/StringUtil.hpp"
 #include "Application.hpp"
 
-backward::SignalHandling sh;
+
 
 using namespace ultraverse;
 
@@ -72,7 +69,9 @@ class StateLogWriterApp: public ultraverse::Application {
 public:
     StateLogWriterApp():
         Application(),
-        _logger(createLogger("statelogd"))
+        
+        _logger(createLogger("statelogd")),
+        _taskExecutor(1)
     {
     }
     
@@ -123,11 +122,6 @@ public:
         _threadNum = config.statelogd.threadCount > 0
             ? config.statelogd.threadCount
             : std::thread::hardware_concurrency() + 1;
-        _taskExecutor = std::make_unique<TaskExecutor>(_threadNum);
-        _maxPendingQueryTasks = std::max<size_t>(
-            kMinPendingQueryTasks,
-            static_cast<size_t>(_threadNum) * kPendingQueryTasksPerThread
-        );
         _printTransactions = std::find(config.statelogd.developmentFlags.begin(),
             config.statelogd.developmentFlags.end(), "print-gids") != config.statelogd.developmentFlags.end();
         _printQueries = std::find(config.statelogd.developmentFlags.begin(),
@@ -155,7 +149,6 @@ public:
             }
         }
         _txnQueueCv.notify_all();
-        _queryQueueCv.notify_all();
     }
 
     void writerMain() {
@@ -279,31 +272,17 @@ public:
                         currentTransaction->statementContext.clear();
                         break;
                     }
-                    std::optional<state::v2::Query::StatementContext> statementContext;
-                    if (!currentTransaction->statementContext.empty()) {
-                        statementContext = currentTransaction->statementContext;
-                        currentTransaction->statementContext.clear();
-                    }
 
-                    if (!reserveQuerySlot()) {
-                        break;
-                    }
-                    auto promise = _taskExecutor->post<std::shared_ptr<state::v2::Query>>(
-                        [this, queryEvent, statementContext = std::move(statementContext)]() mutable {
-                            auto pendingQuery = processQueryEvent(
-                                queryEvent,
-                                statementContext ? &(*statementContext) : nullptr
-                            );
-                            releaseQuerySlot();
-                            return pendingQuery;
-                        });
+                    auto promise = std::make_shared<std::promise<std::shared_ptr<state::v2::Query>>>();
+                    auto pendingQuery = processQueryEvent(queryEvent, &currentTransaction->statementContext);
+                    promise->set_value(pendingQuery);
                     currentTransaction->queries.push(promise);
                 }
                     break;
                 case event_type::TXNID: {
                     currentTransaction->tidEvent = std::dynamic_pointer_cast<mariadb::TransactionIDEvent>(event);
                     gid_t gid = global_gid++;
-                    auto pendingTxn = _taskExecutor->post<std::shared_ptr<state::v2::Transaction>>(
+                    auto pendingTxn = _taskExecutor.post<std::shared_ptr<state::v2::Transaction>>(
                         [this, currentTransaction = std::move(currentTransaction), gid]() {
                             while (!currentTransaction->queries.empty()) {
                                 auto promise = std::move(currentTransaction->queries.front());
@@ -390,42 +369,38 @@ public:
                     }
                     auto tableMapEvent = tableMapIt->second;
 
-                    std::optional<state::v2::Query::StatementContext> statementContext;
-                    if (!currentTransaction->statementContext.empty()) {
-                        statementContext = currentTransaction->statementContext;
-                        if (rowEvent->flags() & 1) {
-                            currentTransaction->statementContext.clear();
-                        }
+                    auto promise = std::make_shared<std::promise<std::shared_ptr<state::v2::Query>>>();
+                    /*
+                    auto promise = _taskExecutor.post<std::shared_ptr<state::v2::Query>>([this, currentTransaction, rowEvent = std::move(rowEvent), pendingRowQueryEvent, tableMapEvent]() {
+                        auto pendingQuery = std::make_shared<state::v2::Query>();
+                        
+                        processRowEvent(
+                            currentTransaction,
+                            rowEvent,
+                            pendingRowQueryEvent,
+                            pendingQuery,
+                            tableMapEvent
+                        );
+                        // processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
+                        
+                        return pendingQuery;
+                    });
+                     */
+                    auto pendingQuery = std::make_shared<state::v2::Query>();
+                    
+                    const bool processed = processRowEvent(
+                        currentTransaction,
+                        rowEvent,
+                        pendingRowQueryEvent,
+                        pendingQuery,
+                        tableMapEvent,
+                        &currentTransaction->statementContext
+                    );
+                    // processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
+                    if (processed) {
+                        promise->set_value(pendingQuery);
+                        currentTransaction->queries.push(promise);
                     }
-
-                    if (!reserveQuerySlot()) {
-                        break;
-                    }
-                    auto promise = _taskExecutor->post<std::shared_ptr<state::v2::Query>>(
-                        [this,
-                         currentTransaction,
-                         rowEvent,
-                         pendingRowQueryEvent,
-                         tableMapEvent,
-                         statementContext = std::move(statementContext)]() mutable {
-                            std::shared_ptr<state::v2::Query> result;
-                            auto pendingQuery = std::make_shared<state::v2::Query>();
-
-                            const bool processed = processRowEvent(
-                                currentTransaction,
-                                rowEvent,
-                                pendingRowQueryEvent,
-                                pendingQuery,
-                                tableMapEvent,
-                                statementContext ? &(*statementContext) : nullptr
-                            );
-                            if (processed) {
-                                result = std::move(pendingQuery);
-                            }
-                            releaseQuerySlot();
-                            return result;
-                        });
-                    currentTransaction->queries.push(promise);
                     if (rowEvent->flags() & 1) {
                         pendingRowQueryEvent = nullptr;
                     }
@@ -625,7 +600,7 @@ public:
     
     std::shared_ptr<state::v2::Query> processQueryEvent(
         std::shared_ptr<mariadb::QueryEvent> event,
-        const state::v2::Query::StatementContext *statementContext
+        state::v2::Query::StatementContext *statementContext
     ) {
         auto pendingQuery = std::make_shared<state::v2::Query>();
         
@@ -635,6 +610,7 @@ public:
 
         if (statementContext != nullptr && !statementContext->empty()) {
             pendingQuery->setStatementContext(*statementContext);
+            statementContext->clear();
         }
 
         if (!event->parse()) {
@@ -752,7 +728,7 @@ public:
                          std::shared_ptr<mariadb::RowQueryEvent> rowQueryEvent,
                          std::shared_ptr<state::v2::Query> pendingQuery,
                          std::shared_ptr<mariadb::TableMapEvent> tableMapEvent,
-                         const state::v2::Query::StatementContext *statementContext) {
+                         state::v2::Query::StatementContext *statementContext) {
         if (event == nullptr || tableMapEvent == nullptr) {
             return false;
         }
@@ -791,6 +767,9 @@ public:
 
         if (statementContext != nullptr && !statementContext->empty()) {
             pendingQuery->setStatementContext(*statementContext);
+            if (event->flags() & 1) {
+                statementContext->clear();
+            }
         }
         
         
@@ -1333,15 +1312,12 @@ private:
     void requestStop() {
         _terminateRequested.store(true, std::memory_order_release);
         _txnQueueCv.notify_all();
-        _queryQueueCv.notify_all();
     }
 
     static constexpr size_t kMaxPendingTransactions = 128;
-    static constexpr size_t kMinPendingQueryTasks = 4096;
-    static constexpr size_t kPendingQueryTasksPerThread = 1024;
 
     LoggerPtr _logger;
-    std::unique_ptr<TaskExecutor> _taskExecutor;
+    TaskExecutor _taskExecutor;
 
     std::string _binlogIndexPath;
     std::string _stateLogName;
@@ -1350,8 +1326,6 @@ private:
     bool _discardCheckpoint = false;
     
     int _threadNum = 1;
-    size_t _maxPendingQueryTasks = 0;
-    size_t _pendingQueryTasks = 0;
     bool _oneshotMode = false;
     std::string _procedureLogPath;
     
@@ -1362,8 +1336,6 @@ private:
     std::thread _writerThread;
     std::mutex _txnQueueMutex;
     std::condition_variable _txnQueueCv;
-    std::mutex _queryQueueMutex;
-    std::condition_variable _queryQueueCv;
     std::mutex _binlogMutex;
     
     std::unique_ptr<mariadb::BinaryLogSequentialReader> _binlogReader;
@@ -1393,31 +1365,6 @@ private:
 
     bool _warnedMissingRowQuery = false;
     bool _warnedMissingTableMap = false;
-
-    bool reserveQuerySlot() {
-        std::unique_lock<std::mutex> lock(_queryQueueMutex);
-        _queryQueueCv.wait(lock, [this]() {
-            return _stopRequested.load(std::memory_order_acquire) ||
-                _terminateRequested.load(std::memory_order_acquire) ||
-                _pendingQueryTasks < _maxPendingQueryTasks;
-        });
-        if (_stopRequested.load(std::memory_order_acquire) ||
-            _terminateRequested.load(std::memory_order_acquire)) {
-            return false;
-        }
-        ++_pendingQueryTasks;
-        return true;
-    }
-
-    void releaseQuerySlot() {
-        {
-            std::lock_guard<std::mutex> lock(_queryQueueMutex);
-            if (_pendingQueryTasks > 0) {
-                --_pendingQueryTasks;
-            }
-        }
-        _queryQueueCv.notify_one();
-    }
 };
 
 int main(int argc, char **argv) {

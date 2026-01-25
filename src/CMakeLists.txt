@@ -70,6 +70,7 @@ add_custom_target(ultraverse_state_proto
 # add_compile_options(-march=native -O2)
 
 # add_link_options(-fsanitize=leak)
+add_link_options(--whole-archive)
 
 set(ULTRAVERSE_DEPENDENCIES
     ${BOOST_LIBRARIES}
