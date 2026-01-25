@@ -6,6 +6,12 @@ def execute_procedure(conn, proc_call: str, params: tuple) -> None:
     try:
         cursor.execute("START TRANSACTION")
         cursor.execute(proc_call, params)
+        # Drain all result sets to avoid "Unread result found" in mysql-connector.
+        while True:
+            if cursor.with_rows:
+                cursor.fetchall()
+            if not cursor.nextset():
+                break
         cursor.execute("COMMIT")
     except Exception as e:
         cursor.execute("ROLLBACK")
