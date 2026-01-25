@@ -222,6 +222,43 @@ TEST_CASE("StateCluster shouldReplay requires composite key match") {
     REQUIRE_FALSE(cluster.shouldReplay(mismatchedTxn->gid()));
 }
 
+TEST_CASE("StateCluster shouldReplay resolves composite key aliases") {
+    MockedRelationshipResolver resolver;
+    resolver.addColumnAlias("orders.user_id_alias", "orders.user_id");
+
+    StateCluster cluster({"orders.user_id", "orders.user_id_alias"}, {{"orders.user_id", "orders.user_id_alias"}});
+    cluster.normalizeWithResolver(resolver);
+    auto rollbackTxn = makeTxn(1, "test", {}, {makeEq("orders.user_id", 7)});
+    auto dependentTxn = makeTxn(2, "test", {makeEq("orders.user_id_alias", 7)}, {});
+
+    cluster.insert(rollbackTxn, resolver);
+    cluster.insert(dependentTxn, resolver);
+    cluster.merge();
+
+    cluster.addRollbackTarget(rollbackTxn, resolver, true);
+
+    REQUIRE(cluster.shouldReplay(dependentTxn->gid()));
+}
+
+TEST_CASE("StateCluster shouldReplay normalizes foreign key columns") {
+    MockedRelationshipResolver resolver;
+    resolver.addForeignKey("review.u_id", "useracct.u_id");
+
+    StateCluster cluster({"review.u_id"});
+    cluster.normalizeWithResolver(resolver);
+
+    auto rollbackTxn = makeTxn(1, "test", {}, {makeEq("review.u_id", 587)});
+    auto dependentTxn = makeTxn(2, "test", {}, {makeEq("useracct.u_id", 587)});
+
+    cluster.insert(rollbackTxn, resolver);
+    cluster.insert(dependentTxn, resolver);
+    cluster.merge();
+
+    cluster.addRollbackTarget(rollbackTxn, resolver, true);
+
+    REQUIRE(cluster.shouldReplay(dependentTxn->gid()));
+}
+
 TEST_CASE("StateCluster shouldReplay matches any key in multi-table groups") {
     NoopRelationshipResolver resolver;
 

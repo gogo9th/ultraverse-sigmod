@@ -120,6 +120,8 @@ namespace ultraverse::state::v2 {
          * @brief 주어진 트랜잭션을 클러스터에 추가한다.
          */
         void insert(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
+
+        void normalizeWithResolver(const RelationshipResolver &resolver);
         
         std::optional<StateRange> match(ClusterType type, const std::string &columnName, const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver) const;
         

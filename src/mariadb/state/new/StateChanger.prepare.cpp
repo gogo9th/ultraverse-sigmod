@@ -102,6 +102,7 @@ namespace ultraverse::state::v2 {
         
         StateRelationshipResolver relationshipResolver(_plan, *_context);
         CachedRelationshipResolver cachedResolver(relationshipResolver, 1000);
+        rowCluster.normalizeWithResolver(relationshipResolver);
         
         GIDIndexWriter gidIndexWriter(_plan.stateLogPath(), _plan.stateLogName());
         
@@ -464,6 +465,7 @@ namespace ultraverse::state::v2 {
             _clusterStore->load(rowCluster);
             _logger->info("prepare(): loading cluster end");
         }
+        rowCluster.normalizeWithResolver(relationshipResolver);
 
         {
             auto dbHandle = _dbHandlePool.take();
@@ -594,6 +596,7 @@ namespace ultraverse::state::v2 {
             _clusterStore->load(rowCluster);
             _logger->info("prepare(): loading cluster end");
         }
+        rowCluster.normalizeWithResolver(relationshipResolver);
 
         auto phase_main_start = std::chrono::steady_clock::now();
 

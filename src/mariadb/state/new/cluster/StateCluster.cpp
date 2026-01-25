@@ -134,6 +134,14 @@ namespace ultraverse::state::v2 {
 
             return mapping;
         }
+
+        std::string normalizeColumnName(const RelationshipResolver &resolver, const std::string &column) {
+            std::string resolved = resolver.resolveChain(column);
+            if (resolved.empty()) {
+                resolved = column;
+            }
+            return utility::toLower(resolved);
+        }
     }
     
     StateCluster::Cluster::Cluster(): read(), write() {
@@ -624,39 +632,93 @@ namespace ultraverse::state::v2 {
         invalidateTargetCache(resolver);
     }
 
-    void StateCluster::rebuildResolvedKeyColumnGroups(const RelationshipResolver &resolver) {
-        _resolvedKeyColumnGroups.clear();
-        _resolvedKeyColumnGroups.reserve(_keyColumnGroups.size());
+    void StateCluster::normalizeWithResolver(const RelationshipResolver &resolver) {
+        std::vector<std::vector<std::string>> normalizedGroups;
+        normalizedGroups.reserve(_keyColumnGroups.size());
+        std::unordered_set<std::string> usedColumns;
 
         for (const auto &group : _keyColumnGroups) {
             if (group.empty()) {
                 continue;
             }
 
-            std::vector<std::string> resolvedGroup;
-            resolvedGroup.reserve(group.size());
-            std::unordered_set<std::string> seen;
-
+            std::vector<std::string> normalizedGroup;
+            normalizedGroup.reserve(group.size());
             for (const auto &column : group) {
-                std::string resolved = resolver.resolveChain(column);
-                if (resolved.empty()) {
-                    resolved = column;
-                }
-                resolved = utility::toLower(resolved);
-                if (resolved.empty()) {
+                auto normalized = normalizeColumnName(resolver, column);
+                if (normalized.empty()) {
                     continue;
                 }
-                if (seen.insert(resolved).second) {
-                    resolvedGroup.push_back(std::move(resolved));
+                if (!usedColumns.insert(normalized).second) {
+                    continue;
                 }
+                normalizedGroup.push_back(std::move(normalized));
             }
 
-            if (!resolvedGroup.empty()) {
-                _resolvedKeyColumnGroups.push_back(std::move(resolvedGroup));
+            if (!normalizedGroup.empty()) {
+                normalizedGroups.push_back(std::move(normalizedGroup));
             }
         }
 
-        _resolvedGroupIsComposite = buildGroupCompositeFlags(_resolvedKeyColumnGroups);
+        _keyColumnGroups = std::move(normalizedGroups);
+        _groupIsComposite = buildGroupCompositeFlags(_keyColumnGroups);
+        _keyColumnGroupsByTable = buildKeyColumnGroupsByTable(_keyColumnGroups);
+
+        _keyColumns.clear();
+        for (const auto &group : _keyColumnGroups) {
+            for (const auto &column : group) {
+                _keyColumns.insert(column);
+            }
+        }
+
+        std::unordered_map<std::string, Cluster> normalizedClusters;
+        normalizedClusters.reserve(std::max(_clusters.size(), _keyColumns.size()));
+
+        auto appendCluster = [&normalizedClusters](const std::string &key, const Cluster &cluster) {
+            auto &target = normalizedClusters[key];
+            for (const auto &pair : cluster.read) {
+                target.pendingRead.emplace_back(pair.first, pair.second);
+            }
+            for (const auto &pair : cluster.write) {
+                target.pendingWrite.emplace_back(pair.first, pair.second);
+            }
+            for (const auto &pair : cluster.pendingRead) {
+                target.pendingRead.emplace_back(pair.first, pair.second);
+            }
+            for (const auto &pair : cluster.pendingWrite) {
+                target.pendingWrite.emplace_back(pair.first, pair.second);
+            }
+        };
+
+        for (const auto &pair : _clusters) {
+            auto normalized = normalizeColumnName(resolver, pair.first);
+            if (normalized.empty()) {
+                continue;
+            }
+            appendCluster(normalized, pair.second);
+        }
+
+        for (auto &pair : normalizedClusters) {
+            pair.second.merge(READ);
+            pair.second.merge(WRITE);
+            pair.second.finalize();
+        }
+
+        for (const auto &keyColumn : _keyColumns) {
+            if (normalizedClusters.find(keyColumn) == normalizedClusters.end()) {
+                normalizedClusters.emplace(keyColumn, Cluster{});
+            }
+        }
+
+        _clusters = std::move(normalizedClusters);
+        _resolvedKeyColumnGroups = _keyColumnGroups;
+        _resolvedGroupIsComposite = _groupIsComposite;
+    }
+
+    void StateCluster::rebuildResolvedKeyColumnGroups(const RelationshipResolver &resolver) {
+        (void)resolver;
+        _resolvedKeyColumnGroups = _keyColumnGroups;
+        _resolvedGroupIsComposite = _groupIsComposite;
     }
 
     void StateCluster::invalidateTargetCache(const RelationshipResolver &resolver) {
