@@ -623,9 +623,45 @@ namespace ultraverse::state::v2 {
         
         invalidateTargetCache(resolver);
     }
-    
+
+    void StateCluster::rebuildResolvedKeyColumnGroups(const RelationshipResolver &resolver) {
+        _resolvedKeyColumnGroups.clear();
+        _resolvedKeyColumnGroups.reserve(_keyColumnGroups.size());
+
+        for (const auto &group : _keyColumnGroups) {
+            if (group.empty()) {
+                continue;
+            }
+
+            std::vector<std::string> resolvedGroup;
+            resolvedGroup.reserve(group.size());
+            std::unordered_set<std::string> seen;
+
+            for (const auto &column : group) {
+                std::string resolved = resolver.resolveChain(column);
+                if (resolved.empty()) {
+                    resolved = column;
+                }
+                resolved = utility::toLower(resolved);
+                if (resolved.empty()) {
+                    continue;
+                }
+                if (seen.insert(resolved).second) {
+                    resolvedGroup.push_back(std::move(resolved));
+                }
+            }
+
+            if (!resolvedGroup.empty()) {
+                _resolvedKeyColumnGroups.push_back(std::move(resolvedGroup));
+            }
+        }
+
+        _resolvedGroupIsComposite = buildGroupCompositeFlags(_resolvedKeyColumnGroups);
+    }
+
     void StateCluster::invalidateTargetCache(const RelationshipResolver &resolver) {
         _targetCache.clear();
+        rebuildResolvedKeyColumnGroups(resolver);
 
         auto rebuildTargets = [&](auto &targets) {
             for (auto &pair: targets) {
@@ -694,9 +730,12 @@ namespace ultraverse::state::v2 {
             return false;
         }
         size_t matched = 0;
+
+        const auto &groups = _resolvedKeyColumnGroups.empty() ? _keyColumnGroups : _resolvedKeyColumnGroups;
+        const auto &groupIsComposite = _resolvedKeyColumnGroups.empty() ? _groupIsComposite : _resolvedGroupIsComposite;
         
-        for (size_t groupIndex = 0; groupIndex < _keyColumnGroups.size(); groupIndex++) {
-            const auto &group = _keyColumnGroups[groupIndex];
+        for (size_t groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+            const auto &group = groups[groupIndex];
             if (group.empty()) {
                 continue;
             }
@@ -717,7 +756,7 @@ namespace ultraverse::state::v2 {
                 }
             }
 
-            if (groupIndex < _groupIsComposite.size() && _groupIsComposite[groupIndex]) {
+            if (groupIndex < groupIsComposite.size() && groupIsComposite[groupIndex]) {
                 if (count == 0) {
                     continue;
                 } else if (count == group.size()) {

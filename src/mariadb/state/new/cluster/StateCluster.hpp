@@ -200,6 +200,8 @@ namespace ultraverse::state::v2 {
          * rollback / append 대상 트랜잭션의 캐시를 갱신한다.
          */
         void invalidateTargetCache(const RelationshipResolver &resolver);
+
+        void rebuildResolvedKeyColumnGroups(const RelationshipResolver &resolver);
         
         /**
          * @brief 주어진 gid를 가진 트랜잭션이 재실행 대상인지 확인한다 (internal)
@@ -214,6 +216,8 @@ namespace ultraverse::state::v2 {
         std::vector<std::vector<std::string>> _keyColumnGroups;
         std::vector<bool> _groupIsComposite;
         std::unordered_map<std::string, std::vector<GroupProjection>> _keyColumnGroupsByTable;
+        std::vector<std::vector<std::string>> _resolvedKeyColumnGroups;
+        std::vector<bool> _resolvedGroupIsComposite;
         std::unordered_map<std::string, Cluster> _clusters;
         
         std::shared_mutex _targetCacheLock;
