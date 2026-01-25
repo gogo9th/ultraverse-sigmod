@@ -197,9 +197,22 @@ namespace ultraverse::state::v2 {
                 _columnWorkers.emplace(column, std::move(worker));
             }
         }
+
+        _workerCount = static_cast<uint32_t>(_columnWorkers.size());
+        for (const auto &workerPtr : _compositeWorkers) {
+            if (workerPtr) {
+                ++_workerCount;
+            }
+        }
     }
     
     RowGraph::~RowGraph() {
+        {
+            std::lock_guard<std::mutex> lock(_gcMutex);
+            _gcPause.store(false, std::memory_order_release);
+        }
+        _gcCv.notify_all();
+
         for (auto &pair : _columnWorkers) {
             auto &worker = pair.second;
             {
@@ -750,7 +763,42 @@ namespace ultraverse::state::v2 {
         node->hold = false;
     }
     
-    void RowGraph::gc() {
+    void RowGraph::pauseWorkers() {
+        {
+            std::lock_guard<std::mutex> lock(_gcMutex);
+            _gcPause.store(true, std::memory_order_release);
+        }
+        notifyAllWorkers();
+        _gcCv.notify_all();
+        std::unique_lock<std::mutex> lock(_gcMutex);
+        _gcCv.wait(lock, [this]() {
+            return _activeTasks.load(std::memory_order_acquire) == 0 &&
+                   _pausedWorkers.load(std::memory_order_acquire) >= _workerCount;
+        });
+    }
+
+    void RowGraph::resumeWorkers() {
+        {
+            std::lock_guard<std::mutex> lock(_gcMutex);
+            _gcPause.store(false, std::memory_order_release);
+        }
+        _gcCv.notify_all();
+        notifyAllWorkers();
+    }
+
+    void RowGraph::notifyAllWorkers() {
+        for (auto &pair : _columnWorkers) {
+            pair.second->queueCv.notify_all();
+        }
+        for (auto &workerPtr : _compositeWorkers) {
+            if (!workerPtr) {
+                continue;
+            }
+            workerPtr->queueCv.notify_all();
+        }
+    }
+
+    void RowGraph::gcInternal() {
         WriteLock _lock(_graphMutex);
         _logger->info("gc(): removing finalized / orphaned nodes");
         
@@ -922,6 +970,17 @@ namespace ultraverse::state::v2 {
             _logger->info("gc(): {} nodes removed", toRemove.size());
         }
     }
+
+    void RowGraph::gc() {
+        bool expected = false;
+        if (!_isGCRunning.compare_exchange_strong(expected, true)) {
+            return;
+        }
+        pauseWorkers();
+        gcInternal();
+        resumeWorkers();
+        _isGCRunning.store(false, std::memory_order_release);
+    }
     
     void RowGraph::enqueueTask(const std::string &column, ColumnTask task) {
         auto it = _columnWorkers.find(column);
@@ -957,35 +1016,80 @@ namespace ultraverse::state::v2 {
     }
     
     void RowGraph::columnWorkerLoop(ColumnWorker &worker) {
+        bool paused = false;
         while (true) {
             ColumnTask task;
             {
                 std::unique_lock<std::mutex> lock(worker.queueMutex);
-                worker.queueCv.wait(lock, [&worker]() {
-                    return !worker.queue.empty() || !worker.running;
+                worker.queueCv.wait(lock, [this, &worker]() {
+                    return !worker.queue.empty() || !worker.running ||
+                           _gcPause.load(std::memory_order_acquire);
                 });
-                
+
+                if (_gcPause.load(std::memory_order_acquire)) {
+                    lock.unlock();
+                    std::unique_lock<std::mutex> pauseLock(_gcMutex);
+                    if (!paused) {
+                        _pausedWorkers.fetch_add(1, std::memory_order_acq_rel);
+                        paused = true;
+                        _gcCv.notify_all();
+                    }
+                    _gcCv.wait(pauseLock, [this]() {
+                        return !_gcPause.load(std::memory_order_acquire);
+                    });
+                    if (paused) {
+                        _pausedWorkers.fetch_sub(1, std::memory_order_acq_rel);
+                        paused = false;
+                        _gcCv.notify_all();
+                    }
+                    continue;
+                }
+
                 if (!worker.running && worker.queue.empty()) {
                     return;
                 }
-                
+
                 task = std::move(worker.queue.front());
                 worker.queue.pop_front();
             }
-            
+
+            _activeTasks.fetch_add(1, std::memory_order_acq_rel);
             processColumnTask(worker, task);
+            _activeTasks.fetch_sub(1, std::memory_order_acq_rel);
+            _gcCv.notify_all();
             markColumnTaskDone(task.nodeId);
         }
     }
 
     void RowGraph::compositeWorkerLoop(CompositeWorker &worker) {
+        bool paused = false;
         while (true) {
             CompositeTask task;
             {
                 std::unique_lock<std::mutex> lock(worker.queueMutex);
-                worker.queueCv.wait(lock, [&worker]() {
-                    return !worker.queue.empty() || !worker.running;
+                worker.queueCv.wait(lock, [this, &worker]() {
+                    return !worker.queue.empty() || !worker.running ||
+                           _gcPause.load(std::memory_order_acquire);
                 });
+
+                if (_gcPause.load(std::memory_order_acquire)) {
+                    lock.unlock();
+                    std::unique_lock<std::mutex> pauseLock(_gcMutex);
+                    if (!paused) {
+                        _pausedWorkers.fetch_add(1, std::memory_order_acq_rel);
+                        paused = true;
+                        _gcCv.notify_all();
+                    }
+                    _gcCv.wait(pauseLock, [this]() {
+                        return !_gcPause.load(std::memory_order_acquire);
+                    });
+                    if (paused) {
+                        _pausedWorkers.fetch_sub(1, std::memory_order_acq_rel);
+                        paused = false;
+                        _gcCv.notify_all();
+                    }
+                    continue;
+                }
 
                 if (!worker.running && worker.queue.empty()) {
                     return;
@@ -995,7 +1099,10 @@ namespace ultraverse::state::v2 {
                 worker.queue.pop_front();
             }
 
+            _activeTasks.fetch_add(1, std::memory_order_acq_rel);
             processCompositeTask(worker, task);
+            _activeTasks.fetch_sub(1, std::memory_order_acq_rel);
+            _gcCv.notify_all();
             markColumnTaskDone(task.nodeId);
         }
     }

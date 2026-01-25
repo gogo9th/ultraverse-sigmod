@@ -205,6 +205,10 @@ namespace ultraverse::state::v2 {
         void compositeWorkerLoop(CompositeWorker &worker);
         void processCompositeTask(CompositeWorker &worker, CompositeTask &task);
         void markColumnTaskDone(RowGraphId nodeId);
+        void pauseWorkers();
+        void resumeWorkers();
+        void notifyAllWorkers();
+        void gcInternal();
         
         LoggerPtr _logger;
         const RelationshipResolver &_resolver;
@@ -231,6 +235,12 @@ namespace ultraverse::state::v2 {
         /** @deprecated `_graphMutex`를 대신 사용하십시오. */
         std::mutex _mutex;
         std::atomic_bool _isGCRunning = false;
+        std::mutex _gcMutex;
+        std::condition_variable _gcCv;
+        std::atomic_bool _gcPause = false;
+        std::atomic_uint32_t _activeTasks = 0;
+        std::atomic_uint32_t _pausedWorkers = 0;
+        uint32_t _workerCount = 0;
         
         RangeComparisonMethod _rangeComparisonMethod;
     };
