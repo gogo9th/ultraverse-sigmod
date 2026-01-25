@@ -20,6 +20,24 @@ def get_mysql_base_path() -> str:
 
 MYSQL_DEFAULT_CONF_PATH = f"{os.getcwd()}/mysql_conf/my.cnf"
 
+class _MySQLDaemonSession:
+    def __init__(self, daemon: "MySQLDaemon", started: bool):
+        self._daemon = daemon
+        self._started = started
+
+    def __enter__(self) -> "MySQLDaemon":
+        if not self._started:
+            raise RuntimeError("MySQL daemon is already running")
+        return self._daemon
+
+    def __exit__(self, exc_type, exc, traceback) -> bool:
+        if self._started:
+            self._daemon.stop()
+        return False
+
+    def __bool__(self) -> bool:
+        return self._started
+
 class MySQLDaemon:
     """
     a class that wraps the MySQL daemon
@@ -178,15 +196,15 @@ class MySQLDaemon:
         self.logger.info("MySQL data directory is ready")
 
 
-    def start(self) -> bool:
+    def start(self) -> _MySQLDaemonSession:
         """
-        starts the MySQL daemon.
-        returns True if the daemon was started successfully, False otherwise.
+        starts the MySQL daemon and returns a context manager that
+        stops it on scope exit.
         """
 
         if self.mysqld_handle is not None:
             self.logger.error("MySQL daemon is already running")
-            return False
+            return _MySQLDaemonSession(self, False)
 
         username = get_current_user()
         mysqld = self.bin_for("mysqld")
@@ -199,7 +217,7 @@ class MySQLDaemon:
             f"--port={self.port}",
         ])
 
-        return True
+        return _MySQLDaemonSession(self, True)
 
     def stop(self, timeout=None) -> bool:
         """

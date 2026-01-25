@@ -393,41 +393,33 @@ class BenchmarkSession:
         self.mysqld.prepare()
         time.sleep(5)
 
-        self.mysqld.start()
-        time.sleep(5)
+        with self.mysqld.start():
+            time.sleep(5)
 
-        self.run_benchbase([self.bench_name, 'mariadb', self.amount, 'prepare'])
-        time.sleep(5)
+            self.run_benchbase([self.bench_name, 'mariadb', self.amount, 'prepare'])
+            time.sleep(5)
 
-        self.mysqld.stop()
+        with self.mysqld.start():
+            time.sleep(5)
 
-        self.mysqld.start()
-        time.sleep(5)
-
-        # checkpoint
-        self.logger.info("dumping database...")
-        self.mysqld.mysqldump("benchbase", f"{self.session_path}/dbdump.sql")
-
-        self.mysqld.stop()
+            # checkpoint
+            self.logger.info("dumping database...")
+            self.mysqld.mysqldump("benchbase", f"{self.session_path}/dbdump.sql")
 
         # execute
         self.mysqld.flush_binlogs()
 
-        self.mysqld.start()
-        time.sleep(5)
+        with self.mysqld.start():
+            time.sleep(5)
 
-        self.run_benchbase([self.bench_name, 'mariadb', self.amount, 'execute'])
-        time.sleep(5)
+            self.run_benchbase([self.bench_name, 'mariadb', self.amount, 'execute'])
+            time.sleep(5)
 
-        self.mysqld.stop()
+        with self.mysqld.start():
+            time.sleep(5)
 
-        self.mysqld.start()
-        time.sleep(5)
-
-        self.logger.info("dumping database...")
-        self.mysqld.mysqldump("benchbase", f"{self.session_path}/dbdump_latest.sql")
-
-        self.mysqld.stop()
+            self.logger.info("dumping database...")
+            self.mysqld.mysqldump("benchbase", f"{self.session_path}/dbdump_latest.sql")
 
 
         os.system(f"mv -v {self.session_path}/mysql/server-binlog.* {self.session_path}/")

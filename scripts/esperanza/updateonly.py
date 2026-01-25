@@ -106,25 +106,23 @@ if __name__ == "__main__":
 
     # db_state_change를 실행하기 위해 mysqld를 실행한다.
     logger.info("starting mysqld...")
-    session.mysqld.start()
+    with session.mysqld.start():
+        # mysqld 기동이 끝날 때까지 기다린다.
+        time.sleep(10)
 
-    # mysqld 기동이 끝날 때까지 기다린다.
-    time.sleep(10)
+        # 클러스터 생성한다
+        logger.info("creating cluster...")
+        session.run_db_state_change("make_cluster")
 
-    # 클러스터 생성한다
-    logger.info("creating cluster...")
-    session.run_db_state_change("make_cluster")
+        # state change를 행한다
+        perform_state_change(session, [0])
 
-    # state change를 행한다
-    perform_state_change(session, [0])
+        rollback_gids = decide_rollback_gids(session, 0.01)
+        perform_state_change(session, rollback_gids)
 
-    rollback_gids = decide_rollback_gids(session, 0.01)
-    perform_state_change(session, rollback_gids)
+        rollback_gids = decide_rollback_gids(session, 0.1)
+        perform_state_change(session, rollback_gids)
 
-    rollback_gids = decide_rollback_gids(session, 0.1)
-    perform_state_change(session, rollback_gids)
+        perform_full_replay(session)
 
-    perform_full_replay(session)
-
-    logger.info("stopping mysqld...")
-    session.mysqld.stop()
+        logger.info("stopping mysqld...")
