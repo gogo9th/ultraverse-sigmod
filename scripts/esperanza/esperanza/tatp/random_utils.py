@@ -25,7 +25,8 @@ def random_start_time(rng: random.Random) -> int:
 
 
 def random_location(rng: random.Random) -> int:
-    return rng.randint(1, 0xFFFFFFFF)
+    # MySQL INTEGER is signed; keep within int32 range to avoid out-of-range inserts.
+    return rng.randint(1, 0x7FFFFFFF)
 
 
 def random_bit(rng: random.Random) -> int:

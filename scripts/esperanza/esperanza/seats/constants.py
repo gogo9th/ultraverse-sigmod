@@ -9,6 +9,9 @@ FLIGHTS_DAYS_FUTURE = 50
 FLIGHTS_PER_DAY_MIN = 1125
 FLIGHTS_PER_DAY_MAX = 1875
 
+# Airport configuration (loaded from CSV, this is the default limit)
+NUM_AIRPORTS = 9263  # Total airports in table.airport.csv
+
 # Customer configuration
 DEFAULT_NUM_CUSTOMERS = 100000
 CUSTOMER_NUM_FREQUENTFLYERS_MIN = 0
