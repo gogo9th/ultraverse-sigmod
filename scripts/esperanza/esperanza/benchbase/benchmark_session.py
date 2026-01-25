@@ -442,19 +442,17 @@ class BenchmarkSession:
         """
         self.logger.info(f"comparing tables '{table1}' and '{table2}'...")
 
-        columns_str = ", ".join(list(map(lambda c: f"`{c}`", columns)))
-        columns_t1 = ", ".join(list(map(lambda c: f"t1.`{c}`", columns)))
-        columns_t2 = ", ".join(list(map(lambda c: f"t2.`{c}`", columns)))
+        join_pred = " AND ".join([f"t1.`{c}` <=> t2.`{c}`" for c in columns])
 
         base_sql = (f"SELECT '{table1}' as `set`, t1.*"
                     f"    FROM {table1} t1"
-                    f"    WHERE ROW({columns_t1}) NOT IN"
-                    f"    (SELECT {columns_str} FROM {table2})"
+                    f"    WHERE NOT EXISTS"
+                    f"    (SELECT 1 FROM {table2} t2 WHERE {join_pred})"
                     f"UNION ALL "
                     f"SELECT '{table2}' as `set`, t2.*"
                     f"    FROM {table2} t2"
-                    f"    WHERE ROW({columns_t2}) NOT IN"
-                    f"    (SELECT {columns_str} FROM {table1})")
+                    f"    WHERE NOT EXISTS"
+                    f"    (SELECT 1 FROM {table1} t1 WHERE {join_pred})")
 
         sql = (f"SELECT CONCAT(\"found \", COUNT(*), \" differences\")"
                f"FROM ({base_sql}) d")

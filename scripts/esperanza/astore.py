@@ -221,15 +221,15 @@ if __name__ == "__main__":
 
     # state change를 행한다
     # 1. 최소 (상태전환 쿼리를 1개만 선택)
-    perform_state_change(session, [0], do_extra_replay_st=True, do_table_diff=False)
+    perform_state_change(session, [0], do_extra_replay_st=True, do_table_diff=True)
 
     # 2. 1% 정도
     rollback_gids = decide_rollback_gids(session, 0.01)
-    perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=False)
+    perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=True)
 
     # 3. 10% 정도
     rollback_gids = decide_rollback_gids(session, 0.1)
-    perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=False)
+    perform_state_change(session, rollback_gids, do_extra_replay_st=True, do_table_diff=True)
 
     # 4. 100%
     perform_full_replay(session)
