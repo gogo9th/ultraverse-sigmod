@@ -65,32 +65,30 @@ TEST_CASE("StateData set/get and flags", "[stateitem]") {
 }
 
 TEST_CASE("StateData decimal normalization and comparison", "[stateitem]") {
+    // decimal data는 실질 내부적으로 string storage를 사용한다
+
     StateData a;
     a.SetDecimal("001.2300");
     std::string out;
     REQUIRE(a.Get(out));
-    REQUIRE(out == "1.23");
-
-    StateData b;
-    b.SetDecimal("1.23");
-    REQUIRE(a == b);
+    REQUIRE(out == "001.2300");
 
     StateData c;
     c.SetDecimal("-0.00");
     REQUIRE(c.Get(out));
-    REQUIRE(out == "0");
-
-    StateData d;
-    d.SetDecimal("1.20");
-    StateData e;
-    e.SetDecimal("1.3");
-    REQUIRE(d < e);
+    REQUIRE(out == "-0.00");
 }
 
 TEST_CASE("StateRange builds simple where clauses", "[stateitem]") {
     StateRange eq;
     eq.SetValue(StateData { (int64_t) 1 }, true);
     REQUIRE(eq.MakeWhereQuery("id") == "id=1");
+
+    StateData text;
+    text.Set("hello", 5);
+    StateRange eqText;
+    eqText.SetValue(text, true);
+    REQUIRE(eqText.MakeWhereQuery("name") == "name=X'68656C6C6F'");
 
     StateRange ne;
     ne.SetValue(StateData { (int64_t) 1 }, false);

@@ -5,7 +5,7 @@ import subprocess
 import time
 
 from esperanza.benchbase.benchmark_session import BenchmarkSession
-from esperanza.utils.download_mysql import download_mysql
+from esperanza.utils.download_mysql import download_mysql, get_mysql_bin_path
 from esperanza.utils.state_change_report import read_state_change_report
 
 KEY_COLUMNS = [
@@ -190,6 +190,8 @@ if __name__ == "__main__":
         print("MySQL distribution is not available")
         exit(1)
 
+    os.environ["MYSQL_BIN_PATH"] = get_mysql_bin_path()
+
     os.putenv("DB_HOST", "127.0.0.1")
     os.putenv("DB_PORT", "3306")
     os.putenv("DB_USER", "admin")
@@ -202,40 +204,40 @@ if __name__ == "__main__":
     time.sleep(5)
 
     logger.info("starting mysqld...")
-    session.mysqld.start()
-    time.sleep(5)
+    with session.mysqld.start():
+        time.sleep(5)
 
-    logger.info("creating schema/procedures...")
-    mysql_source(session, SCHEMA_SQL)
+        logger.info("creating schema/procedures...")
+        mysql_source(session, SCHEMA_SQL)
 
-    patched_sql, helper_sql = patch_procedures(session)
-    mysql_source(session, helper_sql, "benchbase")
-    mysql_source(session, patched_sql, "benchbase")
+        patched_sql, helper_sql = patch_procedures(session)
+        mysql_source(session, helper_sql, "benchbase")
+        mysql_source(session, patched_sql, "benchbase")
 
-    logger.info("dumping checkpoint...")
-    session.mysqld.mysqldump("benchbase", f"{session.session_path}/dbdump.sql")
+        logger.info("dumping checkpoint...")
+        session.mysqld.mysqldump("benchbase", f"{session.session_path}/dbdump.sql")
 
-    session.mysqld.stop()
+        logger.info("stopping mysqld...")
 
     session.mysqld.flush_binlogs()
 
     logger.info("starting mysqld for scenario...")
-    session.mysqld.start()
-    time.sleep(5)
+    with session.mysqld.start():
+        time.sleep(5)
 
-    logger.info("running scenario...")
-    mysql_source(session, SCENARIO_SQL)
+        logger.info("running scenario...")
+        mysql_source(session, SCENARIO_SQL)
 
-    session.mysqld.stop()
+        logger.info("stopping mysqld...")
 
     logger.info("starting mysqld for dump...")
-    session.mysqld.start()
-    time.sleep(5)
+    with session.mysqld.start():
+        time.sleep(5)
 
-    logger.info("dumping latest database...")
-    session.mysqld.mysqldump("benchbase", f"{session.session_path}/dbdump_latest.sql")
+        logger.info("dumping latest database...")
+        session.mysqld.mysqldump("benchbase", f"{session.session_path}/dbdump_latest.sql")
 
-    session.mysqld.stop()
+        logger.info("stopping mysqld...")
 
     os.system(f"mv -v {session.session_path}/mysql/server-binlog.* {session.session_path}/")
 
@@ -245,19 +247,18 @@ if __name__ == "__main__":
     session.update_config(backup_file=BACKUP_FILE, column_aliases=COLUMN_ALIASES)
 
     logger.info("starting mysqld for state change...")
-    session.mysqld.start()
-    time.sleep(10)
+    with session.mysqld.start():
+        time.sleep(10)
 
-    logger.info("creating cluster...")
-    session.run_db_state_change("make_cluster")
+        logger.info("creating cluster...")
+        session.run_db_state_change("make_cluster")
 
-    refund_gid = find_gid_by_query(session, ["refund_item", "refunds", "REFUNDED"])
-    logger.info(f"refund gid: {refund_gid}")
+        refund_gid = find_gid_by_query(session, ["refund_item", "refunds", "REFUNDED"])
+        logger.info(f"refund gid: {refund_gid}")
 
-    rollback_report, _replay_report = perform_state_change(session, refund_gid)
-    verify_rowwise_skip(rollback_report)
+        rollback_report, _replay_report = perform_state_change(session, refund_gid)
+        verify_rowwise_skip(rollback_report)
 
-    verify_results(session)
+        verify_results(session)
 
-    logger.info("stopping mysqld...")
-    session.mysqld.stop()
+        logger.info("stopping mysqld...")

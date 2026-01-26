@@ -11,8 +11,9 @@ Delivery_Label:BEGIN
   DECLARE var_o_carrier_id INT;
   DECLARE var_ol_total DECIMAL(8, 2);  
 
+  SET @tpcc_seed := UNIX_TIMESTAMP(CURRENT_TIMESTAMP());
 
-  SET var_o_carrier_id := RandomNumber(1, 10);
+  SET var_o_carrier_id := RandomNumber(@tpcc_seed, 1, 10);
   
   Delivery_Loop:WHILE (var_d_id < var_terminalDistrictUpperID) DO
     SET var_no_o_id := -1;

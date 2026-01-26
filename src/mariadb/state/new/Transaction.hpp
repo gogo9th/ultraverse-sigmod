@@ -115,7 +115,7 @@ namespace ultraverse::state::v2 {
         /**
          * 주어진 DB와 관련된 쿼리가 하나라도 있는지 확인합니다.
          */
-        bool isRelatedToDatabase(const std::string database);
+        bool isRelatedToDatabase(const std::string database) const;
         
         
         /**

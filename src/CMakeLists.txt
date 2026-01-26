@@ -1,4 +1,5 @@
 set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "Use external fmt library" FORCE)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
 Include(FetchContent)
 

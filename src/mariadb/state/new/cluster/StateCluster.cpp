@@ -134,6 +134,14 @@ namespace ultraverse::state::v2 {
 
             return mapping;
         }
+
+        std::string normalizeColumnName(const RelationshipResolver &resolver, const std::string &column) {
+            std::string resolved = resolver.resolveChain(column);
+            if (resolved.empty()) {
+                resolved = column;
+            }
+            return utility::toLower(resolved);
+        }
     }
     
     StateCluster::Cluster::Cluster(): read(), write() {
@@ -242,18 +250,12 @@ namespace ultraverse::state::v2 {
                     // Q: 왜?
                     // A: std::move 는 rvalue 로 바꿔주는거야. 그래서 이동 생성자를 호출하거든.
                     
-                    // WRITE가 FK에 대해 직접 write하는 경우는 없으므로 chain resolve는 READ에 대해서만 수행한다.
-    
-                    const auto &real = (type == READ) ?
-                        resolver.resolveRowChain(item) :
-                        resolver.resolveRowAlias(item);
+                    const auto &real = resolver.resolveRowChain(item);
                     
                     if (real != nullptr) {
                         return real->name == columnName && StateRange::isIntersects(real->MakeRange2(), range);
                     } else {
-                        const auto &realColumn = (type == READ) ?
-                                                 resolver.resolveChain(item.name) :
-                                                 resolver.resolveColumnAlias(item.name);
+                        const auto &realColumn = resolver.resolveChain(item.name);
                         
                         if (!realColumn.empty()) {
                             return realColumn == columnName && StateRange::isIntersects(item.MakeRange2(), range);
@@ -272,18 +274,12 @@ namespace ultraverse::state::v2 {
                 // Q: 왜?
                 // A: std::move 는 rvalue 로 바꿔주는거야. 그래서 이동 생성자를 호출하거든.
                 
-                // WRITE가 FK에 대해 직접 write하는 경우는 없으므로 chain resolve는 READ에 대해서만 수행한다.
-
-                const auto &real = (type == READ) ?
-                    resolver.resolveRowChain(item) :
-                    resolver.resolveRowAlias(item);
+                const auto &real = resolver.resolveRowChain(item);
                 
                 if (real != nullptr) {
                     return real->name == columnName && StateRange::isIntersects(real->MakeRange2(), range);
                 } else {
-                    const auto &realColumn = (type == READ) ?
-                                             resolver.resolveChain(item.name) :
-                                             resolver.resolveColumnAlias(item.name);
+                    const auto &realColumn = resolver.resolveChain(item.name);
                     
                     if (!realColumn.empty()) {
                         return realColumn == columnName && StateRange::isIntersects(item.MakeRange2(), range);
@@ -623,9 +619,99 @@ namespace ultraverse::state::v2 {
         
         invalidateTargetCache(resolver);
     }
-    
+
+    void StateCluster::normalizeWithResolver(const RelationshipResolver &resolver) {
+        std::vector<std::vector<std::string>> normalizedGroups;
+        normalizedGroups.reserve(_keyColumnGroups.size());
+        std::unordered_set<std::string> usedColumns;
+
+        for (const auto &group : _keyColumnGroups) {
+            if (group.empty()) {
+                continue;
+            }
+
+            std::vector<std::string> normalizedGroup;
+            normalizedGroup.reserve(group.size());
+            for (const auto &column : group) {
+                auto normalized = normalizeColumnName(resolver, column);
+                if (normalized.empty()) {
+                    continue;
+                }
+                if (!usedColumns.insert(normalized).second) {
+                    continue;
+                }
+                normalizedGroup.push_back(std::move(normalized));
+            }
+
+            if (!normalizedGroup.empty()) {
+                normalizedGroups.push_back(std::move(normalizedGroup));
+            }
+        }
+
+        _keyColumnGroups = std::move(normalizedGroups);
+        _groupIsComposite = buildGroupCompositeFlags(_keyColumnGroups);
+        _keyColumnGroupsByTable = buildKeyColumnGroupsByTable(_keyColumnGroups);
+
+        _keyColumns.clear();
+        for (const auto &group : _keyColumnGroups) {
+            for (const auto &column : group) {
+                _keyColumns.insert(column);
+            }
+        }
+
+        std::unordered_map<std::string, Cluster> normalizedClusters;
+        normalizedClusters.reserve(std::max(_clusters.size(), _keyColumns.size()));
+
+        auto appendCluster = [&normalizedClusters](const std::string &key, const Cluster &cluster) {
+            auto &target = normalizedClusters[key];
+            for (const auto &pair : cluster.read) {
+                target.pendingRead.emplace_back(pair.first, pair.second);
+            }
+            for (const auto &pair : cluster.write) {
+                target.pendingWrite.emplace_back(pair.first, pair.second);
+            }
+            for (const auto &pair : cluster.pendingRead) {
+                target.pendingRead.emplace_back(pair.first, pair.second);
+            }
+            for (const auto &pair : cluster.pendingWrite) {
+                target.pendingWrite.emplace_back(pair.first, pair.second);
+            }
+        };
+
+        for (const auto &pair : _clusters) {
+            auto normalized = normalizeColumnName(resolver, pair.first);
+            if (normalized.empty()) {
+                continue;
+            }
+            appendCluster(normalized, pair.second);
+        }
+
+        for (auto &pair : normalizedClusters) {
+            pair.second.merge(READ);
+            pair.second.merge(WRITE);
+            pair.second.finalize();
+        }
+
+        for (const auto &keyColumn : _keyColumns) {
+            if (normalizedClusters.find(keyColumn) == normalizedClusters.end()) {
+                normalizedClusters.emplace(keyColumn, Cluster{});
+            }
+        }
+
+        _clusters = std::move(normalizedClusters);
+        _resolvedKeyColumnGroups = _keyColumnGroups;
+        _resolvedGroupIsComposite = _groupIsComposite;
+    }
+
+    void StateCluster::rebuildResolvedKeyColumnGroups(const RelationshipResolver &resolver) {
+        (void)resolver;
+        _resolvedKeyColumnGroups = _keyColumnGroups;
+        _resolvedGroupIsComposite = _groupIsComposite;
+    }
+
     void StateCluster::invalidateTargetCache(const RelationshipResolver &resolver) {
         _targetCache.clear();
+        rebuildResolvedKeyColumnGroups(resolver);
 
         auto rebuildTargets = [&](auto &targets) {
             for (auto &pair: targets) {
@@ -686,6 +772,11 @@ namespace ultraverse::state::v2 {
         rebuildTargets(_rollbackTargets);
         rebuildTargets(_prependTargets);
     }
+
+    void StateCluster::refreshTargetCache(const RelationshipResolver &resolver) {
+        std::unique_lock<std::shared_mutex> lock(_targetCacheLock);
+        invalidateTargetCache(resolver);
+    }
     
     bool StateCluster::shouldReplay(gid_t gid) {
         std::shared_lock<std::shared_mutex> lock(_targetCacheLock);
@@ -694,9 +785,12 @@ namespace ultraverse::state::v2 {
             return false;
         }
         size_t matched = 0;
+
+        const auto &groups = _resolvedKeyColumnGroups.empty() ? _keyColumnGroups : _resolvedKeyColumnGroups;
+        const auto &groupIsComposite = _resolvedKeyColumnGroups.empty() ? _groupIsComposite : _resolvedGroupIsComposite;
         
-        for (size_t groupIndex = 0; groupIndex < _keyColumnGroups.size(); groupIndex++) {
-            const auto &group = _keyColumnGroups[groupIndex];
+        for (size_t groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+            const auto &group = groups[groupIndex];
             if (group.empty()) {
                 continue;
             }
@@ -717,7 +811,7 @@ namespace ultraverse::state::v2 {
                 }
             }
 
-            if (groupIndex < _groupIsComposite.size() && _groupIsComposite[groupIndex]) {
+            if (groupIndex < groupIsComposite.size() && groupIsComposite[groupIndex]) {
                 if (count == 0) {
                     continue;
                 } else if (count == group.size()) {

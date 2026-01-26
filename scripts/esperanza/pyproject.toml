@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "esperanza-tpcc"
+version = "0.1.0"
+description = "Standalone TPC-C benchmark for Ultraverse"
+packages = [{include = "esperanza"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+mysql-connector-python = "^8.0.33"
+tqdm = "^4.67.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+black = "^23.7.0"
+mypy = "^1.5.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

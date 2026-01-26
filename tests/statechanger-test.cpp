@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -25,6 +26,8 @@
 #include "mariadb/state/new/cluster/StateCluster.hpp"
 #include "mariadb/state/new/cluster/StateRelationshipResolver.hpp"
 #include "utils/StringUtil.hpp"
+
+#include <nlohmann/json.hpp>
 
 namespace {
     using ultraverse::mariadb::MockedDBHandle;
@@ -169,6 +172,12 @@ namespace {
         for (size_t i = 0; i < count; i++) {
             sharedState->results.push({});
         }
+    }
+
+    nlohmann::json readJsonReport(const std::string &path) {
+        std::ifstream stream(path);
+        REQUIRE(stream.is_open());
+        return nlohmann::json::parse(stream);
     }
 
     std::vector<gid_t> loadReplayPlanGids(const StateChangePlan &plan) {
@@ -576,6 +585,161 @@ TEST_CASE("StateChanger prepare propagates column taint transitively", "[statech
     REQUIRE(gids.size() == 2);
     REQUIRE(gids[0] == 2);
     REQUIRE(gids[1] == 3);
+}
+
+TEST_CASE("StateChanger auto-rollback selects rollback targets by ratio", "[statechanger][auto-rollback]") {
+    auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
+
+    auto plan = makePlan(1);
+    plan.setAutoRollbackRatio(0.5);
+    plan.setReportPath(plan.stateLogPath() + "/auto_report.json");
+
+    StateCluster cluster(plan.keyColumns());
+    ultraverse::state::v2::StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+    CachedRelationshipResolver cachedResolver(resolver, 1000);
+
+    auto logReader = std::make_unique<MockedStateLogReader>();
+
+    StateItem key = StateItem::EQ("items.id", StateData(static_cast<int64_t>(1)));
+    for (ultraverse::state::v2::gid_t gid = 1; gid <= 5; gid++) {
+        std::string statement = "/*TXN:" + std::to_string(gid) + "*/";
+        auto txn = makeTransaction(gid, plan.dbName(), statement, {}, {key});
+        cluster.insert(txn, cachedResolver);
+        logReader->addTransaction(txn, gid);
+    }
+
+    cluster.merge();
+
+    auto clusterStore = std::make_unique<MockedStateClusterStore>();
+    clusterStore->save(cluster);
+
+    MockedDBHandlePool pool(1, sharedState);
+
+    StateChangerIO io;
+    io.stateLogReader = std::move(logReader);
+    io.clusterStore = std::move(clusterStore);
+    io.backupLoader = std::make_unique<NoopBackupLoader>();
+    io.closeStandardFds = false;
+
+    StateChanger changer(pool, plan, std::move(io));
+
+    changer.bench_prepareRollback();
+
+    auto report = readJsonReport(plan.reportPath());
+    auto rollbackGids = report.at("rollbackGids").get<std::vector<ultraverse::state::v2::gid_t>>();
+    std::sort(rollbackGids.begin(), rollbackGids.end());
+
+    std::vector<ultraverse::state::v2::gid_t> expectedRollback{1, 3, 5};
+    REQUIRE(rollbackGids == expectedRollback);
+
+    REQUIRE(report.at("totalCount").get<size_t>() == 5);
+    REQUIRE(report.at("replayGidCount").get<size_t>() == 2);
+    REQUIRE(report.at("totalQueryCount").get<size_t>() == 5);
+    REQUIRE(report.at("replayQueryCount").get<size_t>() == 2);
+}
+
+TEST_CASE("StateChanger auto-rollback respects gid-range and skip-gids", "[statechanger][auto-rollback]") {
+    auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
+
+    auto plan = makePlan(1);
+    plan.setAutoRollbackRatio(0.5);
+    plan.setStartGid(2);
+    plan.setEndGid(6);
+    plan.skipGids().push_back(4);
+    plan.setReportPath(plan.stateLogPath() + "/auto_report_range.json");
+
+    StateCluster cluster(plan.keyColumns());
+    ultraverse::state::v2::StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+    CachedRelationshipResolver cachedResolver(resolver, 1000);
+
+    auto logReader = std::make_unique<MockedStateLogReader>();
+
+    StateItem key = StateItem::EQ("items.id", StateData(static_cast<int64_t>(1)));
+    for (ultraverse::state::v2::gid_t gid = 1; gid <= 6; gid++) {
+        std::string statement = "/*TXN:" + std::to_string(gid) + "*/";
+        auto txn = makeTransaction(gid, plan.dbName(), statement, {}, {key});
+        cluster.insert(txn, cachedResolver);
+        logReader->addTransaction(txn, gid);
+    }
+
+    cluster.merge();
+
+    auto clusterStore = std::make_unique<MockedStateClusterStore>();
+    clusterStore->save(cluster);
+
+    MockedDBHandlePool pool(1, sharedState);
+
+    StateChangerIO io;
+    io.stateLogReader = std::move(logReader);
+    io.clusterStore = std::move(clusterStore);
+    io.backupLoader = std::make_unique<NoopBackupLoader>();
+    io.closeStandardFds = false;
+
+    StateChanger changer(pool, plan, std::move(io));
+
+    changer.bench_prepareRollback();
+
+    auto report = readJsonReport(plan.reportPath());
+    auto rollbackGids = report.at("rollbackGids").get<std::vector<ultraverse::state::v2::gid_t>>();
+    std::sort(rollbackGids.begin(), rollbackGids.end());
+
+    std::vector<ultraverse::state::v2::gid_t> expectedRollback{3, 6};
+    REQUIRE(rollbackGids == expectedRollback);
+
+    REQUIRE(report.at("totalCount").get<size_t>() == 4);
+}
+
+TEST_CASE("StateChanger prepare refreshes target cache after skipped rollback revalidation", "[statechanger][prepare]") {
+    auto sharedState = std::make_shared<MockedDBHandle::SharedState>();
+    seedEmptyInfoSchemaResults(sharedState);
+
+    auto plan = makePlan(1);
+    plan.rollbackGids().push_back(1);
+    plan.rollbackGids().push_back(2);
+    plan.skipGids().push_back(2);
+
+    StateItem key = StateItem::EQ("items.id", StateData(static_cast<int64_t>(1)));
+    auto txn1 = makeTransaction(1, plan.dbName(), "/*TXN:1*/", {}, {key});
+    auto txn2 = makeTransaction(2, plan.dbName(), "/*TXN:2*/", {}, {key});
+    auto txn3 = makeTransaction(3, plan.dbName(), "/*TXN:3*/", {key}, {});
+
+    StateCluster cluster(plan.keyColumns());
+    ultraverse::state::v2::StateChangeContext context;
+    StateRelationshipResolver resolver(plan, context);
+    CachedRelationshipResolver cachedResolver(resolver, 1000);
+
+    cluster.insert(txn1, cachedResolver);
+    cluster.insert(txn2, cachedResolver);
+    cluster.insert(txn3, cachedResolver);
+    cluster.merge();
+
+    auto clusterStore = std::make_unique<MockedStateClusterStore>();
+    clusterStore->save(cluster);
+
+    auto logReader = std::make_unique<MockedStateLogReader>();
+    logReader->addTransaction(txn1, 1);
+    logReader->addTransaction(txn2, 2);
+    logReader->addTransaction(txn3, 3);
+
+    MockedDBHandlePool pool(1, sharedState);
+
+    StateChangerIO io;
+    io.stateLogReader = std::move(logReader);
+    io.clusterStore = std::move(clusterStore);
+    io.backupLoader = std::make_unique<NoopBackupLoader>();
+    io.closeStandardFds = false;
+
+    StateChanger changer(pool, plan, std::move(io));
+
+    changer.prepare();
+
+    auto gids = loadReplayPlanGids(plan);
+    REQUIRE(gids.size() == 1);
+    REQUIRE(gids[0] == 3);
 }
 
 TEST_CASE("StateChanger replay respects dependency order within chains", "[statechanger][replay]") {

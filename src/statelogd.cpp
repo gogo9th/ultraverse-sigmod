@@ -3,9 +3,13 @@
 #include <cctype>
 #include <condition_variable>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <fstream>
+#include <limits>
 #include <optional>
+#include <sstream>
 #include <pthread.h>
 #include <signal.h>
 
@@ -64,14 +68,29 @@ struct PendingTransaction {
     std::string tmp;
 };
 
+struct RowQueryTaskInput {
+    std::string database;
+    std::string statement;
+    std::vector<StateItem> itemSet;
+    std::vector<StateItem> updateSet;
+};
+
+struct RowQueryParseResult {
+    std::vector<StateItem> readSet;
+    std::vector<StateItem> writeSet;
+    state::v2::ColumnSet readColumns;
+    state::v2::ColumnSet writeColumns;
+    std::vector<StateItem> varMap;
+    bool isProcedureHint = false;
+};
+
 
 class StateLogWriterApp: public ultraverse::Application {
 public:
     StateLogWriterApp():
         Application(),
-        
-        _logger(createLogger("statelogd")),
-        _taskExecutor(1)
+
+        _logger(createLogger("statelogd"))
     {
     }
     
@@ -128,6 +147,11 @@ public:
             config.statelogd.developmentFlags.end(), "print-queries") != config.statelogd.developmentFlags.end();
         _procedureLogPath = config.statelogd.procedureLogPath;
         _oneshotMode = config.statelogd.oneshotMode;
+
+        if (_threadNum <= 0) {
+            _threadNum = 1;
+        }
+        _taskExecutor = std::make_unique<TaskExecutor>(_threadNum);
 
         writerMain();
         return 0;
@@ -273,16 +297,19 @@ public:
                         break;
                     }
 
-                    auto promise = std::make_shared<std::promise<std::shared_ptr<state::v2::Query>>>();
-                    auto pendingQuery = processQueryEvent(queryEvent, &currentTransaction->statementContext);
-                    promise->set_value(pendingQuery);
-                    currentTransaction->queries.push(promise);
+                    auto ctx = currentTransaction->statementContext;
+                    currentTransaction->statementContext.clear();
+                    auto promise = _taskExecutor->post<std::shared_ptr<state::v2::Query>>(
+                        [this, queryEvent, ctx]() mutable {
+                            return processQueryEvent(queryEvent, &ctx);
+                        });
+                    currentTransaction->queries.push(std::move(promise));
                 }
                     break;
                 case event_type::TXNID: {
                     currentTransaction->tidEvent = std::dynamic_pointer_cast<mariadb::TransactionIDEvent>(event);
                     gid_t gid = global_gid++;
-                    auto pendingTxn = _taskExecutor.post<std::shared_ptr<state::v2::Transaction>>(
+                    auto pendingTxn = _taskExecutor->post<std::shared_ptr<state::v2::Transaction>>(
                         [this, currentTransaction = std::move(currentTransaction), gid]() {
                             while (!currentTransaction->queries.empty()) {
                                 auto promise = std::move(currentTransaction->queries.front());
@@ -387,19 +414,62 @@ public:
                     });
                      */
                     auto pendingQuery = std::make_shared<state::v2::Query>();
-                    
+                    RowQueryTaskInput rowQueryTaskInput;
+                    RowQueryTaskInput *rowQueryTaskInputPtr = pendingRowQueryEvent != nullptr
+                        ? &rowQueryTaskInput
+                        : nullptr;
+
                     const bool processed = processRowEvent(
                         currentTransaction,
                         rowEvent,
                         pendingRowQueryEvent,
                         pendingQuery,
                         tableMapEvent,
-                        &currentTransaction->statementContext
+                        &currentTransaction->statementContext,
+                        rowQueryTaskInputPtr
                     );
                     // processRowQueryEvent(pendingRowQueryEvent, pendingQuery);
                     if (processed) {
-                        promise->set_value(pendingQuery);
-                        currentTransaction->queries.push(promise);
+                        if (pendingRowQueryEvent != nullptr) {
+                            auto rowQueryPromise = _taskExecutor->post<std::shared_ptr<state::v2::Query>>(
+                                [this,
+                                 transaction = currentTransaction,
+                                 pendingQuery,
+                                 rowQueryTaskInput = std::move(rowQueryTaskInput)]() mutable {
+                                    auto result = parseRowQueryEvent(std::move(rowQueryTaskInput));
+
+                                    pendingQuery->readSet().insert(
+                                        pendingQuery->readSet().end(),
+                                        result.readSet.begin(), result.readSet.end()
+                                    );
+                                    pendingQuery->writeSet().insert(
+                                        pendingQuery->writeSet().end(),
+                                        result.writeSet.begin(), result.writeSet.end()
+                                    );
+                                    pendingQuery->readColumns().insert(
+                                        result.readColumns.begin(), result.readColumns.end()
+                                    );
+                                    pendingQuery->writeColumns().insert(
+                                        result.writeColumns.begin(), result.writeColumns.end()
+                                    );
+                                    pendingQuery->varMap().insert(
+                                        pendingQuery->varMap().end(),
+                                        result.varMap.begin(), result.varMap.end()
+                                    );
+
+                                    if (result.isProcedureHint) {
+                                        std::scoped_lock lock(transaction->_procCallMutex);
+                                        assert(transaction->procCall == nullptr);
+                                        transaction->procCall = prepareProcedureCall(pendingQuery->writeSet());
+                                    }
+
+                                    return pendingQuery;
+                                });
+                            currentTransaction->queries.push(std::move(rowQueryPromise));
+                        } else {
+                            promise->set_value(pendingQuery);
+                            currentTransaction->queries.push(promise);
+                        }
                     }
                     if (rowEvent->flags() & 1) {
                         pendingRowQueryEvent = nullptr;
@@ -498,6 +568,7 @@ public:
         }
         
         std::shared_ptr<state::v2::Query> firstQuery;
+        std::shared_ptr<state::v2::Query> firstContextQuery;
         
         while (!queries.empty()) {
             auto pendingQuery = std::move(queries.front());
@@ -513,6 +584,9 @@ public:
             
             if (firstQuery == nullptr) {
                 firstQuery = pendingQuery;
+            }
+            if (firstContextQuery == nullptr && pendingQuery->hasStatementContext()) {
+                firstContextQuery = pendingQuery;
             }
             
             if (pendingQuery->flags() & state::v2::Query::FLAG_IS_DDL) {
@@ -541,6 +615,9 @@ public:
             if (firstQuery != nullptr) {
                 procCallQuery->setDatabase(firstQuery->database());
                 procCallQuery->setTimestamp(firstQuery->timestamp());
+            }
+            if (firstContextQuery != nullptr && firstContextQuery->hasStatementContext()) {
+                procCallQuery->setStatementContext(firstContextQuery->statementContext());
             }
             procCallQuery->setFlags(state::v2::Query::FLAG_IS_PROCCALL_QUERY);
             if (!inoutVars.empty()) {
@@ -728,28 +805,14 @@ public:
                          std::shared_ptr<mariadb::RowQueryEvent> rowQueryEvent,
                          std::shared_ptr<state::v2::Query> pendingQuery,
                          std::shared_ptr<mariadb::TableMapEvent> tableMapEvent,
-                         state::v2::Query::StatementContext *statementContext) {
+                         state::v2::Query::StatementContext *statementContext,
+                         RowQueryTaskInput *rowQueryTaskInput) {
         if (event == nullptr || tableMapEvent == nullptr) {
             return false;
         }
 
         event->mapToTable(*tableMapEvent);
 
-        _logger->debug("processRowEvent(): statement = {}", rowQueryEvent->statement());
-        for (const auto &item: event->itemSet()) {
-            auto copy = item;
-            copy.function_type = FUNCTION_EQ;
-
-            _logger->debug("  [DUMP] - itemSet: {}", copy.MakeRange2().MakeWhereQuery(copy.name));
-        }
-
-        for (const auto &item: event->updateSet()) {
-            auto copy = item;
-            copy.function_type = FUNCTION_EQ;
-
-            _logger->debug("  [DUMP] - updateSet: {}", copy.MakeRange2().MakeWhereQuery(copy.name));
-        }
-    
         switch (event->type()) {
             case mariadb::RowEvent::INSERT:
                 pendingQuery->setType(state::v2::Query::INSERT);
@@ -786,55 +849,13 @@ public:
                 statementContext->clear();
             }
         }
-        
-        
+
         if (rowQueryEvent != nullptr) {
-            mariadb::QueryEvent dummyEvent(pendingQuery->database(), rowQueryEvent->statement(), 0);
-
-            dummyEvent.itemSet().insert(
-                dummyEvent.itemSet().end(),
-                event->itemSet().begin(), event->itemSet().end()
-            );
-
-            dummyEvent.itemSet().insert(
-                dummyEvent.itemSet().end(),
-                event->updateSet().begin(), event->updateSet().end()
-            );
-
-            if (!dummyEvent.parse()) {
-                _logger->warn("cannot parse ROW_QUERY statement: {}", rowQueryEvent->statement());
-            }
-            dummyEvent.buildRWSet(_keyColumns);
-
-            pendingQuery->readSet().insert(
-                pendingQuery->readSet().end(),
-                dummyEvent.readSet().begin(), dummyEvent.readSet().end()
-            );
-
-            pendingQuery->writeSet().insert(
-                pendingQuery->writeSet().end(),
-                dummyEvent.writeSet().begin(), dummyEvent.writeSet().end()
-            );
-
-            {
-                state::v2::ColumnSet readColumns;
-                state::v2::ColumnSet writeColumns;
-                dummyEvent.columnRWSet(readColumns, writeColumns);
-                pendingQuery->readColumns().insert(readColumns.begin(), readColumns.end());
-                pendingQuery->writeColumns().insert(writeColumns.begin(), writeColumns.end());
-            }
-
-            pendingQuery->varMap().insert(
-                pendingQuery->varMap().end(),
-                dummyEvent.variableSet().begin(), dummyEvent.variableSet().end()
-            );
-
-            if (isProcedureHint(rowQueryEvent->statement())) {
-                std::scoped_lock lock(transaction->_procCallMutex);
-
-                assert(transaction->procCall == nullptr);
-
-                transaction->procCall = prepareProcedureCall(pendingQuery->writeSet());
+            if (rowQueryTaskInput != nullptr) {
+                rowQueryTaskInput->database = pendingQuery->database();
+                rowQueryTaskInput->statement = rowQueryEvent->statement();
+                rowQueryTaskInput->itemSet = event->itemSet();
+                rowQueryTaskInput->updateSet = event->updateSet();
             }
         } else {
             auto appendItems = [](const std::vector<StateItem> &items, std::vector<StateItem> &target) {
@@ -869,6 +890,37 @@ public:
         }
 
         return true;
+    }
+
+    RowQueryParseResult parseRowQueryEvent(RowQueryTaskInput taskInput) {
+        RowQueryParseResult result;
+        mariadb::QueryEvent dummyEvent(taskInput.database, taskInput.statement, 0);
+
+        dummyEvent.itemSet().insert(
+            dummyEvent.itemSet().end(),
+            std::make_move_iterator(taskInput.itemSet.begin()),
+            std::make_move_iterator(taskInput.itemSet.end())
+        );
+
+        dummyEvent.itemSet().insert(
+            dummyEvent.itemSet().end(),
+            std::make_move_iterator(taskInput.updateSet.begin()),
+            std::make_move_iterator(taskInput.updateSet.end())
+        );
+
+        if (!dummyEvent.parse()) {
+            _logger->warn("cannot parse ROW_QUERY statement: {}", taskInput.statement);
+        }
+        dummyEvent.buildRWSet(_keyColumns);
+
+        result.readSet = std::move(dummyEvent.readSet());
+        result.writeSet = std::move(dummyEvent.writeSet());
+        result.varMap = std::move(dummyEvent.variableSet());
+
+        dummyEvent.columnRWSet(result.readColumns, result.writeColumns);
+        result.isProcedureHint = isProcedureHint(taskInput.statement);
+
+        return result;
     }
     
     void terminateProcess() {
@@ -1061,7 +1113,9 @@ public:
             case en_column_data_double: {
                 double value = 0.0;
                 data.Get(value);
-                return std::to_string(value);
+                std::ostringstream out;
+                out << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
+                return out.str();
             }
             case en_column_data_decimal: {
                 std::string value;
@@ -1332,7 +1386,7 @@ private:
     static constexpr size_t kMaxPendingTransactions = 128;
 
     LoggerPtr _logger;
-    TaskExecutor _taskExecutor;
+    std::unique_ptr<TaskExecutor> _taskExecutor;
 
     std::string _binlogIndexPath;
     std::string _stateLogName;

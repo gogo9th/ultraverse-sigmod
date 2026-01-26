@@ -204,22 +204,19 @@ namespace ultraverse::state::v2 {
             throw std::runtime_error("mocked cluster store is empty");
         }
 
-        std::istringstream stream(_data);
         ultraverse::state::v2::proto::StateCluster protoCluster;
-        if (!protoCluster.ParseFromIstream(&stream)) {
+        if (!protoCluster.ParseFromString(_data)) {
             throw std::runtime_error("failed to read mocked state cluster protobuf");
         }
         cluster.fromProtobuf(protoCluster);
     }
 
     void MockedStateClusterStore::save(StateCluster &cluster) {
-        std::ostringstream stream;
         ultraverse::state::v2::proto::StateCluster protoCluster;
         cluster.toProtobuf(&protoCluster);
-        if (!protoCluster.SerializeToOstream(&stream)) {
+        if (!protoCluster.SerializeToString(&_data)) {
             throw std::runtime_error("failed to serialize mocked state cluster protobuf");
         }
-        _data = stream.str();
     }
 
     const std::string &MockedStateClusterStore::data() const {

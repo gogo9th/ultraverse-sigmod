@@ -8,6 +8,7 @@ namespace ultraverse::state::v2 {
     StateChangePlan::StateChangePlan():
         _startGid(0),
         _endGid(0),
+        _hasGidRange(false),
         _replayFromGid(0),
         _hasReplayFromGid(false),
         _threadNum(4),
@@ -56,6 +57,7 @@ namespace ultraverse::state::v2 {
     
     void StateChangePlan::setStartGid(gid_t startGid) {
         _startGid = startGid;
+        _hasGidRange = true;
     }
     
     gid_t StateChangePlan::endGid() const {
@@ -64,6 +66,11 @@ namespace ultraverse::state::v2 {
     
     void StateChangePlan::setEndGid(gid_t endGid) {
         _endGid = endGid;
+        _hasGidRange = true;
+    }
+
+    bool StateChangePlan::hasGidRange() const {
+        return _hasGidRange;
     }
 
     gid_t StateChangePlan::replayFromGid() const {

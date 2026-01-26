@@ -102,6 +102,7 @@ namespace ultraverse::state::v2 {
         
         std::vector<StateItem> buildWhereItemSet(
             const std::string& primaryTable,
+            const std::vector<std::string>& tableNames,
             const ultparser::DMLQueryExpr& whereExpr,
             const SymbolTable& symbols,
             std::vector<std::string>& unresolvedVars

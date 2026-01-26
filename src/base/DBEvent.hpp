@@ -177,7 +177,7 @@ namespace ultraverse::base {
         bool processUpdate(const ultparser::DMLQuery &dmlQuery);
         bool processDelete(const ultparser::DMLQuery &dmlQuery);
         
-        bool processWhere(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr);
+        bool processWhere(const ultparser::DMLQuery &dmlQuery, const ultparser::DMLQueryExpr &expr);
         void processExprForColumns(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr, bool qualifyUnqualified = true);
     private:
         StateItem *findStateItem(const std::string &name);

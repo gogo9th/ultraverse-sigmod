@@ -134,7 +134,7 @@ namespace ultraverse::state::v2 {
 
             std::thread gcThread([&]() {
                 while (preRunning) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10000));
                     preGraph.gc();
                 }
             });
@@ -273,7 +273,7 @@ namespace ultraverse::state::v2 {
         
         std::thread gcThread([&]() {
             while (_isRunning) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+                std::this_thread::sleep_for(std::chrono::milliseconds(10000));
                 
                 // _logger->info("replay(): GC thread running...");
                 rowGraph.gc();
@@ -444,7 +444,7 @@ namespace ultraverse::state::v2 {
                             
                             applyStatementContext(handle, *query);
 
-                            logger->info("[#{}] executing query: {}", transaction->gid(), query->statement());
+                            // logger->debug("[#{}] executing query: {}", transaction->gid(), query->statement());
                             if (handle.executeQuery(query->statement()) != 0) {
                                 logger->error("query execution failed: {} / {}", handle.lastError(), query->statement());
                             }

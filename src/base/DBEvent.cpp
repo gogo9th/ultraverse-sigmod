@@ -65,8 +65,15 @@ namespace ultraverse::base {
             }
         }
         
-        assert(parseResult.statements().size() == 1);
-        auto &statement = parseResult.statements()[0];
+        const int statementCount = parseResult.statements_size();
+        if (statementCount == 0) {
+            _logger->error("parser returned no statements for SQL: {}", statement());
+            return false;
+        }
+        if (statementCount != 1) {
+            _logger->warn("parser returned {} statements; using the first for SQL: {}", statementCount, statement());
+        }
+        const auto &statement = parseResult.statements(0);
         
         if (statement.has_ddl()) {
             return processDDL(statement.ddl());
@@ -276,7 +283,7 @@ namespace ultraverse::base {
         }
         
         if (dmlQuery.has_where()) {
-            processWhere(primaryTable, dmlQuery.where());
+            processWhere(dmlQuery, dmlQuery.where());
         }
         
         return true;
@@ -324,7 +331,7 @@ namespace ultraverse::base {
         }
         
         if (dmlQuery.has_where()) {
-            processWhere(primaryTable, dmlQuery.where());
+            processWhere(dmlQuery, dmlQuery.where());
         }
         
         return true;
@@ -337,15 +344,26 @@ namespace ultraverse::base {
         _writeColumns.insert(primaryTable + ".*");
         
         if (dmlQuery.has_where()) {
-            processWhere(primaryTable, dmlQuery.where());
+            processWhere(dmlQuery, dmlQuery.where());
         }
         
         return true;
     }
     
-    bool QueryEventBase::processWhere(const std::string &primaryTable, const ultparser::DMLQueryExpr &expr) {
+    bool QueryEventBase::processWhere(const ultparser::DMLQuery &dmlQuery, const ultparser::DMLQueryExpr &expr) {
+        const std::string primaryTable = dmlQuery.table().real().identifier();
         ::ultraverse::state::WhereClauseOptions options;
         options.primaryTable = primaryTable;
+        options.tableNames.clear();
+        if (!primaryTable.empty()) {
+            options.tableNames.push_back(primaryTable);
+        }
+        for (const auto &join : dmlQuery.join()) {
+            const std::string joinTable = join.real().identifier();
+            if (!joinTable.empty()) {
+                options.tableNames.push_back(joinTable);
+            }
+        }
         options.logger = _logger;
         options.onReadColumn = [this](const std::string &columnName) {
             _readColumns.insert(columnName);
@@ -378,6 +396,37 @@ namespace ultraverse::base {
                 return true;
             }
 
+            return false;
+        };
+        options.resolveColumnIdentifier = [&options](
+            const std::string &,
+            const std::string &identifierName,
+            std::vector<std::string> &outColumns
+        ) -> bool {
+            if (identifierName.empty()) {
+                return false;
+            }
+            if (!identifierName.empty() && identifierName[0] == '@') {
+                return false;
+            }
+            std::string normalized = utility::toLower(identifierName);
+            if (normalized.find('.') != std::string::npos) {
+                outColumns.push_back(normalized);
+                return true;
+            }
+            if (!options.tableNames.empty()) {
+                for (const auto &table : options.tableNames) {
+                    if (table.empty()) {
+                        continue;
+                    }
+                    outColumns.push_back(utility::toLower(table + "." + normalized));
+                }
+                return !outColumns.empty();
+            }
+            if (!options.primaryTable.empty()) {
+                outColumns.push_back(utility::toLower(options.primaryTable + "." + normalized));
+                return true;
+            }
             return false;
         };
 
@@ -432,8 +481,27 @@ namespace ultraverse::base {
 
                 _logger->debug("processing subquery expression for columns");
                 const auto &subquery = expr.subquery();
-                const std::string subqueryPrimary = subquery.table().real().identifier();
+                std::string subqueryPrimary = subquery.table().real().identifier();
                 const std::string outerPrimary = primaryTable;
+                if (subqueryPrimary.empty()) {
+                    // If the subquery only selects from a single derived table, use its base table
+                    // as a fallback to qualify unqualified identifiers.
+                    auto resolveDerivedPrimary = [](const ultparser::DMLQuery &query) -> std::string {
+                        if (query.join_size() != 0 || query.subqueries_size() != 1) {
+                            return {};
+                        }
+                        const auto &derived = query.subqueries(0);
+                        const std::string derivedPrimary = derived.table().real().identifier();
+                        if (derivedPrimary.empty()) {
+                            return {};
+                        }
+                        if (derived.join_size() != 0 || derived.subqueries_size() != 0) {
+                            return {};
+                        }
+                        return derivedPrimary;
+                    };
+                    subqueryPrimary = resolveDerivedPrimary(subquery);
+                }
                 if (!subqueryPrimary.empty()) {
                     _relatedTables.insert(subqueryPrimary);
                 }

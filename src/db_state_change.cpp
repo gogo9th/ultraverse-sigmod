@@ -121,7 +121,7 @@ namespace ultraverse {
             "Actions:\n"
             "    make_cluster               Create cluster files\n"
             "    rollback=gid1,gid2,...     Rollback specified GIDs\n"
-            "    auto-rollback=ratio        Auto rollback with ratio\n"
+            "    auto-rollback=ratio        Auto-select rollback targets by ratio\n"
             "    prepend=gid,sqlfile        Prepend SQL file before GID\n"
             "    full-replay                Full replay\n"
             "    replay                     Replay from plan file\n";

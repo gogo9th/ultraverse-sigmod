@@ -567,7 +567,17 @@ namespace ultraverse::state::v2 {
             
             // SELECT의 WHERE 절 → readSet
             if (dml.type() == ultparser::DMLQuery::SELECT && dml.has_where()) {
-                auto whereItems = buildWhereItemSet(primaryTable, dml.where(), symbols, result.unresolvedVars);
+                std::vector<std::string> tableNames;
+                if (!primaryTable.empty()) {
+                    tableNames.push_back(primaryTable);
+                }
+                for (const auto &join : dml.join()) {
+                    const std::string joinTable = join.real().identifier();
+                    if (!joinTable.empty()) {
+                        tableNames.push_back(joinTable);
+                    }
+                }
+                auto whereItems = buildWhereItemSet(primaryTable, tableNames, dml.where(), symbols, result.unresolvedVars);
                 result.readSet.insert(result.readSet.end(), whereItems.begin(), whereItems.end());
             }
             
@@ -588,7 +598,17 @@ namespace ultraverse::state::v2 {
             else if (dml.type() == ultparser::DMLQuery::UPDATE) {
                 // WHERE 절 → readSet
                 if (dml.has_where()) {
-                    auto whereItems = buildWhereItemSet(primaryTable, dml.where(), symbols, result.unresolvedVars);
+                    std::vector<std::string> tableNames;
+                    if (!primaryTable.empty()) {
+                        tableNames.push_back(primaryTable);
+                    }
+                    for (const auto &join : dml.join()) {
+                        const std::string joinTable = join.real().identifier();
+                        if (!joinTable.empty()) {
+                            tableNames.push_back(joinTable);
+                        }
+                    }
+                    auto whereItems = buildWhereItemSet(primaryTable, tableNames, dml.where(), symbols, result.unresolvedVars);
                     result.readSet.insert(result.readSet.end(), whereItems.begin(), whereItems.end());
                 }
                 
@@ -609,7 +629,17 @@ namespace ultraverse::state::v2 {
             // DELETE 처리: WHERE → readSet + writeSet
             else if (dml.type() == ultparser::DMLQuery::DELETE) {
                 if (dml.has_where()) {
-                    auto whereItems = buildWhereItemSet(primaryTable, dml.where(), symbols, result.unresolvedVars);
+                    std::vector<std::string> tableNames;
+                    if (!primaryTable.empty()) {
+                        tableNames.push_back(primaryTable);
+                    }
+                    for (const auto &join : dml.join()) {
+                        const std::string joinTable = join.real().identifier();
+                        if (!joinTable.empty()) {
+                            tableNames.push_back(joinTable);
+                        }
+                    }
+                    auto whereItems = buildWhereItemSet(primaryTable, tableNames, dml.where(), symbols, result.unresolvedVars);
                     result.readSet.insert(result.readSet.end(), whereItems.begin(), whereItems.end());
                     result.writeSet.insert(result.writeSet.end(), whereItems.begin(), whereItems.end());
                 } else {
@@ -789,12 +819,14 @@ namespace ultraverse::state::v2 {
     
     std::vector<StateItem> ProcMatcher::buildWhereItemSet(
         const std::string& primaryTable,
+        const std::vector<std::string>& tableNames,
         const ultparser::DMLQueryExpr& whereExpr,
         const SymbolTable& symbols,
         std::vector<std::string>& unresolvedVars
     ) const {
         ::ultraverse::state::WhereClauseOptions options;
         options.primaryTable = primaryTable;
+        options.tableNames = tableNames;
         options.logger = _logger;
         options.resolveIdentifier = [&symbols, &unresolvedVars](
             const std::string&,
@@ -823,6 +855,34 @@ namespace ultraverse::state::v2 {
                 unresolvedVars.push_back(normalized);
             }
             return false;
+        };
+        options.resolveColumnIdentifier = [&symbols, &tableNames](
+            const std::string&,
+            const std::string& identifier,
+            std::vector<std::string>& outColumns
+        ) -> bool {
+            if (identifier.empty()) {
+                return false;
+            }
+            if (!identifier.empty() && identifier[0] == '@') {
+                return false;
+            }
+            const auto normalizedVar = normalizeVariableName(identifier);
+            if (!normalizedVar.empty() && symbols.find(normalizedVar) != symbols.end()) {
+                return false;
+            }
+            const auto normalized = utility::toLower(identifier);
+            if (normalized.find('.') != std::string::npos) {
+                outColumns.push_back(normalized);
+                return true;
+            }
+            for (const auto &table : tableNames) {
+                if (table.empty()) {
+                    continue;
+                }
+                outColumns.push_back(utility::toLower(table + "." + normalized));
+            }
+            return !outColumns.empty();
         };
 
         return ::ultraverse::state::buildWhereItems(whereExpr, options);

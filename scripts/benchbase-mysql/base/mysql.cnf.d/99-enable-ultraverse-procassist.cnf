@@ -1,2 +1,0 @@
-[mysqld]
-# plugin-load-add=ultraverse_procassist=ultraverse_procassist.so

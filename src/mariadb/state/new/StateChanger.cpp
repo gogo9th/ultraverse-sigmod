@@ -412,8 +412,8 @@ namespace ultraverse::state::v2 {
 
     void StateChanger::applyStatementContext(mariadb::DBHandle &dbHandle, const Query &query) {
         const auto &context = query.statementContext();
-        if (context.empty()) {
-            return;
+        if (query.timestamp() > 0) {
+            dbHandle.executeQuery(fmt::format("SET TIMESTAMP={}", query.timestamp()));
         }
 
         if (context.hasLastInsertId) {

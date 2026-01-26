@@ -17,6 +17,7 @@ NewOrder_Label:BEGIN
   DECLARE var_d_next_o_id INT DEFAULT -1;
   DECLARE var_i_price DECIMAL(5, 2);
 
+  SET @tpcc_seed := UNIX_TIMESTAMP(CURRENT_TIMESTAMP());
 
   IF ((SELECT COUNT(*) FROM customer
   WHERE C_W_ID = var_w_id AND C_D_ID = var_d_id AND C_ID = var_c_id) < 1) THEN
@@ -42,8 +43,8 @@ NewOrder_Label:BEGIN
   INSERT INTO new_order (NO_O_ID, NO_D_ID, NO_W_ID) VALUES (var_d_next_o_id, var_d_id, var_w_id);
 
   Order_Loop:WHILE (var_loop_cnt < var_o_ol_cnt) DO
-    SET var_i_id = (NonUniformRandom(8191, 7911, 1, 100000));
-    SET var_ol_quantity = RandomNumber(1, 10);
+    SET var_i_id = (NonUniformRandom(@tpcc_seed, 8191, 7911, 1, 100000));
+    SET var_ol_quantity = RandomNumber(@tpcc_seed, 1, 10);
 
     SELECT  I_PRICE INTO var_i_price  FROM item WHERE I_ID = var_i_id;
     IF (var_ol_supply_w_id = var_w_id) THEN

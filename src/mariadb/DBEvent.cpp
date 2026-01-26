@@ -6,11 +6,12 @@
 #include <sstream>
 #include <utility>
 
-#include <iomanip>
-
+#include <my_byteorder.h>
+#include <mysql/binlog/event/export/binary_log_funcs.h>
 #include "DBEvent.hpp"
 
 #include "mariadb/state/StateItem.h"
+#include "utils/log.hpp"
 
 
 namespace ultraverse::mariadb {
@@ -160,15 +161,34 @@ namespace ultraverse::mariadb {
         return _value;
     }
     
-    TableMapEvent::TableMapEvent(uint64_t tableId, std::string database, std::string table, std::vector<std::pair<column_type::Value, int>> columns, std::vector<std::string> columnNames, uint64_t timestamp):
+    TableMapEvent::TableMapEvent(uint64_t tableId,
+                                 std::string database,
+                                 std::string table,
+                                 std::vector<std::pair<column_type::Value, int>> columns,
+                                 std::vector<std::string> columnNames,
+                                 std::vector<uint8_t> unsignedFlags,
+                                 std::vector<enum_field_types> mysqlTypes,
+                                 std::vector<uint16_t> mysqlMetadata,
+                                 uint64_t timestamp):
         _timestamp(timestamp),
         _tableId(tableId),
-        _database(database),
-        _table(table),
-        _columns(columns),
-        _columnNames(columnNames)
+        _database(std::move(database)),
+        _table(std::move(table)),
+        _columns(std::move(columns)),
+        _columnNames(std::move(columnNames)),
+        _unsignedFlags(std::move(unsignedFlags)),
+        _mysqlTypes(std::move(mysqlTypes)),
+        _mysqlMetadata(std::move(mysqlMetadata))
     {
-    
+        if (_unsignedFlags.size() != _columns.size()) {
+            _unsignedFlags.resize(_columns.size(), 0);
+        }
+        if (_mysqlTypes.size() != _columns.size()) {
+            _mysqlTypes.resize(_columns.size(), MYSQL_TYPE_NULL);
+        }
+        if (_mysqlMetadata.size() != _columns.size()) {
+            _mysqlMetadata.resize(_columns.size(), 0);
+        }
     }
     
     uint64_t TableMapEvent::timestamp() {
@@ -201,6 +221,27 @@ namespace ultraverse::mariadb {
     
     std::string TableMapEvent::nameOf(int columnIndex) const {
         return _columnNames[columnIndex];
+    }
+
+    bool TableMapEvent::isUnsigned(int columnIndex) const {
+        if (columnIndex < 0 || static_cast<size_t>(columnIndex) >= _unsignedFlags.size()) {
+            return false;
+        }
+        return _unsignedFlags[columnIndex] != 0;
+    }
+
+    enum_field_types TableMapEvent::mysqlTypeOf(int columnIndex) const {
+        if (columnIndex < 0 || static_cast<size_t>(columnIndex) >= _mysqlTypes.size()) {
+            return MYSQL_TYPE_NULL;
+        }
+        return _mysqlTypes[columnIndex];
+    }
+
+    uint16_t TableMapEvent::mysqlMetadataOf(int columnIndex) const {
+        if (columnIndex < 0 || static_cast<size_t>(columnIndex) >= _mysqlMetadata.size()) {
+            return 0;
+        }
+        return _mysqlMetadata[columnIndex];
     }
     
     RowQueryEvent::RowQueryEvent(const std::string &statement, uint64_t timestamp):
@@ -371,16 +412,42 @@ namespace ultraverse::mariadb {
             return (nullFields[usedColumnIndex / 8] & (1u << (usedColumnIndex % 8))) != 0;
         };
 
+        auto readLengthLE = [](const uchar *raw, size_t lenBytes) -> uint32_t {
+            switch (lenBytes) {
+                case 1:
+                    return raw[0];
+                case 2:
+                    return static_cast<uint32_t>(uint2korr(raw));
+                case 3:
+                    return static_cast<uint32_t>(uint3korr(raw));
+                case 4:
+                    return static_cast<uint32_t>(uint4korr(raw));
+                default:
+                    return 0;
+            }
+        };
+
+        const size_t dataSize = static_cast<size_t>(_dataSize);
+        const size_t basePosSize = static_cast<size_t>(basePos);
+
         for (int i = 0; i < _columns; i++) {
             if (!isColumnUsed(i)) {
                 continue;
             }
 
-            auto columnType = tableMapEvent.typeOf(i);
-            int columnSize = tableMapEvent.sizeOf(i);
             auto columnName = tableMapEvent.nameOf(i);
+            auto fullName = tableMapEvent.table() + "." + columnName;
+            auto mysqlType = tableMapEvent.mysqlTypeOf(i);
+            auto mysqlMeta = tableMapEvent.mysqlMetadataOf(i);
+            auto columnSize = tableMapEvent.sizeOf(i);
 
-            auto offset = basePos + nullFieldsSize + rowSize;
+            auto offset = static_cast<size_t>(basePos + nullFieldsSize + rowSize);
+            if (offset >= dataSize) {
+                warning("RowEvent: row offset out of range (offset=%zu, size=%zu)", offset, dataSize);
+                return std::make_pair(sstream.str(), static_cast<int>(dataSize - basePosSize));
+            }
+            size_t remaining = dataSize - offset;
+            const uchar *raw = reinterpret_cast<const uchar *>(_rowData.get() + offset);
 
             if (!first) {
                 sstream << ":";
@@ -394,202 +461,268 @@ namespace ultraverse::mariadb {
             }
             usedIndex++;
 
-            if (columnType == column_type::STRING) {
-                uint64_t strLength = 0;
-                size_t strLengthSize = 1;
+            uint32_t fieldLen = calc_field_size(static_cast<unsigned char>(mysqlType), raw, mysqlMeta);
+            bool fieldLenUnknown = (fieldLen == UINT_MAX);
+            if (fieldLenUnknown) {
+                fieldLen = 0;
+            }
 
-                if (columnSize == -1) {
-                    strLength = (_rowData.get()[offset]);
-                } else if (columnSize == -2) {
-                    strLength = static_cast<uint64_t>(readValue<uint16_t>(offset));
-                    strLengthSize = 2;
-                } else if (columnSize == -3) {
-                    strLength = static_cast<uint64_t>(_rowData.get()[offset]) |
-                                (static_cast<uint64_t>(_rowData.get()[offset + 1]) << 8) |
-                                (static_cast<uint64_t>(_rowData.get()[offset + 2]) << 16);
-                    strLengthSize = 3;
-                } else if (columnSize == -4) {
-                    strLength = static_cast<uint64_t>(readValue<uint32_t>(offset));
-                    strLengthSize = 4;
-                } else if (columnSize == -8) {
-                    strLength = readValue<uint64_t>(offset);
-                    strLengthSize = 8;
-                } else {
-                    strLength = columnSize;
-                    strLengthSize = 0;
-                }
-
-                std::unique_ptr<uint8_t> rawValue(new uint8_t[strLength]);
-                memcpy(rawValue.get(), _rowData.get() + offset + strLengthSize, strLength);
-
-                std::string strValue((char *) rawValue.get(), strLength);
-                sstream << columnName << "=" << strValue;
-
-                {
-                    StateItem candidateItem;
-                    StateData data;
-
-                    data.Set(strValue.c_str(), strLength);
-                    candidateItem.data_list.emplace_back(std::move(data));
-                    candidateItem.function_type = FUNCTION_EQ;
-                    candidateItem.name = tableMapEvent.table() + "." + columnName;
-
-                    if (isUpdate) {
-                        _updateSet.emplace_back(std::move(candidateItem));
-                    } else {
-                        _itemSet.emplace_back(std::move(candidateItem));
-                    }
-                }
-
-                rowSize += strLength + strLengthSize;
-            } else if (columnType == column_type::DATETIME) {
-                std::unique_ptr<uint8_t> rawValue(new uint8_t[columnSize]);
-                memcpy(rawValue.get(), _rowData.get() + offset, columnSize);
-
-                std::string strValue((char *) rawValue.get(), columnSize);
-                sstream << columnName << "=" << strValue;
-
-                {
-                    StateItem candidateItem;
-                    StateData data;
-
-                    data.Set(strValue.c_str(), columnSize);
-                    candidateItem.data_list.emplace_back(std::move(data));
-                    candidateItem.function_type = FUNCTION_EQ;
-                    candidateItem.name = tableMapEvent.table() + "." + columnName;
-
-                    if (isUpdate) {
-                        _updateSet.emplace_back(std::move(candidateItem));
-                    } else {
-                        _itemSet.emplace_back(std::move(candidateItem));
-                    }
-                }
-
-                rowSize += columnSize;
-            } else if (columnType == column_type::DECIMAL) {
+            auto pushItem = [&](StateData &&data) {
                 StateItem candidateItem;
-                StateData data;
-
-                uint8_t precision = columnSize & 0xff;
-                uint8_t scale     = columnSize >> 8;
-
-                uint8_t size = (precision + 1) / 2;
-
-                std::unique_ptr<uint8_t> rawValue(new uint8_t[size]);
-                memcpy(rawValue.get(), _rowData.get() + offset, size);
-
-                bool sign = false;
-                uint64_t high = 0;
-                uint64_t low = 0;
-
-                int i = 0;
-                while (i < size) {
-                    uint8_t value = rawValue.get()[i];
-
-                    if (i == 0) {
-                        sign = value & 0x80;
-                        value = value ^ 0x80;
-                    }
-
-                    if (i < ((precision - scale) + 1) / 2) {
-                        high = (high << 8) + value;
-                    } else {
-                        low = (low << 8) + value;
-                    }
-
-                    i++;
-                }
-
-                std::stringstream replStream;
-
-                if (!sign) {
-                    replStream << '-';
-                }
-
-                replStream << high << "."
-                           << std::setfill('0') << std::setw(scale) << low;
-
-                std::string replVal = replStream.str();
-
-                data.SetDecimal(replVal.c_str(), replVal.size());
-
                 candidateItem.data_list.emplace_back(std::move(data));
                 candidateItem.function_type = FUNCTION_EQ;
-                candidateItem.name = tableMapEvent.table() + "." + columnName;
-
+                candidateItem.name = fullName;
                 if (isUpdate) {
                     _updateSet.emplace_back(std::move(candidateItem));
                 } else {
                     _itemSet.emplace_back(std::move(candidateItem));
                 }
+            };
 
-                sstream << columnName << "=" << replVal;
+            bool handled = false;
+            switch (mysqlType) {
+                case MYSQL_TYPE_NEWDECIMAL: {
+                    StateData data;
+                    data.SetDecimal(reinterpret_cast<const char *>(raw), static_cast<size_t>(fieldLen));
+                    pushItem(std::move(data));
 
-                rowSize += size;
-            } else {
-                StateItem candidateItem;
-                StateData data;
+                    std::string hex;
+                    hex.reserve(static_cast<size_t>(fieldLen) * 2);
+                    static const char kHex[] = "0123456789ABCDEF";
+                    for (uint32_t j = 0; j < fieldLen; j++) {
+                        uint8_t value = raw[j];
+                        hex.push_back(kHex[(value >> 4) & 0x0F]);
+                        hex.push_back(kHex[value & 0x0F]);
+                    }
+                    sstream << columnName << "=X'" << hex << "'";
+                    handled = true;
+                }
+                    break;
+                case MYSQL_TYPE_FLOAT:
+                case MYSQL_TYPE_DOUBLE: {
+                    StateData data;
+                    double value = 0.0;
+                    if (fieldLen == 4) {
+                        value = float4get(raw);
+                        sstream << columnName << "=" << "F32!" << value;
+                    } else if (fieldLen == 8) {
+                        value = float8get(raw);
+                        sstream << columnName << "=" << "F64!" << value;
+                    } else {
+                        sstream << columnName << "=";
+                    }
+                    data.Set(value);
+                    pushItem(std::move(data));
+                    handled = true;
+                }
+                    break;
+                case MYSQL_TYPE_TINY:
+                case MYSQL_TYPE_SHORT:
+                case MYSQL_TYPE_INT24:
+                case MYSQL_TYPE_LONG:
+                case MYSQL_TYPE_LONGLONG:
+                case MYSQL_TYPE_YEAR:
+                case MYSQL_TYPE_BOOL: {
+                    StateData data;
+                    const bool isUnsigned = tableMapEvent.isUnsigned(i);
+                    if (isUnsigned) {
+                        uint64_t value = 0;
+                        switch (fieldLen) {
+                            case 8:
+                                value = static_cast<uint64_t>(uint8korr(raw));
+                                sstream << columnName << "=" << "U64!" << value;
+                                break;
+                            case 4:
+                                value = static_cast<uint64_t>(uint4korr(raw));
+                                sstream << columnName << "=" << "U32!" << value;
+                                break;
+                            case 3:
+                                value = static_cast<uint64_t>(uint3korr(raw));
+                                sstream << columnName << "=" << "U24!" << value;
+                                break;
+                            case 2:
+                                value = static_cast<uint64_t>(uint2korr(raw));
+                                sstream << columnName << "=" << "U16!" << value;
+                                break;
+                            case 1:
+                                value = static_cast<uint64_t>(raw[0]);
+                                sstream << columnName << "=" << "U8!" << value;
+                                break;
+                            default:
+                                sstream << columnName << "=";
+                                break;
+                        }
+                        data.Set(value);
+                    } else {
+                        int64_t value = 0;
+                        switch (fieldLen) {
+                            case 8:
+                                value = static_cast<int64_t>(sint8korr(raw));
+                                sstream << columnName << "=" << "I64!" << value;
+                                break;
+                            case 4:
+                                value = static_cast<int64_t>(sint4korr(raw));
+                                sstream << columnName << "=" << "I32!" << value;
+                                break;
+                            case 3:
+                                value = static_cast<int64_t>(sint3korr(raw));
+                                sstream << columnName << "=" << "I24!" << value;
+                                break;
+                            case 2:
+                                value = static_cast<int64_t>(sint2korr(raw));
+                                sstream << columnName << "=" << "I16!" << value;
+                                break;
+                            case 1:
+                                value = static_cast<int64_t>(static_cast<int8_t>(raw[0]));
+                                sstream << columnName << "=" << "I8!" << value;
+                                break;
+                            default:
+                                sstream << columnName << "=";
+                                break;
+                        }
+                        data.Set(value);
+                    }
+                    pushItem(std::move(data));
+                    handled = true;
+                }
+                    break;
+                default:
+                    break;
+            }
 
-                if (columnType == column_type::INTEGER) {
-                    int64_t value;
-                    switch (columnSize) {
+            if (!handled) {
+                uint32_t dataLen = fieldLen;
+                size_t prefixLen = 0;
+                const uchar *dataPtr = raw;
+                bool treatAsInteger = false;
+                bool hasLengthPrefix = false;
+                switch (mysqlType) {
+                    case MYSQL_TYPE_VARCHAR:
+                    case MYSQL_TYPE_VAR_STRING:
+                        if (mysqlMeta == 0 && columnSize < 0) {
+                            prefixLen = static_cast<size_t>(-columnSize);
+                        } else {
+                            prefixLen = (mysqlMeta > 255) ? 2 : 1;
+                        }
+                        hasLengthPrefix = true;
+                        break;
+                    case MYSQL_TYPE_STRING: {
+                        uint8_t realType = static_cast<uint8_t>(mysqlMeta >> 8);
+                        uint8_t packLen = static_cast<uint8_t>(mysqlMeta & 0xFF);
+                        if (realType == MYSQL_TYPE_ENUM || realType == MYSQL_TYPE_SET) {
+                            treatAsInteger = true;
+                            dataLen = packLen;
+                            dataPtr = raw;
+                        } else {
+                            if (mysqlMeta == 0 && columnSize < 0) {
+                                prefixLen = static_cast<size_t>(-columnSize);
+                            } else {
+                                prefixLen = (max_display_length_for_field(MYSQL_TYPE_STRING, mysqlMeta) > 255) ? 2 : 1;
+                            }
+                            hasLengthPrefix = true;
+                        }
+                    }
+                        break;
+                    case MYSQL_TYPE_TINY_BLOB:
+                    case MYSQL_TYPE_BLOB:
+                    case MYSQL_TYPE_MEDIUM_BLOB:
+                    case MYSQL_TYPE_LONG_BLOB:
+                    case MYSQL_TYPE_GEOMETRY:
+                    case MYSQL_TYPE_JSON:
+                        if (mysqlMeta == 0 && columnSize < 0) {
+                            prefixLen = static_cast<size_t>(-columnSize);
+                        } else {
+                            prefixLen = mysqlMeta;
+                        }
+                        hasLengthPrefix = true;
+                        break;
+                    case MYSQL_TYPE_BIT:
+                        dataLen = fieldLen;
+                        dataPtr = raw;
+                        break;
+                    case MYSQL_TYPE_DATE:
+                    case MYSQL_TYPE_TIME:
+                    case MYSQL_TYPE_DATETIME:
+                    case MYSQL_TYPE_TIMESTAMP:
+                    case MYSQL_TYPE_TIME2:
+                    case MYSQL_TYPE_DATETIME2:
+                    case MYSQL_TYPE_TIMESTAMP2:
+                        dataLen = fieldLen;
+                        dataPtr = raw;
+                        break;
+                    default:
+                        dataLen = fieldLen;
+                        dataPtr = raw;
+                        break;
+                }
+
+                if (hasLengthPrefix) {
+                    if (prefixLen > remaining) {
+                        warning("RowEvent: length prefix exceeds remaining bytes (prefix=%zu, remaining=%zu)",
+                                prefixLen, remaining);
+                        return std::make_pair(sstream.str(), static_cast<int>(dataSize - basePosSize));
+                    }
+                    dataLen = readLengthLE(raw, prefixLen);
+                    dataPtr = raw + prefixLen;
+                    size_t maxData = remaining - prefixLen;
+                    if (dataLen > maxData) {
+                        warning("RowEvent: data length exceeds remaining bytes (len=%u, remaining=%zu)",
+                                dataLen, remaining);
+                        dataLen = static_cast<uint32_t>(maxData);
+                    }
+                    fieldLen = static_cast<uint32_t>(prefixLen) + dataLen;
+                } else if (fieldLen == 0 && fieldLenUnknown && mysqlType != MYSQL_TYPE_NULL) {
+                    warning("RowEvent: unknown field length for type %u", static_cast<unsigned int>(mysqlType));
+                    return std::make_pair(sstream.str(), static_cast<int>(dataSize - basePosSize));
+                } else if (fieldLen > remaining) {
+                    warning("RowEvent: field length exceeds remaining bytes (len=%u, remaining=%zu)",
+                            fieldLen, remaining);
+                    fieldLen = static_cast<uint32_t>(remaining);
+                    dataLen = fieldLen;
+                } else if (fieldLen >= prefixLen && dataLen > (fieldLen - prefixLen)) {
+                    dataLen = fieldLen - static_cast<uint32_t>(prefixLen);
+                }
+
+                if (treatAsInteger) {
+                    StateData data;
+                    uint64_t value = 0;
+                    switch (dataLen) {
                         case 8:
-                            value = readValue<int64_t>(offset);
-                            sstream << columnName << "=" << "I64!" << value;
+                            value = static_cast<uint64_t>(uint8korr(dataPtr));
+                            sstream << columnName << "=" << "U64!" << value;
                             break;
                         case 4:
-                            value = readValue<int32_t>(offset);
-                            sstream << columnName << "=" << "I32!" << value;
+                            value = static_cast<uint64_t>(uint4korr(dataPtr));
+                            sstream << columnName << "=" << "U32!" << value;
                             break;
                         case 3:
-                            value =
-                                static_cast<int32_t>(_rowData.get()[offset]) |
-                                (static_cast<int32_t>(_rowData.get()[offset + 1]) << 8) |
-                                (static_cast<int32_t>(_rowData.get()[offset + 2]) << 16);
-                            if (value & 0x800000) {
-                                value |= 0xff000000;
-                            }
-                            sstream << columnName << "=" << "I24!" << value;
+                            value = static_cast<uint64_t>(uint3korr(dataPtr));
+                            sstream << columnName << "=" << "U24!" << value;
                             break;
                         case 2:
-                            value = readValue<int16_t>(offset);
-                            sstream << columnName << "=" << "I16!" << value;
+                            value = static_cast<uint64_t>(uint2korr(dataPtr));
+                            sstream << columnName << "=" << "U16!" << value;
                             break;
                         case 1:
-                            value = readValue<int8_t>(offset);
-                            sstream << columnName << "=" << "I8!" << value;
+                            value = static_cast<uint64_t>(dataPtr[0]);
+                            sstream << columnName << "=" << "U8!" << value;
+                            break;
+                        default:
+                            sstream << columnName << "=";
                             break;
                     }
-
                     data.Set(value);
-                } else if (columnType == column_type::FLOAT) {
-                    double value;
-                    switch (columnSize) {
-                        case 8:
-                            value = readValue<double>(offset);
-                            sstream << columnName << "=" << "F64!" << value;
-                            break;
-                        case 4:
-                            value = readValue<float>(offset);
-                            sstream << columnName << "=" << "F32!" << value;
-                            break;
-                    }
-
-                    data.Set(value);
-                }
-
-                candidateItem.data_list.emplace_back(std::move(data));
-                candidateItem.function_type = FUNCTION_EQ;
-                candidateItem.name = tableMapEvent.table() + "." + columnName;
-
-                if (isUpdate) {
-                    _updateSet.emplace_back(std::move(candidateItem));
+                    pushItem(std::move(data));
                 } else {
-                    _itemSet.emplace_back(std::move(candidateItem));
+                    std::string strValue(reinterpret_cast<const char *>(dataPtr), dataLen);
+                    sstream << columnName << "=" << strValue;
+                    StateData data;
+                    data.Set(strValue.c_str(), dataLen);
+                    pushItem(std::move(data));
                 }
-
-                rowSize += columnSize;
             }
+
+            rowSize += static_cast<int>(fieldLen);
         }
 
         return std::make_pair(sstream.str(), nullFieldsSize + rowSize);

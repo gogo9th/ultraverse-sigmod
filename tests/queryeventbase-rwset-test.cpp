@@ -305,6 +305,19 @@ TEST_CASE("QueryEventBase columnRWSet SELECT with IN subquery collects subquery 
     REQUIRE(parsed.writeColumns.empty());
 }
 
+TEST_CASE("QueryEventBase columnRWSet SELECT with IN subquery from derived table") {
+    auto parsed = parseColumns(
+        "SELECT * FROM users "
+        "WHERE id IN (SELECT user_id FROM (SELECT user_id FROM orders WHERE status = 'paid') AS order_alias);"
+    );
+
+    REQUIRE(parsed.readColumns.count("users.id") == 1);
+    // Derived subquery columns should be qualified to base table
+    REQUIRE(parsed.readColumns.count("orders.user_id") == 1);
+    REQUIRE(parsed.readColumns.count("orders.status") == 1);
+    REQUIRE(parsed.writeColumns.empty());
+}
+
 TEST_CASE("QueryEventBase columnRWSet SELECT with EXISTS subquery collects subquery columns") {
     auto parsed = parseColumns(
         "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id);"

@@ -68,6 +68,24 @@ namespace ultraverse::mariadb {
             }
         }
 
+        bool hasSignednessInfo(enum_field_types type) {
+            switch (type) {
+                case MYSQL_TYPE_TINY:
+                case MYSQL_TYPE_SHORT:
+                case MYSQL_TYPE_INT24:
+                case MYSQL_TYPE_LONG:
+                case MYSQL_TYPE_LONGLONG:
+                case MYSQL_TYPE_YEAR:
+                case MYSQL_TYPE_FLOAT:
+                case MYSQL_TYPE_DOUBLE:
+                case MYSQL_TYPE_DECIMAL:
+                case MYSQL_TYPE_NEWDECIMAL:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         bool readNetFieldLength(const unsigned char *&ptr, const unsigned char *end, uint64_t &out) {
             if (ptr >= end) {
                 return false;
@@ -78,8 +96,7 @@ namespace ultraverse::mariadb {
                 return true;
             }
             if (value1 == 0xfb) {
-                out = 0;
-                return true;
+                return false;
             }
             if (value1 == 0xfc) {
                 if (ptr + 2 > end) return false;
@@ -436,6 +453,7 @@ namespace ultraverse::mariadb {
         }
 
         std::vector<std::string> columnNames;
+        std::vector<bool> signednessBits;
         if (event.m_optional_metadata_len > 0) {
             mysql::binlog::event::Table_map_event::Optional_metadata_fields metadata(
                 event.m_optional_metadata,
@@ -446,6 +464,7 @@ namespace ultraverse::mariadb {
                 return nullptr;
             }
             columnNames = metadata.m_column_name;
+            signednessBits = metadata.m_signedness;
         }
 
         if (columnNames.size() != event.m_colcnt) {
@@ -456,6 +475,13 @@ namespace ultraverse::mariadb {
 
         std::vector<std::pair<column_type::Value, int>> columnDefs;
         columnDefs.reserve(event.m_colcnt);
+        std::vector<uint8_t> unsignedFlags;
+        unsignedFlags.reserve(event.m_colcnt);
+        std::vector<enum_field_types> mysqlTypes;
+        mysqlTypes.reserve(event.m_colcnt);
+        std::vector<uint16_t> mysqlMetadata;
+        mysqlMetadata.reserve(event.m_colcnt);
+        size_t numericIndex = 0;
 
         const unsigned char *metadata = event.m_field_metadata;
         size_t metadataSize = event.m_field_metadata_size;
@@ -463,6 +489,15 @@ namespace ultraverse::mariadb {
 
         for (unsigned long i = 0; i < event.m_colcnt; i++) {
             auto binlogType = static_cast<enum_field_types>(event.m_coltype[i]);
+            bool isUnsigned = false;
+            if (hasSignednessInfo(binlogType)) {
+                if (numericIndex < signednessBits.size()) {
+                    isUnsigned = signednessBits[numericIndex];
+                }
+                numericIndex++;
+            }
+            unsignedFlags.push_back(isUnsigned ? 1 : 0);
+            mysqlTypes.push_back(binlogType);
 
             auto requireMetadata = [&](size_t need) -> bool {
                 if (metadataPos + need > metadataSize) {
@@ -471,6 +506,20 @@ namespace ultraverse::mariadb {
                 }
                 return true;
             };
+            auto readMetadataBE2 = [&]() -> uint16_t {
+                uint16_t value =
+                    static_cast<uint16_t>(metadata[metadataPos]) << 8 |
+                    static_cast<uint16_t>(metadata[metadataPos + 1]);
+                metadataPos += 2;
+                return value;
+            };
+            auto readMetadataLE2 = [&]() -> uint16_t {
+                uint16_t value = readUint16LE(metadata + metadataPos);
+                metadataPos += 2;
+                return value;
+            };
+
+            uint16_t fieldMetadata = 0;
 
             switch (binlogType) {
                 case MYSQL_TYPE_BOOL:
@@ -496,29 +545,26 @@ namespace ultraverse::mariadb {
                     if (!requireMetadata(1)) {
                         return nullptr;
                     }
-                    uint8_t size = metadata[metadataPos];
+                    fieldMetadata = metadata[metadataPos];
                     metadataPos += 1;
-                    columnDefs.emplace_back(column_type::FLOAT, size == 8 ? 8 : 4);
+                    columnDefs.emplace_back(column_type::FLOAT, fieldMetadata == 8 ? 8 : 4);
                 }
                     break;
                 case MYSQL_TYPE_DOUBLE: {
                     if (!requireMetadata(1)) {
                         return nullptr;
                     }
-                    uint8_t size = metadata[metadataPos];
+                    fieldMetadata = metadata[metadataPos];
                     metadataPos += 1;
-                    columnDefs.emplace_back(column_type::FLOAT, size == 4 ? 4 : 8);
+                    columnDefs.emplace_back(column_type::FLOAT, fieldMetadata == 4 ? 4 : 8);
                 }
                     break;
                 case MYSQL_TYPE_NEWDECIMAL: {
                     if (!requireMetadata(2)) {
                         return nullptr;
                     }
-                    uint16_t precisionAndScale =
-                        static_cast<uint16_t>(metadata[metadataPos]) |
-                        (static_cast<uint16_t>(metadata[metadataPos + 1]) << 8);
-                    metadataPos += 2;
-                    columnDefs.emplace_back(column_type::DECIMAL, precisionAndScale);
+                    fieldMetadata = readMetadataBE2();
+                    columnDefs.emplace_back(column_type::DECIMAL, fieldMetadata);
                 }
                     break;
                 case MYSQL_TYPE_DECIMAL:
@@ -529,8 +575,8 @@ namespace ultraverse::mariadb {
                     if (!requireMetadata(2)) {
                         return nullptr;
                     }
-                    uint16_t maxLen = readUint16LE(metadata + metadataPos);
-                    metadataPos += 2;
+                    fieldMetadata = readMetadataLE2();
+                    uint16_t maxLen = fieldMetadata;
                     int lenBytes = (maxLen <= UINT8_MAX) ? 1 : 2;
                     columnDefs.emplace_back(column_type::STRING, -lenBytes);
                 }
@@ -539,9 +585,9 @@ namespace ultraverse::mariadb {
                     if (!requireMetadata(2)) {
                         return nullptr;
                     }
-                    uint8_t byte0 = metadata[metadataPos];
-                    uint8_t byte1 = metadata[metadataPos + 1];
-                    metadataPos += 2;
+                    fieldMetadata = readMetadataBE2();
+                    uint8_t byte0 = static_cast<uint8_t>(fieldMetadata >> 8);
+                    uint8_t byte1 = static_cast<uint8_t>(fieldMetadata & 0xFF);
 
                     if (byte0 == MYSQL_TYPE_ENUM || byte0 == MYSQL_TYPE_SET) {
                         columnDefs.emplace_back(column_type::INTEGER, byte1 == 0 ? 1 : byte1);
@@ -555,9 +601,10 @@ namespace ultraverse::mariadb {
                     if (!requireMetadata(2)) {
                         return nullptr;
                     }
-                    uint8_t bits = metadata[metadataPos];
-                    uint8_t bytes = metadata[metadataPos + 1];
-                    metadataPos += 2;
+                    fieldMetadata = static_cast<uint16_t>(metadata[metadataPos]) |
+                                    (static_cast<uint16_t>(metadata[metadataPos + 1]) << 8);
+                    uint8_t bits = static_cast<uint8_t>(fieldMetadata & 0xFF);
+                    uint8_t bytes = static_cast<uint8_t>((fieldMetadata >> 8) & 0xFF);
                     uint16_t totalBits = static_cast<uint16_t>(bytes) * 8 + bits;
                     int lengthBytes = (totalBits + 7) / 8;
                     columnDefs.emplace_back(column_type::STRING, lengthBytes);
@@ -572,8 +619,9 @@ namespace ultraverse::mariadb {
                     if (!requireMetadata(1)) {
                         return nullptr;
                     }
-                    uint8_t lengthBytes = metadata[metadataPos];
+                    fieldMetadata = metadata[metadataPos];
                     metadataPos += 1;
+                    uint8_t lengthBytes = static_cast<uint8_t>(fieldMetadata);
                     if (lengthBytes == 0 || lengthBytes > 4) {
                         _logger->warn("invalid blob length bytes: {}", lengthBytes);
                         return nullptr;
@@ -595,8 +643,9 @@ namespace ultraverse::mariadb {
                     if (!requireMetadata(1)) {
                         return nullptr;
                     }
-                    uint8_t fsp = metadata[metadataPos];
+                    fieldMetadata = metadata[metadataPos];
                     metadataPos += 1;
+                    uint8_t fsp = static_cast<uint8_t>(fieldMetadata);
                     columnDefs.emplace_back(column_type::DATETIME, 3 + ((fsp + 1) / 2));
                 }
                     break;
@@ -604,8 +653,9 @@ namespace ultraverse::mariadb {
                     if (!requireMetadata(1)) {
                         return nullptr;
                     }
-                    uint8_t fsp = metadata[metadataPos];
+                    fieldMetadata = metadata[metadataPos];
                     metadataPos += 1;
+                    uint8_t fsp = static_cast<uint8_t>(fieldMetadata);
                     columnDefs.emplace_back(column_type::DATETIME, 5 + ((fsp + 1) / 2));
                 }
                     break;
@@ -613,8 +663,9 @@ namespace ultraverse::mariadb {
                     if (!requireMetadata(1)) {
                         return nullptr;
                     }
-                    uint8_t fsp = metadata[metadataPos];
+                    fieldMetadata = metadata[metadataPos];
                     metadataPos += 1;
+                    uint8_t fsp = static_cast<uint8_t>(fieldMetadata);
                     columnDefs.emplace_back(column_type::DATETIME, 4 + ((fsp + 1) / 2));
                 }
                     break;
@@ -623,8 +674,8 @@ namespace ultraverse::mariadb {
                     if (!requireMetadata(2)) {
                         return nullptr;
                     }
-                    uint8_t packLen = metadata[metadataPos + 1];
-                    metadataPos += 2;
+                    fieldMetadata = readMetadataBE2();
+                    uint8_t packLen = static_cast<uint8_t>(fieldMetadata & 0xFF);
                     columnDefs.emplace_back(column_type::INTEGER, packLen == 0 ? 1 : packLen);
                 }
                     break;
@@ -638,6 +689,19 @@ namespace ultraverse::mariadb {
                     _logger->warn("unsupported field type {} in table map event", static_cast<int>(binlogType));
                     return nullptr;
             }
+
+            mysqlMetadata.push_back(fieldMetadata);
+        }
+
+        if (!signednessBits.empty()) {
+            size_t expectedBits = ((numericIndex + 7) / 8) * 8;
+            if (signednessBits.size() < numericIndex) {
+                _logger->warn("signedness metadata shorter than numeric columns (numeric {}, bits {})",
+                              numericIndex, signednessBits.size());
+            } else if (signednessBits.size() != expectedBits) {
+                _logger->warn("signedness metadata length mismatch (numeric {}, bits {}, expected {})",
+                              numericIndex, signednessBits.size(), expectedBits);
+            }
         }
 
         auto timestamp = event.header()->when.tv_sec;
@@ -647,6 +711,9 @@ namespace ultraverse::mariadb {
             event.get_table_name(),
             columnDefs,
             columnNames,
+            unsignedFlags,
+            mysqlTypes,
+            mysqlMetadata,
             timestamp
         );
     }

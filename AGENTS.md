@@ -126,6 +126,7 @@ The agent should implement the following state machine:
 ## 5. Core Module Map
 - SQL parser:
   - `parserlib/capi.go` + `parserlib/parser/*`: TiDB parser (fork) + instance-based C API (`ult_sql_parser_create/ult_sql_parse_new/ult_query_hash_new/ult_parse_jsonify_new`) that produces protobuf (`ultparser_query.proto`).
+  - `parserlib/capi.go` marshals parse results with `google.golang.org/protobuf/proto` and returns binary buffers via `C.CBytes` (callers must `free`).
   - Supported: GROUP BY/HAVING/aggregate/subquery/SET/SELECT INTO/DECIMAL.
   - C++ `base/DBEvent.cpp::QueryEventBase::parse()` consumes parse results from `libultparser` and handles DML/DDL.
   - Tokenizer: `dependencies/sql-parser` (Hyrise).
@@ -147,13 +148,14 @@ The agent should implement the following state machine:
 - `RelationshipResolver` resolves column alias/FK chains to match real key columns. `CachedRelationshipResolver` provides a caching layer.
 - `RowGraph` tracks the last read/write node per key range and adds edges (W->R, R->W, W->W), then workers execute entrypoints in parallel. It resolves FK/alias chains and normalizes to key columns; when key columns are not detected, it conservatively serializes via per-table/global wildcards.
 - `-k` uses `,` to separate groups and `+` to express composite key groups (e.g., `users.id,orders.user_id+orders.item_id`). **Composite keys within the same table use AND**, and **groups that include multiple tables are processed as the intersection per key type (OR)**. Columns that do not exist are not expanded to wildcards.
-- `Query` stores a separate column-wise read/write column set (serialized in `.ultstatelog`). In prepare, it does a first-stage filter using column-wise dependency (taint) and then shrinks via row-wise analysis. DDL queries are skipped per query.
+- `Query` stores a separate column-wise read/write column set (serialized in `.ultstatelog`). In prepare, it does a first-stage filter using column-wise dependency (taint) and then shrinks via row-wise analysis. If column-wise is unrelated but key-column StateItems exist, prepare still runs row-wise `StateCluster::shouldReplay` and only then propagates column taint. DDL queries are skipped per query.
 - `QueryEventBase` reflects subqueries/aggregate/GROUP BY/HAVING/DECIMAL/function expressions in the read columns, and conditionally adds per-table wildcards when there is no WHERE clause.
 - In prepare, `analysis::TaintAnalyzer` propagates column taints and then shrinks via row-wise analysis; transactions where key columns are not detected are immediately marked for replay.
 - `StateCluster::generateReplaceQuery()` uses per-table key-column projections, and adds columns that reference key columns via FKs to the projection so referenced tables are included in replace targets. Composite keys within the same table use AND, multi-table groups use OR to build WHERE, and columns not in the table are excluded from the predicate.
 - `RowGraph` strengthened parallel replay stabilization and ordering control with per-column/composite-group worker queues, hold nodes, and wildcard holders.
 - `RelationshipResolver`/`RowCluster` includes alias coercion, FK/alias chain infinite-loop guards, lowercase normalization, and implicit table inference for `_id`-suffixed columns.
 - `StateChanger.sqlload` stores column-wise read/write sets via `DBEvent::columnRWSet()`, and `Query` keeps statement context (last_insert_id/insert_id/rand_seed/user vars).
+- Replay applies `SET TIMESTAMP=<query.timestamp()>` before executing each statement to reproduce `CURRENT_TIMESTAMP()` results, and then applies the statement context (insert_id/rand_seed/user vars).
 - `ProcMatcher::trace()` does not extract the readSet from IF/WHILE condition expressions, and unions only statements inside the blocks.
 
 ## 8. Hash-Jumper Notes
@@ -163,7 +165,7 @@ The agent should implement the following state machine:
 
 ## 9. Procedure Handling
 - `statelogd` restores `ProcCall` from the `callid/procname/args/vars` fields of the `__ULTRAVERSE_PROCEDURE_HINT` row event. `args/vars` are parsed as a JSON object.
-- When reconstructing CALL, `statelogd` replaces OUT/INOUT parameters with `@__ultraverse_out_<idx>` user vars, and applies INOUT input values in advance via `SET @...` in the statement context.
+- When reconstructing CALL, `statelogd` replaces OUT/INOUT parameters with `@__ultraverse_out_<idx>` user vars, applies INOUT input values in advance via `SET @...` in the statement context, and copies the first query's statement context to the synthetic CALL to preserve RAND/user var determinism.
 - `ProcMatcher` parses `procdef/<proc>.sql` to keep procedure metadata/statements, and estimates R/W sets via `trace()`.
 - For procedure-call transactions, in addition to `ProcMatcher::trace()`, read/write sets and column sets collected from RowEvent in the same transaction are merged into the procCall Query and used for row/column analysis.
 - Hash-based reconstruction via internal statement-hash matching (matchForward) has been removed: currently only the **CALL query + trace results** are recorded/analyzed.
@@ -173,19 +175,48 @@ The agent should implement the following state machine:
 - DDL support is incomplete: `processDDL()` is partial, and DDL queries are skipped with a warning in make_cluster/prepare.
 - `prepend` input SQL supports DML only (DDL is an error/skip).
 - `statelogd` requires `binlog_row_metadata=FULL`; `PARTIAL_UPDATE_ROWS_EVENT` is unsupported.
+- Table_map_event SIGNEDNESS optional metadata is mapped to per-column unsigned flags; RowEvent integer decoding uses unsigned when the flag is set (missing metadata defaults to signed).
+- `statelogd` sizes `TaskExecutor` using `statelogd.threadCount` (min 1); `QUERY` parsing and `ROW_QUERY` analysis run on worker threads, while `ROW_EVENT` `mapToTable()` + statement context handling remain on the main reader thread.
 - Procedure hints support only the `callid/procname/args/vars` format; the legacy `callinfo` array format is unsupported.
 - Protobuf-based `.ult*` serialization is a breaking change; legacy cereal logs are not readable, and the cereal submodule/serialization sources have been removed.
 - `statelogd`'s `.ultchkpoint` serialization is commented out, so `-r` restore is limited.
 - `db_state_change` fixes `stateLogPath` to `.` (FIXME), and `BINLOG_PATH` is stored only in the plan and unused in the current path.
-- `db_state_change`'s `--gid-range` (`-s/-e`) and `-S` skip GID are parsed but not used in the v2 `StateChanger` path (currently no-op).
+- `db_state_change`'s `--gid-range` and `--skip-gids` now filter prepare/auto-rollback analysis (replay plan selection); make_cluster still scans all GIDs.
+- `auto-rollback` (StateChanger::bench_prepareRollback) is benchmark-only and now runs the same column-taint + row-wise analysis as prepare; it selects rollback targets by ratio over in-scope GIDs (range/skip applied) and reports accurate replay counts without creating an intermediate DB.
 - `statelogd` parses JSON `keyColumns` as groups, then flattens them for RW set computation to reflect `+` composite keys. It uses the same group parsing as `db_state_change`.
 - In make_cluster, using column alias (`-a`) switches to sequential processing.
 - `HashWatcher` exists only as a design and is not wired into the execution path.
 - Esperanza bench scripts pass rollback GID lists directly into the action and use `full-replay`, and they reflect `+` composite key groups.
+- TATP data generation must keep `msc_location`/`vlr_location` within signed INT32 range (<= 2147483647) unless the schema is changed to UNSIGNED.
+- mysql-connector requires draining all result sets after `CALL` (e.g., `cursor.nextset()`), since TATP procedures like `InsertCallForwarding` include a `SELECT` that returns a result set.
+- TATP `InsertCallForwarding` must choose an unused `start_time` for `(s_id, sf_type)` (or skip) to avoid duplicate primary keys; the client-side transaction now filters available slots.
+- TATP `InsertCallForwarding` must also use an existing `(s_id, sf_type)` from `special_facility` to satisfy the FK; the client now picks a valid `sf_type` or skips if none exist.
+- Esperanza's BenchBase table diff uses `ROW(...) NOT IN (...)` over a manually listed column set, so it can miss mismatches when NULLs are present, when duplicate rows are possible, or when tables/columns are omitted from `DB_TABLE_DIFF_OPTIONS`.
+- Esperanza table diff can optionally print detailed diff rows via `ESPERANZA_TABLEDIFF_DETAILS=1`, and `ESPERANZA_TABLEDIFF_LIMIT` controls the max rows shown (default 20; 0 disables detail output).
+- SEATS DDL uses DECIMAL for airport lat/long/GMT offset (ap_gmt_offset uses DECIMAL(6,2) to accommodate sentinel values like 327.0), airport distance, customer balance, and prices to avoid float drift; seats_standalone tablediff no longer needs epsilon comparisons.
+- SEATS procdefs (`NewReservation`, `DeleteReservation`) now use DECIMAL(7,3) for price variables to match DECIMAL price columns.
+- `StateCluster` now normalizes key column groups via FK/alias resolver and remaps cluster keys to the canonical column during `make_cluster`/`prepare`; regenerate `.ultcluster` (run `make_cluster`) if older files used non-canonical key columns.
+- `StateCluster::Cluster::match()` now applies FK/alias chain resolution for WRITE items as well, so foreign-key writes can contribute to cluster matching.
+- `StateChanger::analyzeReplayPlan()` now refreshes target cache on the first non-target transaction after a rollback target that skipped revalidation, preventing stale cache when consecutive rollback gids are skipped by range/skip rules.
 - `MySQLBackupLoader` checks mysql client paths in `MYSQL_BIN_PATH`/`MYSQL_BIN`/`MYSQL_PATH` first; if a directory is given, it appends `/mysql`; otherwise it uses `/usr/bin/mysql`.
 - When deserializing `StateData`, string memory must follow the `malloc/free` convention (`new/free` mixing can crash).
 - `ProcMatcher::trace()` interprets procedure parameters, `DECLARE` local variables, and `@var` as symbols. `SELECT ... INTO` defaults to UNKNOWN, but if a KNOWN value already exists (hints/initial vars), it is kept. Functions/complex expressions become UNKNOWN; if such a value is written to a key column, it remains a wildcard.
 - RowEvent string-length decoding avoids unaligned/strict-aliasing reads (uses memcpy-style loads) to keep -O2 behavior consistent.
+- RowEvent variable-length decoding derives row size from length prefixes (VARCHAR/VAR_STRING/STRING/BLOB/JSON) and clamps to remaining bytes; unknown field lengths now emit warnings and skip the rest of the row payload.
+- `StateData::Copy()` now copies string/decimal buffers using the stored length (not `strdup`) to preserve embedded nulls and avoid serialization overreads.
+- `BinaryLogReaderBase` has a virtual destructor to avoid new/delete size mismatch when deleting derived binlog readers via base pointer.
+- `RowEvent::mapToTable()` / `readRow()` mutate internal vectors and are not thread-safe or idempotent; callers should treat a `RowEvent` instance as single-threaded and call `mapToTable()` once.
+- `QueryEventBase::parse()` uses a `thread_local` parser handle (`ult_sql_parser_create`), so SQL parsing is per-thread and can run in parallel.
+- `StateRange::MakeWhereQuery()` now formats string-typed values as hex literals (`X'..'`) to keep replace-query predicates safe for varchar/binary data.
+- `QueryEventBase::processExprForColumns()` falls back to the base table of a single derived table when a subquery has no primary table; multi-table derived/joins remain conservative (unqualified identifiers are not auto-mapped).
+- `StateItem::MakeRange2()` mutates an internal cache and is not thread-safe when the same `StateItem` is shared across threads; `CachedRelationshipResolver` now precomputes `MakeRange2()` before caching to avoid concurrent writes, but callers should still avoid cross-thread mutation.
+- `StateRange` uses an internal shared_ptr for range vectors; mutating APIs now detach (copy-on-write) to prevent aliasing when a `StateRange` is copied and then modified.
+- `RowGraph::gc()` is stop-the-world: it pauses column/composite worker threads and waits for in-flight tasks to drain before removing vertices; replay GC interval is ~10s (pre-replay and main replay).
+- `WhereClauseBuilder` treats column-to-column WHERE comparisons as wildcard row ranges and adds both columns to the read set; `StateLogViewer` suppresses empty-where warnings for wildcard items.
+- `state_log_viewer` only prints `varMap`; it does not display `QueryStatementContext` (rand seed/insert id/user vars).
+- `statelogd` formats DOUBLE literals for reconstructed CALL statements using `max_digits10` precision to preserve round-trip numeric accuracy.
+- `StateData` stores DECIMAL values as raw binary bytes (no normalization). DECIMAL equality uses byte compare; range comparisons (<, <=, >, >=) are disabled, and SQL WHERE formatting emits hex literal `X'...'`.
+- TPC-C `scripts/esperanza/tpcc_sql/ddl-mysql.sql` RandomNumber/NonUniformRandom now take a seed and advance `@tpcc_seed`; `NewOrder`/`Delivery` initialize `@tpcc_seed` with `UNIX_TIMESTAMP(CURRENT_TIMESTAMP())`.
 
 ## 11. Test/I/O Abstractions
 - DB handle abstraction: `mariadb::DBHandle` (interface) + `MySQLDBHandle` + `MockedDBHandle`; also introduced `DBResult` and `DBHandlePoolAdapter`.
@@ -204,6 +235,7 @@ The agent should implement the following state machine:
 - The `mysql-server` source directory is ignored by the repo (via `/mysql-server` in `.gitignore`).
 - Build module: `cmake/mysql_binlogevents.cmake` defines the static library `mysql_binlog_event_standalone`.
   - Collected via GLOB: `binlog/event`, `codecs`, `compression`, `serialization`, `gtid`, `containers`.
+  - Adds MySQL mysys sources: `mysys/pack.cc` + `mysys/decimal.cc` (packed-length helpers + DECIMAL binary conversion used by row decoding).
   - Include dirs: `${ULTRAVERSE_MYSQLD_SRC_PATH}/libs`, `${ULTRAVERSE_MYSQLD_SRC_PATH}/include`, `${ULTRAVERSE_MYSQLD_SRC_PATH}`.
   - Compile defs: `STANDALONE_BINLOG`, `BINLOG_EVENT_COMPRESSION_USE_ZSTD_system`.
   - Link: `ZLIB::ZLIB`, `PkgConfig::ZSTD`.
@@ -219,6 +251,8 @@ The agent should implement the following state machine:
 - `BinaryLogSequentialReader` was switched to use the V2 reader.
 - Maps column names using optional metadata (COLUMN_NAME) from `Table_map_event`, assuming `binlog_row_metadata=FULL`. If missing, it warns and skips.
 - Parses row events using column bitmaps; `PARTIAL_UPDATE_ROWS_EVENT` is unsupported (warn and skip).
+- Rows-event width uses our own length-encoded integer decode (`MySQLBinaryLogReaderV2::readNetFieldLength`), and row payload decoding into values happens in `RowEvent::readRow`.
+- `TableMapEvent` stores MySQL raw `enum_field_types` + per-column metadata (MySQL `read_field_metadata` rules; NEWDECIMAL metadata is big-endian). `RowEvent::readRow()` uses `libbinlogevents` `calc_field_size()` and MySQL metadata rules for STRING/VARCHAR/BLOB/ENUM/SET parsing to avoid row-image drift.
 - `HashWatcher` was switched to the MySQL binlog sequential reader path.
 
 ## 15. MySQL Binlog Migration Complete (Phase 3, 2026-01-21)
@@ -346,6 +380,7 @@ Notes:
 - The same RPATH + copy rule applies to unit test executables so `ctest` can locate `libultparser.so`.
 - On macOS, `libultparser.so` install_name is set to `@rpath/libultparser.so`, and runtime targets patch their load command to use `@rpath` (fixes dyld lookup when running outside the build directory).
 - GitHub Actions uses a prebuilt CI container image `ghcr.io/<repo-owner>/ultraverse-ci:ubuntu-24.04` built from `ci/Dockerfile` via `.github/workflows/build-ci-image.yml`.
+- `parserlib` uses `go mod download` during build to avoid failing on missing `pb/ultparser_query.pb.go`; re-run CMake if you updated `parserlib/CMakeLists.txt`.
 
 ## Test
 ```bash
@@ -489,6 +524,9 @@ python scripts/esperanza/minishop.py
 | `scripts/esperanza/minishop.py` | Minishop integration test (run the scenario and verify rollback/replay). |
 | `scripts/esperanza/minishop/*.sql` | Minishop schema/procedure/scenario/verification SQL. |
 | `scripts/esperanza/procdefs/minishop/*.sql` | Procedure definitions for statelogd ProcMatcher. |
+| `scripts/esperanza/tatp_standalone.py` | Standalone TATP runner (MySQL lifecycle, workload execution, statelog, and state change). |
+| `scripts/esperanza/esperanza/epinions/*` | Epinions workload helpers (constants, Zipfian generators, random utilities). |
+| `scripts/esperanza/esperanza/tatp/*` | TATP workload helpers (constants, random utilities, data generator, transactions, workload executor, session). |
 
 ## Tests (tests/)
 Test files are named as `<target-module>-test.cpp`. Uses Catch2 v3.

@@ -120,6 +120,8 @@ namespace ultraverse::state::v2 {
          * @brief 주어진 트랜잭션을 클러스터에 추가한다.
          */
         void insert(const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver);
+
+        void normalizeWithResolver(const RelationshipResolver &resolver);
         
         std::optional<StateRange> match(ClusterType type, const std::string &columnName, const std::shared_ptr<Transaction> &transaction, const RelationshipResolver &resolver) const;
         
@@ -151,7 +153,9 @@ namespace ultraverse::state::v2 {
 
         void toProtobuf(ultraverse::state::v2::proto::StateCluster *out) const;
         void fromProtobuf(const ultraverse::state::v2::proto::StateCluster &msg);
-        
+
+        void refreshTargetCache(const RelationshipResolver &resolver);
+
     private:
         /**
          * @brief rollback / append 대상 트랜잭션 관련 데이터를 캐싱하기 위한 클래스
@@ -200,6 +204,8 @@ namespace ultraverse::state::v2 {
          * rollback / append 대상 트랜잭션의 캐시를 갱신한다.
          */
         void invalidateTargetCache(const RelationshipResolver &resolver);
+
+        void rebuildResolvedKeyColumnGroups(const RelationshipResolver &resolver);
         
         /**
          * @brief 주어진 gid를 가진 트랜잭션이 재실행 대상인지 확인한다 (internal)
@@ -214,6 +220,8 @@ namespace ultraverse::state::v2 {
         std::vector<std::vector<std::string>> _keyColumnGroups;
         std::vector<bool> _groupIsComposite;
         std::unordered_map<std::string, std::vector<GroupProjection>> _keyColumnGroupsByTable;
+        std::vector<std::vector<std::string>> _resolvedKeyColumnGroups;
+        std::vector<bool> _resolvedGroupIsComposite;
         std::unordered_map<std::string, Cluster> _clusters;
         
         std::shared_mutex _targetCacheLock;
