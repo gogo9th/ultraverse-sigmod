@@ -261,11 +261,7 @@ StateData::StateData(const std::string &val):
 
 StateData::StateData(const StateData &c)
 {
-  if (c.type == en_column_data_string || c.type == en_column_data_decimal) {
-      Copy(c);
-  } else {
-      memcpy(this, &c, sizeof(StateData));
-  }
+  Copy(c);
 }
 
 StateData::~StateData()
@@ -289,11 +285,12 @@ void StateData::Clear()
 
 void StateData::Copy(const StateData &c)
 {
+  is_subselect = c.is_subselect;
   is_equal = c.is_equal;
   type = c.type;
+  str_len = c.str_len;
   if (type == en_column_data_string || type == en_column_data_decimal)
   {
-    str_len = c.str_len;
     if (c.d.str != nullptr && str_len > 0) {
       d.str = static_cast<char *>(malloc(str_len + 1));
       memcpy(d.str, c.d.str, str_len);
