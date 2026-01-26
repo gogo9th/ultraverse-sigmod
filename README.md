@@ -417,6 +417,31 @@ If `--replay-from 0` is specified, all GIDs from 0 to the target are pre-replaye
 > **Note:** The standalone test scripts use `--replay-from 0` by default to ensure complete replay from the backup checkpoint.
 
 
+### Tuning: Replay GC Interval
+
+During replay, `RowGraph` runs a garbage collection (GC) thread that periodically removes completed nodes from memory. The GC interval is hardcoded in `src/mariadb/state/new/StateChanger.replay.cpp`.
+
+**Current default:** 10 seconds (10000ms)
+
+**Locations to modify:**
+- **Pre-replay GC** (line ~137): `std::this_thread::sleep_for(std::chrono::milliseconds(10000));`
+- **Main replay GC** (line ~276): `std::this_thread::sleep_for(std::chrono::milliseconds(10000));`
+
+**Tuning guidelines:**
+| Interval | Use Case |
+|----------|----------|
+| Shorter (1-5s) | High memory pressure, many small transactions |
+| Default (10s) | Balanced for most workloads |
+| Longer (15-30s) | Low memory pressure, reduced GC overhead |
+
+> **Note:** GC is stop-the-world—it pauses worker threads briefly. Shorter intervals may reduce peak memory but increase pause frequency.
+
+After modifying, rebuild:
+```console
+$ cmake --build build --target db_state_change
+```
+
+
 ## MySQL Useful Commands
 
 
