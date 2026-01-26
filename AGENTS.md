@@ -126,6 +126,7 @@ The agent should implement the following state machine:
 ## 5. Core Module Map
 - SQL parser:
   - `parserlib/capi.go` + `parserlib/parser/*`: TiDB parser (fork) + instance-based C API (`ult_sql_parser_create/ult_sql_parse_new/ult_query_hash_new/ult_parse_jsonify_new`) that produces protobuf (`ultparser_query.proto`).
+  - `parserlib/capi.go` marshals parse results with `google.golang.org/protobuf/proto` and returns binary buffers via `C.CBytes` (callers must `free`).
   - Supported: GROUP BY/HAVING/aggregate/subquery/SET/SELECT INTO/DECIMAL.
   - C++ `base/DBEvent.cpp::QueryEventBase::parse()` consumes parse results from `libultparser` and handles DML/DDL.
   - Tokenizer: `dependencies/sql-parser` (Hyrise).
@@ -154,6 +155,7 @@ The agent should implement the following state machine:
 - `RowGraph` strengthened parallel replay stabilization and ordering control with per-column/composite-group worker queues, hold nodes, and wildcard holders.
 - `RelationshipResolver`/`RowCluster` includes alias coercion, FK/alias chain infinite-loop guards, lowercase normalization, and implicit table inference for `_id`-suffixed columns.
 - `StateChanger.sqlload` stores column-wise read/write sets via `DBEvent::columnRWSet()`, and `Query` keeps statement context (last_insert_id/insert_id/rand_seed/user vars).
+- Replay applies `SET TIMESTAMP=<query.timestamp()>` before executing each statement to reproduce `CURRENT_TIMESTAMP()` results, and then applies the statement context (insert_id/rand_seed/user vars).
 - `ProcMatcher::trace()` does not extract the readSet from IF/WHILE condition expressions, and unions only statements inside the blocks.
 
 ## 8. Hash-Jumper Notes
@@ -163,7 +165,7 @@ The agent should implement the following state machine:
 
 ## 9. Procedure Handling
 - `statelogd` restores `ProcCall` from the `callid/procname/args/vars` fields of the `__ULTRAVERSE_PROCEDURE_HINT` row event. `args/vars` are parsed as a JSON object.
-- When reconstructing CALL, `statelogd` replaces OUT/INOUT parameters with `@__ultraverse_out_<idx>` user vars, and applies INOUT input values in advance via `SET @...` in the statement context.
+- When reconstructing CALL, `statelogd` replaces OUT/INOUT parameters with `@__ultraverse_out_<idx>` user vars, applies INOUT input values in advance via `SET @...` in the statement context, and copies the first query's statement context to the synthetic CALL to preserve RAND/user var determinism.
 - `ProcMatcher` parses `procdef/<proc>.sql` to keep procedure metadata/statements, and estimates R/W sets via `trace()`.
 - For procedure-call transactions, in addition to `ProcMatcher::trace()`, read/write sets and column sets collected from RowEvent in the same transaction are merged into the procCall Query and used for row/column analysis.
 - Hash-based reconstruction via internal statement-hash matching (matchForward) has been removed: currently only the **CALL query + trace results** are recorded/analyzed.
@@ -200,6 +202,9 @@ The agent should implement the following state machine:
 - When deserializing `StateData`, string memory must follow the `malloc/free` convention (`new/free` mixing can crash).
 - `ProcMatcher::trace()` interprets procedure parameters, `DECLARE` local variables, and `@var` as symbols. `SELECT ... INTO` defaults to UNKNOWN, but if a KNOWN value already exists (hints/initial vars), it is kept. Functions/complex expressions become UNKNOWN; if such a value is written to a key column, it remains a wildcard.
 - RowEvent string-length decoding avoids unaligned/strict-aliasing reads (uses memcpy-style loads) to keep -O2 behavior consistent.
+- RowEvent variable-length decoding derives row size from length prefixes (VARCHAR/VAR_STRING/STRING/BLOB/JSON) and clamps to remaining bytes; unknown field lengths now emit warnings and skip the rest of the row payload.
+- `StateData::Copy()` now copies string/decimal buffers using the stored length (not `strdup`) to preserve embedded nulls and avoid serialization overreads.
+- `BinaryLogReaderBase` has a virtual destructor to avoid new/delete size mismatch when deleting derived binlog readers via base pointer.
 - `RowEvent::mapToTable()` / `readRow()` mutate internal vectors and are not thread-safe or idempotent; callers should treat a `RowEvent` instance as single-threaded and call `mapToTable()` once.
 - `QueryEventBase::parse()` uses a `thread_local` parser handle (`ult_sql_parser_create`), so SQL parsing is per-thread and can run in parallel.
 - `StateRange::MakeWhereQuery()` now formats string-typed values as hex literals (`X'..'`) to keep replace-query predicates safe for varchar/binary data.
@@ -208,8 +213,10 @@ The agent should implement the following state machine:
 - `StateRange` uses an internal shared_ptr for range vectors; mutating APIs now detach (copy-on-write) to prevent aliasing when a `StateRange` is copied and then modified.
 - `RowGraph::gc()` is stop-the-world: it pauses column/composite worker threads and waits for in-flight tasks to drain before removing vertices; replay GC interval is ~10s (pre-replay and main replay).
 - `WhereClauseBuilder` treats column-to-column WHERE comparisons as wildcard row ranges and adds both columns to the read set; `StateLogViewer` suppresses empty-where warnings for wildcard items.
+- `state_log_viewer` only prints `varMap`; it does not display `QueryStatementContext` (rand seed/insert id/user vars).
 - `statelogd` formats DOUBLE literals for reconstructed CALL statements using `max_digits10` precision to preserve round-trip numeric accuracy.
 - `StateData` stores DECIMAL values as raw binary bytes (no normalization). DECIMAL equality uses byte compare; range comparisons (<, <=, >, >=) are disabled, and SQL WHERE formatting emits hex literal `X'...'`.
+- TPC-C `scripts/esperanza/tpcc_sql/ddl-mysql.sql` RandomNumber/NonUniformRandom now take a seed and advance `@tpcc_seed`; `NewOrder`/`Delivery` initialize `@tpcc_seed` with `UNIX_TIMESTAMP(CURRENT_TIMESTAMP())`.
 
 ## 11. Test/I/O Abstractions
 - DB handle abstraction: `mariadb::DBHandle` (interface) + `MySQLDBHandle` + `MockedDBHandle`; also introduced `DBResult` and `DBHandlePoolAdapter`.
