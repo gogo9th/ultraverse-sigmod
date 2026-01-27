@@ -166,14 +166,14 @@ $ vim envfile
    export ULTRAVERSE_HOME=/path/to/ultraverse-sigmod/build/src
 $ source envfile
 $ rm -rf runs cache
-$ python3 tpcc_standalone.py       # TPC-C workload (no BenchBase required)
-$ python3 epinions_standalone.py   # Epinions workload (no BenchBase required)
+$ poetry run python3 tpcc_standalone.py       # TPC-C workload
+$ poetry run python3 epinions_standalone.py   # Epinions workload
 ```
 
 For minishop (integration test with procedure patching):
 ```console
-$ python3 minishop.py
-$ python3 minishop_prepend.py   # tests rollback + prepend
+$ poetry run python3 minishop.py
+$ poetry run python3 minishop_prepend.py   # tests rollback + prepend
 ```
 
 **What the standalone scripts do:**
@@ -201,7 +201,7 @@ $ vim envfile
    export BENCHBASE_HOME=/path/to/benchbase
 $ source envfile
 $ rm -rf runs cache
-$ python3 epinions.py   # or: tpcc.py, tatp.py, seats.py, astore.py
+$ poetry run python3 epinions.py   # or: tpcc.py, tatp.py, seats.py, astore.py
 ```
 
 See `scripts/esperanza/AGENTS.md` for detailed BenchBase setup instructions.
@@ -272,7 +272,33 @@ Example:
 > **Note:** If database credentials are missing in both JSON and environment variables, execution will fail.
 
 
-<u>**Step 5.**</u> Read binary log and create state log.
+### Example: Retroactive Operation with Epinions Workload
+
+The standalone script `epinions_standalone.py` automates the entire workflow: MySQL setup, workload execution, state log creation, and retroactive operations.
+
+```console
+$ cd scripts/esperanza
+$ source envfile
+$ poetry run python3 epinions_standalone.py
+```
+
+The script performs the following steps automatically:
+1. Download and start MySQL (cached in `cache/`)
+2. Create database, schema, and initial data
+3. Execute Epinions workload transactions
+4. Run `statelogd` to create state log from binary log
+5. Run `make_cluster` to build clustering index
+6. Perform retroactive rollback and replay operations
+7. Verify results with table diff
+
+Session files are saved in `runs/<session-name>/`.
+
+
+### Manual Workflow (Step-by-Step)
+
+If you need to run each step manually, follow the instructions below.
+
+**<u>Step 1.</u>** Read binary log and create state log.
 
 ```console
 $ ../src/statelogd -c ultraverse.json
@@ -287,14 +313,14 @@ Output files: `benchbase.ultstatelog`, `benchbase.ultchkpoint`, `benchbase.ultin
 
 > **Note:** Checkpoint serialization is currently disabled. The `.ultchkpoint` file is created but empty.
 
-<u>**Step 6.**</u> Make a cluster map & table map before performing a state change.
+**<u>Step 2.</u>** Make a cluster map & table map before performing a state change.
 
 ```console
 $ ../src/db_state_change ultraverse.json make_cluster
 ```
 The output files are as follows: `benchbase.ulttables`, `benchbase.ultindex`, `benchbase.ultcolumns`, and `benchbase.ultcluster`.
 
-<u>**Step 7.**</u> Prepare the state change (rollback/prepend). This generates `benchbase.ultreplayplan` in the state log path.
+**<u>Step 3.</u>** Prepare the state change (rollback/prepend). This generates `benchbase.ultreplayplan` in the state log path.
 
 **Rollback only:**
 ```console
@@ -319,7 +345,7 @@ $ ../src/db_state_change --gid-range 1...100 --skip-gids 5,10,15 ultraverse.json
 
 Output file: `benchbase.ultreplayplan`
 
-<u>**Step 8.**</u> Replay using the generated `.ultreplayplan`.
+**<u>Step 4.</u>** Replay using the generated `.ultreplayplan`.
 
 ```console
 $ ../src/db_state_change ultraverse.json replay
