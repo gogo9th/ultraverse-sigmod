@@ -294,6 +294,225 @@ The script performs the following steps automatically:
 Session files are saved in `runs/<session-name>/`.
 
 
+### Complete Manual Example (Epinions)
+
+This section provides a complete, copy-paste-ready example for running the entire Ultraverse workflow manually. Unlike the standalone scripts which automate everything, this guide lets you execute each step individually to understand the full process.
+
+**Prerequisites:**
+- MySQL is installed and running with binary logging enabled (see "Install and Setup MySQL" section above)
+- Ultraverse is built (see "Install Ultraverse" section above)
+
+**<u>Step 1.</u>** Create a working directory and set up environment.
+
+```console
+$ mkdir -p ~/ultraverse-tutorial && cd ~/ultraverse-tutorial
+$ export ULTRAVERSE_HOME=/path/to/ultraverse-sigmod/build/src
+```
+
+**<u>Step 2.</u>** Create the database and schema.
+
+```console
+$ mysql -u admin -ppassword
+```
+
+```sql
+-- Create database
+CREATE DATABASE epinions;
+USE epinions;
+
+-- Create tables
+CREATE TABLE useracct (
+    u_id int NOT NULL PRIMARY KEY,
+    name varchar(128) NOT NULL,
+    email varchar(128) NOT NULL,
+    creation_date datetime DEFAULT NULL
+);
+
+CREATE TABLE item2 (
+    i_id int NOT NULL PRIMARY KEY,
+    title varchar(128) NOT NULL,
+    description varchar(512) DEFAULT NULL,
+    creation_date datetime DEFAULT NULL
+);
+
+CREATE TABLE review (
+    a_id int NOT NULL,
+    u_id int NOT NULL,
+    i_id int NOT NULL,
+    rating int DEFAULT NULL,
+    rank int DEFAULT NULL,
+    comment varchar(256) DEFAULT NULL,
+    creation_date datetime DEFAULT NULL,
+    FOREIGN KEY (u_id) REFERENCES useracct (u_id) ON DELETE CASCADE,
+    FOREIGN KEY (i_id) REFERENCES item2 (i_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_rating_uid ON review (u_id);
+CREATE INDEX idx_rating_iid ON review (i_id);
+
+CREATE TABLE trust (
+    source_u_id int NOT NULL,
+    target_u_id int NOT NULL,
+    trust int NOT NULL,
+    creation_date datetime DEFAULT NULL,
+    FOREIGN KEY (source_u_id) REFERENCES useracct (u_id) ON DELETE CASCADE,
+    FOREIGN KEY (target_u_id) REFERENCES useracct (u_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_trust_sid ON trust (source_u_id);
+CREATE INDEX idx_trust_tid ON trust (target_u_id);
+```
+
+**<u>Step 3.</u>** Insert initial data (this will be our baseline state).
+
+```sql
+-- Create users
+INSERT INTO useracct VALUES (1, 'Alice', 'alice@example.com', NOW());
+INSERT INTO useracct VALUES (2, 'Bob', 'bob@example.com', NOW());
+INSERT INTO useracct VALUES (3, 'Charlie', 'charlie@example.com', NOW());
+
+-- Create items
+INSERT INTO item2 VALUES (1, 'Laptop', 'High-performance laptop', NOW());
+INSERT INTO item2 VALUES (2, 'Phone', 'Smartphone with great camera', NOW());
+```
+
+**<u>Step 4.</u>** Create a checkpoint (backup) and reset binary logs.
+
+```console
+# Create baseline backup
+$ mysqldump -u admin -ppassword epinions > dbdump.sql
+
+# Flush binary logs (so GID starts from 0)
+$ mysql -u admin -ppassword -e "PURGE BINARY LOGS BEFORE NOW();"
+```
+
+**<u>Step 5.</u>** Execute workload transactions (these generate binary log entries).
+
+```console
+$ mysql -u admin -ppassword epinions
+```
+
+```sql
+-- GID 0: Add review by Alice
+INSERT INTO review VALUES (1, 1, 1, 5, 1, 'Excellent product!', NOW());
+
+-- GID 1: Add review by Bob
+INSERT INTO review VALUES (2, 2, 1, 4, 2, 'Good but expensive', NOW());
+
+-- GID 2: Add review by Alice for Phone
+INSERT INTO review VALUES (3, 1, 2, 3, 1, 'Average phone', NOW());
+
+-- GID 3: Add trust relationship
+INSERT INTO trust VALUES (1, 2, 8, NOW());
+
+-- GID 4: Add another trust relationship
+INSERT INTO trust VALUES (2, 3, 7, NOW());
+
+-- GID 5: Update user name
+UPDATE useracct SET name = 'Alice Smith' WHERE u_id = 1;
+
+-- GID 6: Update review rating
+UPDATE review SET rating = 4 WHERE u_id = 1 AND i_id = 1;
+
+-- GID 7: Update trust value
+UPDATE trust SET trust = 9 WHERE source_u_id = 1 AND target_u_id = 2;
+```
+
+**<u>Step 6.</u>** Copy binary log files to working directory.
+
+```console
+# Check binary log location
+$ mysql -u admin -ppassword -e "SHOW VARIABLES LIKE 'log_bin_basename';"
+
+# Copy binary logs (adjust path based on your MySQL configuration)
+$ sudo cp /var/lib/mysql/myserver-binlog.* ~/ultraverse-tutorial/
+$ sudo chown $(whoami):$(whoami) ~/ultraverse-tutorial/myserver-binlog.*
+```
+
+**<u>Step 7.</u>** Create the Ultraverse configuration file.
+
+```console
+$ cat > ultraverse.json << 'EOF'
+{
+  "binlog": {
+    "path": ".",
+    "indexName": "myserver-binlog.index"
+  },
+  "stateLog": {
+    "path": ".",
+    "name": "epinions"
+  },
+  "keyColumns": [
+    "item2.i_id",
+    "useracct.u_id",
+    "review.u_id+review.i_id",
+    "trust.source_u_id+trust.target_u_id"
+  ],
+  "columnAliases": {},
+  "database": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "name": "epinions",
+    "username": "admin",
+    "password": "password"
+  },
+  "statelogd": {
+    "threadCount": 0,
+    "oneshotMode": true,
+    "procedureLogPath": "",
+    "developmentFlags": ["print-gids", "print-queries"]
+  },
+  "stateChange": {
+    "threadCount": 0,
+    "backupFile": "dbdump.sql",
+    "keepIntermediateDatabase": false,
+    "rangeComparisonMethod": "eqonly"
+  }
+}
+EOF
+```
+
+**<u>Step 8.</u>** Generate state log from binary log.
+
+```console
+$ $ULTRAVERSE_HOME/statelogd -c ultraverse.json
+```
+
+Output files: `epinions.ultstatelog`, `epinions.ultindex`
+
+**<u>Step 9.</u>** Create cluster map and table map.
+
+```console
+$ $ULTRAVERSE_HOME/db_state_change ultraverse.json make_cluster
+```
+
+Output files: `epinions.ultcluster`, `epinions.ultcolumns`, `epinions.ulttables`
+
+**<u>Step 10.</u>** View the state log to understand the transaction structure.
+
+```console
+$ $ULTRAVERSE_HOME/state_log_viewer -i epinions -v
+```
+
+**<u>Step 11.</u>** Perform a retroactive rollback.
+
+In this example, we'll rollback GID 1 (Bob's review). This demonstrates how Ultraverse selectively replays dependent transactions.
+
+```console
+# Prepare rollback plan
+$ $ULTRAVERSE_HOME/db_state_change ultraverse.json rollback=1
+
+# Execute replay (--replay-from 0 replays all transactions from the backup)
+$ $ULTRAVERSE_HOME/db_state_change --replay-from 0 ultraverse.json replay
+```
+
+**<u>Step 12.</u>** Verify the result.
+
+```console
+$ mysql -u admin -ppassword -e "SELECT * FROM epinions.review;"
+```
+
+Bob's review (a_id=2) should be removed, and other reviews should remain intact.
+
+
 ### Manual Workflow (Step-by-Step)
 
 If you need to run each step manually, follow the instructions below.
