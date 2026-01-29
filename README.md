@@ -476,7 +476,7 @@ EOF
 $ $ULTRAVERSE_HOME/statelogd -c ultraverse.json
 ```
 
-Output files: `epinions.ultstatelog`, `epinions.ultindex`
+Output files: `epinions.ultstatelog`
 
 **<u>Step 9.</u>** Create cluster map and table map.
 
@@ -528,7 +528,7 @@ Options:
 - `-v` - DEBUG log level
 - `-V` - TRACE log level
 
-Output files: `benchbase.ultstatelog`, `benchbase.ultchkpoint`, `benchbase.ultindex`
+Output files: `benchbase.ultstatelog`, `benchbase.ultchkpoint`
 
 > **Note:** Checkpoint serialization is currently disabled. The `.ultchkpoint` file is created but empty.
 
