@@ -294,23 +294,37 @@ namespace ultraverse::base {
         if (!primaryTable.empty()) {
             _relatedTables.insert(primaryTable);
         }
-        
+
+        bool hasExplicitColumn = false;
+        bool hasUnknownColumn = false;
+
         for (const auto &insertion: dmlQuery.update_or_write()) {
-            if (insertion.left().value_type() != ultparser::DMLQueryExpr::IDENTIFIER) {
-                _logger->error("call ult_map_insert_cols() to resolve column names");
-                return false;
+            if (insertion.has_left() && insertion.left().value_type() == ultparser::DMLQueryExpr::IDENTIFIER) {
+                std::string colName = insertion.left().identifier();
+                if (colName.find('.') == std::string::npos) {
+                    colName = primaryTable + "." + colName;
+                }
+                _writeColumns.insert(colName);
+                hasExplicitColumn = true;
+            } else {
+                hasUnknownColumn = true;
             }
-            
-            std::string colName = insertion.left().identifier();
-            if (colName.find('.') == std::string::npos) {
-                colName = primaryTable + "." + colName;
-            }
-            
-            _writeColumns.insert(colName);
+
             processExprForColumns(primaryTable, insertion.right());
         }
-        
-        
+
+        if ((!hasExplicitColumn || hasUnknownColumn) && !_itemSet.empty()) {
+            for (const auto &item : _itemSet) {
+                if (!item.name.empty()) {
+                    _writeColumns.insert(item.name);
+                }
+            }
+        }
+
+        if (_writeColumns.empty() && !primaryTable.empty()) {
+            _writeColumns.insert(primaryTable + ".*");
+        }
+
         return true;
     }
     

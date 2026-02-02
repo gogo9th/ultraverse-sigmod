@@ -249,26 +249,27 @@ func processInsertStmt(query *pb.DMLQuery, stmt *ast.InsertStmt) {
 		return
 	}
 
-	query.UpdateOrWrite = make([]*pb.DMLQueryExpr, len(stmt.Lists[0]))
+	values := stmt.Lists[0]
+	columns := stmt.Columns
 
-	if len(stmt.Columns) != len(stmt.Lists[0]) {
+	if len(columns) > 0 && len(columns) != len(values) {
 		fmt.Printf("processInsertStmt(): column definition and value count mismatch: %s\n", query.Statement)
-		return
 	}
 
-	for i, expr := range stmt.Lists[0] {
-		columnDef := stmt.Columns[i]
-		query.UpdateOrWrite[i] = &pb.DMLQueryExpr{
+	query.UpdateOrWrite = make([]*pb.DMLQueryExpr, len(values))
+	for i, expr := range values {
+		entry := &pb.DMLQueryExpr{
 			Operator: pb.DMLQueryExpr_EQ,
 			Right:    processExprNode(&expr),
 		}
-		if columnDef != nil {
-			query.UpdateOrWrite[i].Left = &pb.DMLQueryExpr{
+		if i < len(columns) && columns[i] != nil {
+			entry.Left = &pb.DMLQueryExpr{
 				Operator:   pb.DMLQueryExpr_VALUE,
 				ValueType:  pb.DMLQueryExpr_IDENTIFIER,
-				Identifier: columnDef.Name.O,
+				Identifier: columns[i].Name.O,
 			}
 		}
+		query.UpdateOrWrite[i] = entry
 	}
 }
 

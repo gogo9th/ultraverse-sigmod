@@ -65,6 +65,34 @@ func TestParseInsert(t *testing.T) {
 	}
 }
 
+func TestParseInsertWithoutColumnList(t *testing.T) {
+	p := New()
+	result := p.Parse("INSERT INTO review VALUES (1, 1, 1, 5, 1, 'Excellent product!', '2010-01-25 00:00:00')")
+
+	if result.Result != pb.ParseResult_SUCCESS {
+		t.Fatalf("expected SUCCESS, got %v: %s", result.Result, result.Error)
+	}
+
+	dml := result.Statements[0].Dml
+	if dml.Type != pb.DMLQuery_INSERT {
+		t.Fatalf("expected INSERT, got %v", dml.Type)
+	}
+
+	if len(dml.UpdateOrWrite) != 7 {
+		t.Fatalf("expected 7 values, got %d", len(dml.UpdateOrWrite))
+	}
+
+	for i, expr := range dml.UpdateOrWrite {
+		if expr == nil {
+			t.Fatalf("expected update_or_write[%d] not nil", i)
+		}
+	}
+
+	if dml.UpdateOrWrite[0].Left != nil {
+		t.Fatal("expected left expression to be nil when column list is omitted")
+	}
+}
+
 func TestParseUpdate(t *testing.T) {
 	p := New()
 	result := p.Parse("UPDATE users SET name = 'new' WHERE id = 1")
