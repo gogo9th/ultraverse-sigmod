@@ -17,11 +17,11 @@ $ sudo apt install build-essential cmake pkg-config bison flex \
     libboost-all-dev libssl-dev zlib1g-dev libzstd-dev \
     libprotobuf-dev protobuf-compiler \
     libmysqlclient-dev libtbb-dev libtirpc-dev \
-    golang-go
+    golang-go libncurses-dev
 $ go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28
 ```
 
-**Optional - Esperanza benchmark scripts:**
+**Esperanza benchmark scripts:**
 
 Prerequisites:
 - Python 3.10+
@@ -38,16 +38,11 @@ $ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc   # for bash
 $ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc    # for zsh
 $ exec $SHELL   # reload shell to apply PATH changes
 
-# Install Python dependencies via Poetry
-$ cd scripts/esperanza
-$ poetry install
-$ cd ../..
-
 # Ubuntu 24.04: create symlink for MySQL official binary compatibility
 $ sudo ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
 ```
 
-**Optional - Runtime optimization (jemalloc):**
+**Runtime optimization (jemalloc):**
 ```console
 $ sudo apt install libjemalloc-dev
 ```
@@ -162,10 +157,12 @@ Standalone scripts run workloads without BenchBase. They automatically download 
 
 ```console
 $ cd scripts/esperanza
+$ poetry install # Install Python dependencies via Poetry
+
 $ vim envfile
-   export ULTRAVERSE_HOME=/path/to/ultraverse-sigmod/build/src
+   export ULTRAVERSE_HOME=/path/to/ultraverse-sigmod/bui$ULTRAVERSE_HOME
 $ source envfile
-$ rm -rf runs cache
+$ rm -rf runs cache   # MUST RUN THIS FOR EVERY STANDALOND TEST
 $ poetry run python3 tpcc_standalone.py       # TPC-C workload
 $ poetry run python3 epinions_standalone.py   # Epinions workload
 ```
@@ -197,7 +194,7 @@ If you need to run with BenchBase for more comprehensive benchmarks:
 ```console
 $ cd scripts/esperanza
 $ vim envfile
-   export ULTRAVERSE_HOME=/path/to/ultraverse-sigmod/build/src
+   export ULTRAVERSE_HOME=/path/to/ultraverse-sigmod/bui$ULTRAVERSE_HOME
    export BENCHBASE_HOME=/path/to/benchbase
 $ source envfile
 $ rm -rf runs cache
@@ -306,7 +303,7 @@ This section provides a complete, copy-paste-ready example for running the entir
 
 ```console
 $ mkdir -p ~/ultraverse-tutorial && cd ~/ultraverse-tutorial
-$ export ULTRAVERSE_HOME=/path/to/ultraverse-sigmod/build/src
+$ export ULTRAVERSE_HOME=/path/to/ultraverse-sigmod/bui$ULTRAVERSE_HOME
 ```
 
 **<u>Step 2.</u>** Create the database and schema.
@@ -317,6 +314,7 @@ $ mysql -u admin -ppassword
 
 ```sql
 -- Create database
+DROP DATABASE IF EXISTS epinions;
 CREATE DATABASE epinions;
 USE epinions;
 
@@ -520,7 +518,7 @@ If you need to run each step manually, follow the instructions below.
 **<u>Step 1.</u>** Read binary log and create state log.
 
 ```console
-$ ../src/statelogd -c ultraverse.json
+$ $ULTRAVERSE_HOME/statelogd -c ultraverse.json
 ```
 
 Options:
@@ -535,31 +533,31 @@ Output files: `benchbase.ultstatelog`, `benchbase.ultchkpoint`
 **<u>Step 2.</u>** Make a cluster map & table map before performing a state change.
 
 ```console
-$ ../src/db_state_change ultraverse.json make_cluster
+$ $ULTRAVERSE_HOME/db_state_change ultraverse.json make_cluster
 ```
-The output files are as follows: `benchbase.ulttables`, `benchbase.ultindex`, `benchbase.ultcolumns`, and `benchbase.ultcluster`.
+The output files are as follows: epinions.ulttables, epinions.ultindex, epinions.ultcolumns, and epinions.ultcluster
 
 **<u>Step 3.</u>** Prepare the state change (rollback/prepend). This generates `benchbase.ultreplayplan` in the state log path.
 
 **Rollback only:**
 ```console
-$ ../src/db_state_change ultraverse.json rollback=2,32
+$ $ULTRAVERSE_HOME/db_state_change ultraverse.json rollback=2,32
 ```
 
 **Prepend user query before a specific GID:**
 ```console
 $ echo "UPDATE useracct SET name = 'HELOWRLD' WHERE u_id = 512;" > prepend.sql
-$ ../src/db_state_change ultraverse.json prepend=2,prepend.sql
+$ $ULTRAVERSE_HOME/db_state_change ultraverse.json prepend=2,prepend.sql
 ```
 
 **Combined (prepend + rollback):**
 ```console
-$ ../src/db_state_change ultraverse.json prepend=2,prepend.sql:rollback=32
+$ $ULTRAVERSE_HOME/db_state_change ultraverse.json prepend=2,prepend.sql:rollback=32
 ```
 
 You can also specify GID range or skip specific GIDs:
 ```console
-$ ../src/db_state_change --gid-range 1...100 --skip-gids 5,10,15 ultraverse.json rollback=2
+$ $ULTRAVERSE_HOME/db_state_change --gid-range 1...100 --skip-gids 5,10,15 ultraverse.json rollback=2
 ```
 
 Output file: `benchbase.ultreplayplan`
@@ -567,12 +565,12 @@ Output file: `benchbase.ultreplayplan`
 **<u>Step 4.</u>** Replay using the generated `.ultreplayplan`.
 
 ```console
-$ ../src/db_state_change ultraverse.json replay
+$ $ULTRAVERSE_HOME/db_state_change ultraverse.json replay
 ```
 
 **Alternative: Full sequential replay** (replays all transactions except rollback GIDs):
 ```console
-$ ../src/db_state_change ultraverse.json full-replay
+$ $ULTRAVERSE_HOME/db_state_change ultraverse.json full-replay
 ```
 
 Options:
@@ -585,7 +583,7 @@ Options:
 Use `state_log_viewer` to inspect the contents of a state log file:
 
 ```console
-$ ../src/state_log_viewer -i benchbase
+$ $ULTRAVERSE_HOME/state_log_viewer -i benchbase
 ```
 
 Options:
@@ -653,8 +651,8 @@ Backup (GID 36)   Target (GID 71)     Latest
 
 **Usage:**
 ```console
-$ ../src/db_state_change ultraverse.json rollback=71
-$ ../src/db_state_change --replay-from 37 ultraverse.json replay
+$ $ULTRAVERSE_HOME/db_state_change ultraverse.json rollback=71
+$ $ULTRAVERSE_HOME/db_state_change --replay-from 37 ultraverse.json replay
 ```
 
 If `--replay-from 0` is specified, all GIDs from 0 to the target are pre-replayed before the main replay phase.
