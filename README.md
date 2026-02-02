@@ -340,7 +340,7 @@ CREATE TABLE review (
     u_id int NOT NULL,
     i_id int NOT NULL,
     rating int DEFAULT NULL,
-    rank int DEFAULT NULL,
+    `rank` int DEFAULT NULL,
     comment varchar(256) DEFAULT NULL,
     creation_date datetime DEFAULT NULL,
     FOREIGN KEY (u_id) REFERENCES useracct (u_id) ON DELETE CASCADE,
@@ -365,13 +365,13 @@ CREATE INDEX idx_trust_tid ON trust (target_u_id);
 
 ```sql
 -- Create users
-INSERT INTO useracct VALUES (1, 'Alice', 'alice@example.com', NOW());
-INSERT INTO useracct VALUES (2, 'Bob', 'bob@example.com', NOW());
-INSERT INTO useracct VALUES (3, 'Charlie', 'charlie@example.com', NOW());
+INSERT INTO useracct VALUES (1, 'Alice', 'alice@example.com', '2010-01-01 00:00:00');
+INSERT INTO useracct VALUES (2, 'Bob', 'bob@example.com', '2010-01-01 09:00:00');
+INSERT INTO useracct VALUES (3, 'Charlie', 'charlie@example.com', '2010-01-15 09:00:00');
 
 -- Create items
-INSERT INTO item2 VALUES (1, 'Laptop', 'High-performance laptop', NOW());
-INSERT INTO item2 VALUES (2, 'Phone', 'Smartphone with great camera', NOW());
+INSERT INTO item2 VALUES (1, 'Laptop', 'High-performance laptop', '2010-01-01 00:00:00');
+INSERT INTO item2 VALUES (2, 'Phone', 'Smartphone with great camera', '2010-01-01 00:00:00');
 ```
 
 **<u>Step 4.</u>** Create a checkpoint (backup) and reset binary logs.
@@ -380,8 +380,8 @@ INSERT INTO item2 VALUES (2, 'Phone', 'Smartphone with great camera', NOW());
 # Create baseline backup
 $ mysqldump -u admin -ppassword epinions > dbdump.sql
 
-# Flush binary logs (so GID starts from 0)
-$ mysql -u admin -ppassword -e "PURGE BINARY LOGS BEFORE NOW();"
+# Reset binary logs (so GID starts from 0)
+$ mysql -u admin -ppassword -e "RESET MASTER;"
 ```
 
 **<u>Step 5.</u>** Execute workload transactions (these generate binary log entries).
@@ -392,19 +392,19 @@ $ mysql -u admin -ppassword epinions
 
 ```sql
 -- GID 0: Add review by Alice
-INSERT INTO review VALUES (1, 1, 1, 5, 1, 'Excellent product!', NOW());
+INSERT INTO review VALUES (1, 1, 1, 5, 1, 'Excellent product!', '2010-01-25 00:00:00');
 
 -- GID 1: Add review by Bob
-INSERT INTO review VALUES (2, 2, 1, 4, 2, 'Good but expensive', NOW());
+INSERT INTO review VALUES (2, 2, 1, 4, 2, 'Good but expensive', '2010-01-25 02:00:00');
 
 -- GID 2: Add review by Alice for Phone
-INSERT INTO review VALUES (3, 1, 2, 3, 1, 'Average phone', NOW());
+INSERT INTO review VALUES (3, 1, 2, 3, 1, 'Average phone', '2010-01-25 03:00:00');
 
 -- GID 3: Add trust relationship
-INSERT INTO trust VALUES (1, 2, 8, NOW());
+INSERT INTO trust VALUES (1, 2, 8, '2010-01-25 05:00:00');
 
 -- GID 4: Add another trust relationship
-INSERT INTO trust VALUES (2, 3, 7, NOW());
+INSERT INTO trust VALUES (2, 3, 7, '2010-01-25 07:00:00');
 
 -- GID 5: Update user name
 UPDATE useracct SET name = 'Alice Smith' WHERE u_id = 1;
