@@ -162,6 +162,7 @@ $ poetry install # Install Python dependencies via Poetry
 $ vim envfile
    export ULTRAVERSE_HOME=/path/to/ultraverse-sigmod/bui$ULTRAVERSE_HOME
 $ source envfile
+$ sudo service mysqls stop
 $ rm -rf runs cache   # MUST RUN THIS FOR EVERY STANDALOND TEST
 $ poetry run python3 tpcc_standalone.py       # TPC-C workload
 $ poetry run python3 epinions_standalone.py   # Epinions workload
@@ -276,6 +277,8 @@ The standalone script `epinions_standalone.py` automates the entire workflow: My
 ```console
 $ cd scripts/esperanza
 $ source envfile
+$ sudo service mysqls stop
+$ rm -rf runs cache
 $ poetry run python3 epinions_standalone.py
 ```
 
